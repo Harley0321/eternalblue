@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { LayoutGrid } from 'lucide-react';
 import type { Product } from '../types';
 import { getCategoryIcon } from '../utils/categoryIcons';
@@ -21,7 +21,28 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
   onOpenSheet,
 }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const categories = ['All', ...Array.from(new Set(products.map((p) => p.category).filter(Boolean)))];
+
+  const categoryStats = useMemo(() => {
+    const counts = new Map<string, number>();
+    const lowCounts = new Map<string, number>();
+    let totalLow = 0;
+
+    for (const p of products) {
+      const cat = p.category;
+      const isLow = p.stock <= lowStockThreshold;
+      if (isLow) totalLow++;
+      if (!cat) continue;
+      counts.set(cat, (counts.get(cat) || 0) + 1);
+      if (isLow) lowCounts.set(cat, (lowCounts.get(cat) || 0) + 1);
+    }
+
+    const categories = ['All', ...Array.from(counts.keys())];
+    return categories.map((cat) => ({
+      cat,
+      total: cat === 'All' ? products.length : counts.get(cat) || 0,
+      low: cat === 'All' ? totalLow : lowCounts.get(cat) || 0,
+    }));
+  }, [products, lowStockThreshold]);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -33,7 +54,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
         activeBtn.offsetLeft - scroller.clientWidth / 2 + activeBtn.offsetWidth / 2 - scroller.offsetLeft,
       );
     }
-  }, [selectedCategory, categories.length]);
+  }, [selectedCategory, categoryStats.length]);
 
   return (
     <div className="flex items-center gap-2 shrink-0">
@@ -51,10 +72,8 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
         ref={scrollerRef}
         className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto no-scrollbar snap-x scroll-smooth py-0.5"
       >
-        {categories.map((cat) => {
+        {categoryStats.map(({ cat, total, low }) => {
           const isActive = cat === selectedCategory;
-          const list = cat === 'All' ? products : products.filter((p) => p.category === cat);
-          const lowCount = list.filter((p) => p.stock <= lowStockThreshold).length;
           const Icon = getCategoryIcon(cat);
 
           return (
@@ -71,10 +90,10 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
             >
               <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-400' : 'text-slate-400'}`} />
               <span>{cat}</span>
-              <span className="opacity-65 font-mono-num">{list.length}</span>
-              {mode === 'inventory' && lowCount > 0 && (
+              <span className="opacity-65 font-mono-num">{total}</span>
+              {mode === 'inventory' && low > 0 && (
                 <span className="ml-0.5 px-1.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold font-mono-num">
-                  {lowCount}
+                  {low}
                 </span>
               )}
             </button>

@@ -56,12 +56,13 @@ export const WeightModal: React.FC<WeightModalProps> = ({
       >
         <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Scale className="w-4 h-4 text-blue-600" />
+            <Scale className="w-4 h-4 text-emerald-600" />
             <h3 className="text-sm font-extrabold text-slate-900">Enter Weight (kg)</h3>
           </div>
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close weight modal"
             className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-600 cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -82,7 +83,7 @@ export const WeightModal: React.FC<WeightModalProps> = ({
                 key={preset}
                 type="button"
                 onClick={() => setWeightStr(String(preset))}
-                className="py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold font-mono-num cursor-pointer"
+                className="py-1.5 rounded-lg bg-slate-100 hover:bg-emerald-50 hover:text-emerald-800 text-slate-800 text-xs font-bold font-mono-num cursor-pointer"
               >
                 {preset}kg
               </button>
@@ -96,18 +97,19 @@ export const WeightModal: React.FC<WeightModalProps> = ({
               step="0.001"
               min="0.001"
               autoFocus
+              onFocus={(e) => e.target.select()}
               value={weightStr}
               onChange={(e) => setWeightStr(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-lg font-extrabold font-mono-num focus:border-blue-600 focus:outline-none"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-lg font-extrabold font-mono-num focus:border-emerald-600 focus:outline-none"
             />
           </div>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 flex items-center justify-between text-xs">
-            <span className="font-semibold text-blue-800">Line Total</span>
-            <span className="text-base font-extrabold font-mono-num text-blue-700">{formatPeso(est)}</span>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center justify-between text-xs">
+            <span className="font-semibold text-emerald-800">Line Total</span>
+            <span className="text-base font-extrabold font-mono-num text-emerald-700">{formatPeso(est)}</span>
           </div>
 
-          {error && <div className="text-xs text-red-600 font-semibold">{error}</div>}
+          {error && <div className="text-xs text-rose-600 font-semibold">{error}</div>}
         </div>
 
         <div className="px-4 py-3 border-t border-slate-200 flex gap-2">
@@ -120,7 +122,7 @@ export const WeightModal: React.FC<WeightModalProps> = ({
           </button>
           <button
             type="submit"
-            className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold cursor-pointer"
+            className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold cursor-pointer"
           >
             Add to Basket
           </button>
@@ -174,7 +176,12 @@ export const HoldCartModal: React.FC<HoldCartModalProps> = ({
             <PauseCircle className="w-4 h-4 text-amber-600" />
             <h3 className="text-sm font-extrabold text-slate-900">Park / Hold Order</h3>
           </div>
-          <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close hold modal"
+            className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -191,7 +198,7 @@ export const HoldCartModal: React.FC<HoldCartModalProps> = ({
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="e.g. Ate Maria - Blue Shirt"
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:border-blue-600 focus:outline-none"
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:border-emerald-600 focus:outline-none"
             />
           </div>
         </div>
@@ -239,7 +246,12 @@ export const HeldOrdersModal: React.FC<HeldOrdersModalProps> = ({
       >
         <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
           <h3 className="text-sm font-extrabold text-slate-900">Parked / Held Orders ({heldOrders.length})</h3>
-          <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close parked orders"
+            className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -248,37 +260,54 @@ export const HeldOrdersModal: React.FC<HeldOrdersModalProps> = ({
           {heldOrders.length === 0 ? (
             <div className="text-center py-8 text-xs text-slate-400">No parked orders right now.</div>
           ) : (
-            heldOrders.map((h) => (
-              <div key={h.id} className="border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-bold text-sm text-slate-900 truncate">
-                    {h.label ? h.label : `Order ${h.id}`}
+            heldOrders.map((h) => {
+              const preview = h.items
+                .slice(0, 3)
+                .map((it) => `${it.name} ×${it.qty}`)
+                .join(', ');
+              const extra = h.items.length > 3 ? ` +${h.items.length - 3} more` : '';
+              return (
+                <div key={h.id} className="border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-bold text-sm text-slate-900 truncate">
+                      {h.label ? h.label : `Order ${h.id}`}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {h.time} · {h.items.length} line(s) ·{' '}
+                      <span className="font-mono-num font-bold text-emerald-700">{formatPeso(h.total)}</span>
+                      {h.isSeniorPwd && <span className="text-amber-700 font-semibold"> · SC/PWD</span>}
+                      {h.priceMode === 'wholesale' && (
+                        <span className="text-indigo-700 font-semibold"> · Wholesale</span>
+                      )}
+                    </div>
+                    {preview && (
+                      <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                        {preview}
+                        {extra}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {h.time} · {h.items.length} line(s) ·{' '}
-                    <span className="font-mono-num font-bold text-slate-800">{formatPeso(h.total)}</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => onRecall(h.id)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Recall
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteHeld(h.id)}
+                      aria-label={`Delete held order ${h.label || h.id}`}
+                      className="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 flex items-center justify-center cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => onRecall(h.id)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Recall
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeleteHeld(h.id)}
-                    aria-label="Delete held order"
-                    className="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 flex items-center justify-center cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -373,7 +402,7 @@ export const PinModal: React.FC<PinModalProps> = ({
         <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
           <div className="flex items-center gap-2">
             {mode === 'setup' ? (
-              <ShieldCheck className="w-4 h-4 text-blue-600" />
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
             ) : (
               <Lock className="w-4 h-4 text-slate-700" />
             )}
@@ -381,7 +410,7 @@ export const PinModal: React.FC<PinModalProps> = ({
               {title || (mode === 'setup' ? 'Create Manager PIN' : 'Enter Manager PIN')}
             </h3>
           </div>
-          <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer">
+          <button type="button" onClick={onClose} aria-label="Close PIN modal" className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -406,7 +435,7 @@ export const PinModal: React.FC<PinModalProps> = ({
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
               placeholder="••••"
-              className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-center text-lg tracking-[0.35em] font-mono-num focus:border-blue-600 focus:outline-none"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-center text-lg tracking-[0.35em] font-mono-num focus:border-emerald-600 focus:outline-none"
             />
           </div>
 
@@ -421,7 +450,7 @@ export const PinModal: React.FC<PinModalProps> = ({
                   value={confirmPin}
                   onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
                   placeholder="••••"
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-center text-lg tracking-[0.35em] font-mono-num focus:border-blue-600 focus:outline-none"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-center text-lg tracking-[0.35em] font-mono-num focus:border-emerald-600 focus:outline-none"
                 />
               </div>
               {pin.length >= 4 && isWeakPin(pin) && (
@@ -438,7 +467,7 @@ export const PinModal: React.FC<PinModalProps> = ({
             </>
           )}
 
-          {error && <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2">{error}</div>}
+          {error && <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-2">{error}</div>}
         </div>
 
         <div className="px-4 py-3 border-t border-slate-200 flex gap-2">
@@ -448,7 +477,7 @@ export const PinModal: React.FC<PinModalProps> = ({
           <button
             type="submit"
             disabled={busy}
-            className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold cursor-pointer disabled:opacity-50"
+            className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold cursor-pointer disabled:opacity-50"
           >
             {busy ? 'Checking…' : mode === 'setup' ? 'Save PIN' : 'Unlock'}
           </button>
@@ -521,12 +550,17 @@ export const VoidSaleModal: React.FC<VoidSaleModalProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-sm bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden"
       >
-        <div className="px-4 py-3 border-b border-red-200 bg-red-50 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-red-900">
-            <AlertTriangle className="w-4 h-4 text-red-600" />
+        <div className="px-4 py-3 border-b border-rose-200 bg-rose-50 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-rose-900">
+            <AlertTriangle className="w-4 h-4 text-rose-600" />
             <h3 className="text-sm font-extrabold">Void Receipt {sale.receiptNo}</h3>
           </div>
-          <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-red-100 flex items-center justify-center cursor-pointer">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close void modal"
+            className="w-8 h-8 rounded-lg hover:bg-rose-100 flex items-center justify-center cursor-pointer"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -547,7 +581,7 @@ export const VoidSaleModal: React.FC<VoidSaleModalProps> = ({
               type="text"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:border-blue-600 focus:outline-none"
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:border-emerald-600 focus:outline-none"
             />
           </div>
 
@@ -567,7 +601,7 @@ export const VoidSaleModal: React.FC<VoidSaleModalProps> = ({
             </div>
           )}
 
-          {error && <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2">{error}</div>}
+          {error && <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-2">{error}</div>}
         </div>
 
         <div className="px-4 py-3 border-t border-slate-200 flex gap-2">
@@ -577,7 +611,7 @@ export const VoidSaleModal: React.FC<VoidSaleModalProps> = ({
           <button
             type="submit"
             disabled={busy}
-            className="flex-1 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold cursor-pointer disabled:opacity-50"
+            className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer disabled:opacity-50"
           >
             {busy ? 'Voiding…' : 'Confirm Void & Restore Stock'}
           </button>
@@ -660,7 +694,12 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
       >
         <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
           <h3 className="text-sm font-extrabold text-slate-900">{title}</h3>
-          <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close confirmation"
+            className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -682,7 +721,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
               />
             </div>
           )}
-          {error && <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2">{error}</div>}
+          {error && <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-2">{error}</div>}
         </div>
 
         <div className="px-4 py-3 border-t border-slate-200 flex gap-2">
@@ -693,7 +732,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             type="submit"
             disabled={busy}
             className={`flex-1 py-2 rounded-xl text-white text-xs font-extrabold cursor-pointer disabled:opacity-50 ${
-              danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
+              danger ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-500'
             }`}
           >
             {busy ? 'Checking…' : confirmLabel}

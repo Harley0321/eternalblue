@@ -57,10 +57,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   return (
     <header className="bg-slate-900 text-white px-2.5 sm:px-4 py-1.5 flex items-center justify-between gap-2 sm:gap-4 shadow-md z-30 shrink-0 min-h-[52px]">
       <div className="flex items-center gap-2 min-w-0">
-        <div className="w-8 h-8 rounded-xl bg-emerald-500 flex items-center justify-center text-slate-950 shrink-0">
+        <div
+          className="w-8 h-8 rounded-xl bg-emerald-500 flex items-center justify-center text-slate-950 shrink-0"
+          title={storeName}
+        >
           <ShoppingBasket className="w-4 h-4 stroke-[2.5]" />
         </div>
-        <h1 className="font-extrabold text-xs sm:text-base tracking-tight leading-none truncate">
+        <h1 className="hidden sm:block font-extrabold text-sm sm:text-base tracking-tight leading-none truncate">
           {storeName}
         </h1>
       </div>

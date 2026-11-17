@@ -93,8 +93,23 @@ export function formatQty(q: unknown, unit = ''): string {
   return unit ? `${n} ${unit}` : String(n);
 }
 
-export function linePricing(item: Pick<CartLine, 'productId' | 'retailPrice' | 'wholesalePrice' | 'wholesaleMinQty'>, products: Product[]) {
-  const p = products.find((x) => x.id === item.productId);
+export type ProductLookup = Product[] | Map<string, Product>;
+
+export function buildProductMap(products: Product[]): Map<string, Product> {
+  const map = new Map<string, Product>();
+  for (const p of products) map.set(p.id, p);
+  return map;
+}
+
+function lookupProduct(products: ProductLookup, productId: string): Product | undefined {
+  return products instanceof Map ? products.get(productId) : products.find((x) => x.id === productId);
+}
+
+export function linePricing(
+  item: Pick<CartLine, 'productId' | 'retailPrice' | 'wholesalePrice' | 'wholesaleMinQty'>,
+  products: ProductLookup,
+) {
+  const p = lookupProduct(products, item.productId);
   const src = p || item;
   const minQty = Number(src.wholesaleMinQty) > 0 ? Number(src.wholesaleMinQty) : 10;
   return {
@@ -109,7 +124,7 @@ export type WholesaleBlockReason = null | 'none' | 'cost' | 'qty';
 
 export function wholesaleBlock(
   item: Pick<CartLine, 'productId' | 'retailPrice' | 'wholesalePrice' | 'wholesaleMinQty' | 'qty'>,
-  products: Product[],
+  products: ProductLookup,
 ): WholesaleBlockReason {
   const pr = linePricing(item, products);
   if (!(pr.wholesale > 0) || !(pr.wholesale < pr.retail)) return 'none';
@@ -120,14 +135,14 @@ export function wholesaleBlock(
 
 export function isWholesaleLine(
   item: Pick<CartLine, 'productId' | 'retailPrice' | 'wholesalePrice' | 'wholesaleMinQty' | 'qty' | 'priceType'>,
-  products: Product[],
+  products: ProductLookup,
 ): boolean {
   return item.priceType === 'wholesale' && wholesaleBlock(item, products) === null;
 }
 
 export function getLinePrice(
   item: Pick<CartLine, 'productId' | 'retailPrice' | 'wholesalePrice' | 'wholesaleMinQty' | 'qty' | 'priceType'>,
-  products: Product[],
+  products: ProductLookup,
 ): number {
   const pr = linePricing(item, products);
   return round2(isWholesaleLine(item, products) ? pr.wholesale : pr.retail);
@@ -152,8 +167,8 @@ export function scEligibleProduct(p: { name?: string; category?: string; scEligi
   return scSuggest(p);
 }
 
-export function scEligibleLine(item: Pick<CartLine, 'productId' | 'name'>, products: Product[]): boolean {
-  const p = products.find((x) => x.id === item.productId);
+export function scEligibleLine(item: Pick<CartLine, 'productId' | 'name'>, products: ProductLookup): boolean {
+  const p = lookupProduct(products, item.productId);
   return scEligibleProduct(p || item);
 }
 
@@ -164,7 +179,7 @@ export function scCapCents(settings: Pick<StoreSettings, 'scDiscountCap'>): numb
 
 export function computeCartTotals(
   cart: CartLine[],
-  products: Product[],
+  products: ProductLookup,
   isSeniorPwd: boolean,
   settings: Pick<StoreSettings, 'scDiscountCap'>,
 ): CartTotals {
@@ -1363,5 +1378,50 @@ export function parseInventoryCsv(
 
   return { rows };
 }
+
+/**
+ * Parses cashier quantity multiplier input such as "5*4800016644801" or "2.5*sinandomeng".
+ * Uses `*` unambiguously so product names containing "x" (e.g. "3x100g") still search normally.
+ */
+export function parseQtySearchInput(raw: string): { qty: number; query: string } {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(\d+(?:\.\d{1,3})?)\s*\*\s*(.+)$/);
+  if (!match) return { qty: 1, query: trimmed };
+  const qty = Number(match[1]);
+  const query = match[2].trim();
+  if (!Number.isFinite(qty) || qty <= 0 || qty > 9999 || !query) {
+    return { qty: 1, query: trimmed };
+  }
+  return { qty: Number(qty.toFixed(3)), query };
+}
+
+export interface HourlySalesPoint {
+  hr: number;
+  label: string;
+  sales: number;
+}
+
+export function computeHourlySalesSeries(hours: Record<number, number>): HourlySalesPoint[] {
+  const hrs = Object.keys(hours)
+    .map(Number)
+    .filter((h) => Number.isInteger(h) && h >= 0 && h <= 23);
+  if (!hrs.length) return [];
+  let lo = Math.min(...hrs);
+  let hi = Math.max(...hrs);
+  while (hi - lo < 7 && (lo > 0 || hi < 23)) {
+    if (lo > 0) lo--;
+    if (hi - lo < 7 && hi < 23) hi++;
+  }
+  const out: HourlySalesPoint[] = [];
+  for (let hr = lo; hr <= hi; hr++) {
+    out.push({
+      hr,
+      label: `${hr % 12 || 12}${hr < 12 ? 'a' : 'p'}`,
+      sales: round2(hours[hr] || 0),
+    });
+  }
+  return out;
+}
+
 
 

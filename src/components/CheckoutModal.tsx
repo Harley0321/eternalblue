@@ -68,6 +68,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const splitCash = round2(parseFloat(splitCashStr) || 0);
   const splitDigital = round2(Math.max(0, totals.grandTotal - splitCash));
 
+  const addBillToTendered = (bill: number) => {
+    const current = parseFloat(tenderedStr) || 0;
+    const base = Math.abs(current - totals.grandTotal) < 0.001 ? 0 : current;
+    setTenderedStr(round2(base + bill).toFixed(2));
+    setError('');
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -122,7 +129,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-end sm:items-center justify-center p-0 sm:p-4"
+      className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-[1px] flex items-end sm:items-center justify-center p-0 sm:p-4"
       onClick={onClose}
     >
       <form
@@ -154,20 +161,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <span className="font-mono-num">{formatPeso(totals.retailSubtotal)}</span>
             </div>
             {totals.wholesaleSavings > 0 && (
-              <div className="flex justify-between text-emerald-700 font-semibold">
+              <div className="flex justify-between text-indigo-700 font-semibold">
                 <span>Wholesale Savings</span>
                 <span className="font-mono-num">−{formatPeso(totals.wholesaleSavings)}</span>
               </div>
             )}
             {totals.seniorDiscount > 0 && (
-              <div className="flex justify-between text-blue-700 font-semibold">
+              <div className="flex justify-between text-amber-700 font-semibold">
                 <span>SC / PWD 5% Discount</span>
                 <span className="font-mono-num">−{formatPeso(totals.seniorDiscount)}</span>
               </div>
             )}
             <div className="flex justify-between items-baseline pt-1.5 border-t border-slate-200">
               <span className="text-sm font-extrabold text-slate-900">Amount Due</span>
-              <span className="text-2xl font-extrabold font-mono-num text-blue-700" data-testid="checkout-grand-total">
+              <span className="text-2xl font-extrabold font-mono-num text-emerald-700" data-testid="checkout-grand-total">
                 {formatPeso(totals.grandTotal)}
               </span>
             </div>
@@ -196,7 +203,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     }}
                     className={`flex flex-col items-center justify-center gap-1 py-2.5 px-2 rounded-xl border text-xs font-bold cursor-pointer transition-colors ${
                       active
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                        ? 'bg-slate-900 text-emerald-400 border-slate-900 shadow-xs'
                         : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                     }`}
                   >
@@ -218,9 +225,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   step="0.01"
                   min={0}
                   autoFocus
+                  onFocus={(e) => e.target.select()}
                   value={tenderedStr}
-                  onChange={(e) => setTenderedStr(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-lg font-extrabold font-mono-num text-slate-900 focus:border-blue-600 focus:outline-none"
+                  onChange={(e) => {
+                    setTenderedStr(e.target.value);
+                    if (error) setError('');
+                  }}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-lg font-extrabold font-mono-num text-slate-900 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
                 />
               </div>
 
@@ -229,10 +240,27 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <button
                     key={amt}
                     type="button"
-                    onClick={() => setTenderedStr(amt.toFixed(2))}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold font-mono-num cursor-pointer"
+                    onClick={() => {
+                      setTenderedStr(amt.toFixed(2));
+                      setError('');
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-emerald-50 hover:text-emerald-800 text-slate-800 text-xs font-bold font-mono-num cursor-pointer"
                   >
                     {amt === round2(totals.grandTotal) ? 'Exact' : formatPeso(amt).replace('.00', '')}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="text-slate-500 font-semibold mr-0.5">Add bill:</span>
+                {[20, 50, 100, 500, 1000].map((bill) => (
+                  <button
+                    key={bill}
+                    type="button"
+                    onClick={() => addBillToTendered(bill)}
+                    className="px-2 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-mono-num font-bold cursor-pointer"
+                  >
+                    +₱{bill}
                   </button>
                 ))}
               </div>
@@ -241,7 +269,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 className={`rounded-xl px-3 py-2.5 flex items-center justify-between border ${
                   cashChange >= 0
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                    : 'bg-red-50 border-red-200 text-red-800'
+                    : 'bg-rose-50 border-rose-200 text-rose-800'
                 }`}
               >
                 <span className="text-xs font-bold">{cashChange >= 0 ? 'Change Due' : 'Shortfall'}</span>
@@ -264,7 +292,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 value={refNo}
                 onChange={(e) => setRefNo(e.target.value)}
                 placeholder={method === 'GCash' ? 'e.g. 1002348912' : 'e.g. APPR-4421'}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-mono-num focus:border-blue-600 focus:outline-none"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-mono-num focus:border-emerald-600 focus:outline-none"
               />
             </div>
           )}
@@ -280,15 +308,19 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     step="0.01"
                     min={0}
                     autoFocus
+                    onFocus={(e) => e.target.select()}
                     value={splitCashStr}
-                    onChange={(e) => setSplitCashStr(e.target.value)}
+                    onChange={(e) => {
+                      setSplitCashStr(e.target.value);
+                      if (error) setError('');
+                    }}
                     placeholder="0.00"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-bold font-mono-num bg-white"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-bold font-mono-num bg-white focus:border-emerald-600 focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Remaining Digital</label>
-                  <div className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-extrabold font-mono-num text-blue-700">
+                  <div className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-extrabold font-mono-num text-emerald-700">
                     {formatPeso(splitDigital)}
                   </div>
                 </div>
@@ -302,7 +334,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     onClick={() => setSplitDigitalMethod(dm)}
                     className={`px-3 py-1.5 rounded-lg font-bold cursor-pointer ${
                       splitDigitalMethod === dm
-                        ? 'bg-blue-600 text-white'
+                        ? 'bg-slate-900 text-emerald-400'
                         : 'bg-white border border-slate-300 text-slate-700'
                     }`}
                   >
@@ -323,21 +355,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           {/* Senior/PWD ID */}
           {totals.seniorDiscount > 0 && (
             <div>
-              <label className="block text-xs font-bold text-blue-800 mb-1">
-                Senior Citizen / PWD ID Number <span className="text-red-600">*</span>
+              <label className="block text-xs font-bold text-amber-900 mb-1">
+                Senior Citizen / PWD ID Number <span className="text-rose-600">*</span>
               </label>
               <input
                 type="text"
                 value={seniorId}
-                onChange={(e) => setSeniorId(e.target.value)}
+                onChange={(e) => {
+                  setSeniorId(e.target.value);
+                  if (error) setError('');
+                }}
                 placeholder="Enter OSCA / PWD ID #"
-                className="w-full px-3 py-2 rounded-xl border border-blue-300 bg-blue-50/40 text-sm font-mono-num focus:border-blue-600 focus:outline-none"
+                className="w-full px-3 py-2 rounded-xl border border-amber-300 bg-amber-50/40 text-sm font-mono-num focus:border-emerald-600 focus:outline-none"
               />
             </div>
           )}
 
           {error && (
-            <div className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <div className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
               {error}
             </div>
           )}
@@ -355,7 +390,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           <button
             type="submit"
             data-testid="confirm-complete-sale"
-            className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-extrabold cursor-pointer"
+            className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-extrabold cursor-pointer transition-colors"
           >
             <CheckCircle2 className="w-4 h-4" />
             Complete Sale ({formatPeso(totals.grandTotal)})

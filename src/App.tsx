@@ -15,6 +15,7 @@ import type {
 import {
   applyBatchStockUpdates,
   buildDefaultCatalog,
+  buildProductMap,
   computeCartTotals,
   computeSalesStats,
   DAY_MS,
@@ -29,6 +30,7 @@ import {
   lineTotalPeso,
   nextReceiptNo,
   normBarcode,
+  parseQtySearchInput,
   round2,
   sanitizeConfigForSnapshot,
   startOfDay,
@@ -204,10 +206,12 @@ export default function App() {
     return () => window.clearTimeout(tid);
   }, []);
 
+  const productMap = useMemo(() => buildProductMap(products), [products]);
+
   // Derived cart totals
   const cartTotals = useMemo(
-    () => computeCartTotals(cart, products, isSeniorPwd, settings),
-    [cart, products, isSeniorPwd, settings],
+    () => computeCartTotals(cart, productMap, isSeniorPwd, settings),
+    [cart, productMap, isSeniorPwd, settings],
   );
 
   const lowStockCount = useMemo(() => {
@@ -522,27 +526,35 @@ export default function App() {
 
   const handleSearchEnter = useCallback(
     (raw: string) => {
-      const q = raw.trim();
-      if (!q) return;
-      const byBc = findProductByBarcode(q, products);
+      const { qty, query } = parseQtySearchInput(raw);
+      if (!query) return;
+      const byBc = findProductByBarcode(query, products);
       if (byBc) {
-        handleProductClick(byBc.id);
+        if (qty !== 1 || byBc.unit !== 'kg') {
+          addQtyToCart(byBc, qty);
+        } else {
+          handleProductClick(byBc.id);
+        }
         setPosSearch('');
         return;
       }
-      const lower = q.toLowerCase();
+      const lower = query.toLowerCase();
       const matches = products.filter(
-        (p) => p.name.toLowerCase().includes(lower) || normBarcode(p.barcode) === normBarcode(q),
+        (p) => p.name.toLowerCase().includes(lower) || normBarcode(p.barcode) === normBarcode(query),
       );
       if (matches.length === 1) {
-        handleProductClick(matches[0].id);
+        if (qty !== 1 || matches[0].unit !== 'kg') {
+          addQtyToCart(matches[0], qty);
+        } else {
+          handleProductClick(matches[0].id);
+        }
         setPosSearch('');
       }
     },
-    [handleProductClick, products],
+    [addQtyToCart, handleProductClick, products],
   );
 
-  // Global hardware wedge barcode scanner (fast keystroke burst + Enter)
+  // Global hardware wedge barcode scanner (fast keystroke burst + Enter) + Cashier shortcuts
   const wedgeRef = useRef<{ buf: string; lastTime: number }>({ buf: '', lastTime: 0 });
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -550,6 +562,27 @@ export default function App() {
         if (activeTab === 'pos' && cart.length > 0) {
           e.preventDefault();
           setCheckoutOpen(true);
+        }
+        return;
+      }
+      if (e.key === 'F4') {
+        if (activeTab === 'pos' && cart.length > 0) {
+          e.preventDefault();
+          setHoldModalOpen(true);
+        }
+        return;
+      }
+      if (e.key === 'F8') {
+        if (activeTab === 'pos') {
+          e.preventDefault();
+          setScannerState({ open: true, mode: 'pos' });
+        }
+        return;
+      }
+      if (e.key === 'F9') {
+        if (activeTab === 'pos') {
+          e.preventDefault();
+          handleSetPriceMode(priceMode === 'retail' ? 'wholesale' : 'retail');
         }
         return;
       }
@@ -612,7 +645,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTab, cart.length, products, addQtyToCart, toast]);
+  }, [activeTab, cart.length, products, addQtyToCart, handleSetPriceMode, priceMode, toast]);
 
   // Complete sale
   const handleCompleteSale = (payload: {
@@ -703,10 +736,13 @@ export default function App() {
       time: new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }),
       items: cart,
       total: cartTotals.grandTotal,
+      isSeniorPwd,
+      priceMode,
     };
     updateHeld((prev) => [entry, ...prev]);
     setCart([]);
     setIsSeniorPwd(false);
+    setPriceMode('retail');
     setHoldModalOpen(false);
     setMobileCartOpen(false);
     toast(`Order parked${label ? ` (${label})` : ''}`, 'success');
@@ -715,11 +751,59 @@ export default function App() {
   const handleRecallOrder = (id: string) => {
     const order = heldOrders.find((h) => h.id === id);
     if (!order) return;
-    setCart(order.items);
-    updateHeld((prev) => prev.filter((h) => h.id !== id));
+
+    // Validate recalled lines against live stock so stale parked baskets cannot oversell
+    let adjustedCount = 0;
+    const validatedItems: CartLine[] = [];
+    for (const line of order.items) {
+      const liveProd = productMap.get(line.productId);
+      if (!liveProd || liveProd.stock <= 0) {
+        adjustedCount++;
+        continue;
+      }
+      if (line.qty > liveProd.stock + 1e-6) {
+        adjustedCount++;
+        validatedItems.push({ ...line, qty: liveProd.stock });
+      } else {
+        validatedItems.push(line);
+      }
+    }
+
+    // If cashier currently has an active non-empty basket, auto-park it so nothing is lost
+    const autoParkedEntry: HeldOrder | null =
+      cart.length > 0
+        ? {
+            id: 'HOLD-' + String(Date.now()).slice(-4),
+            label: 'Auto-parked before recall',
+            time: new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }),
+            items: cart,
+            total: cartTotals.grandTotal,
+            isSeniorPwd,
+            priceMode,
+          }
+        : null;
+
+    setCart(validatedItems);
+    setIsSeniorPwd(Boolean(order.isSeniorPwd));
+    setPriceMode(order.priceMode === 'wholesale' ? 'wholesale' : 'retail');
+    updateHeld((prev) => {
+      const remaining = prev.filter((h) => h.id !== id);
+      return autoParkedEntry ? [autoParkedEntry, ...remaining] : remaining;
+    });
     setHeldModalOpen(false);
     setActiveTab('pos');
-    toast(`Recalled ${order.label || order.id}`, 'success');
+
+    if (adjustedCount > 0) {
+      toast(
+        `Recalled ${order.label || order.id} (${adjustedCount} line adjusted to live stock)`,
+        'warning',
+      );
+    } else {
+      toast(
+        `Recalled ${order.label || order.id}${autoParkedEntry ? ' (current basket auto-parked)' : ''}`,
+        'success',
+      );
+    }
   };
 
   // X-Read / Z-Read
@@ -953,19 +1037,42 @@ export default function App() {
       return;
     }
 
-    // Restore stock for each item
+    const nowIso = new Date().toISOString();
+    const voidLogs: StockLogEntry[] = [];
+
+    // Restore stock for each item and record audit entries
     updateProducts((prev) =>
       prev.map((p) => {
         const line = target.items.find((it) => it.productId === p.id || it.name === p.name);
         if (!line) return p;
-        return { ...p, stock: Number((p.stock + line.qty).toFixed(3)) };
+        const nextStock = Number((p.stock + line.qty).toFixed(3));
+        voidLogs.push({
+          id: `LOG-${Date.now().toString(36)}-${p.id}`,
+          dateIso: nowIso,
+          productId: p.id,
+          productName: p.name,
+          delta: line.qty,
+          prevStock: p.stock,
+          newStock: nextStock,
+          reason: 'Count Correction',
+          note: `Void ${receiptNo}: ${reason}`,
+        });
+        return { ...p, stock: nextStock };
       }),
     );
+
+    if (voidLogs.length > 0) {
+      setStockLog((prev) => {
+        const next = [...voidLogs, ...prev].slice(0, 500);
+        saveStockLogToStorage(next);
+        return next;
+      });
+    }
 
     updateSales((prev) =>
       prev.map((s) =>
         s.receiptNo === receiptNo
-          ? { ...s, voided: true, voidedAt: new Date().toISOString(), voidReason: reason }
+          ? { ...s, voided: true, voidedAt: nowIso, voidReason: reason }
           : s,
       ),
     );

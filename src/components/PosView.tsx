@@ -1,10 +1,11 @@
-import React, { useMemo, useRef } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Banknote,
   Barcode,
   Camera,
   ChevronDown,
+  Filter,
   History,
   Pause,
   ShoppingBasket,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { CartLine, CartTotals, PriceType, Product } from '../types';
 import {
+  buildProductMap,
   expiryInfo,
   expiryLabel,
   formatPeso,
@@ -58,6 +60,90 @@ interface PosViewProps {
   onCloseMobileCart: () => void;
 }
 
+interface ProductTileProps {
+  product: Product;
+  inCartQty: number;
+  priceMode: PriceType;
+  lowStockThreshold: number;
+  expiryWarnDays: number;
+  onProductClick: (productId: string) => void;
+}
+
+const ProductTile = memo<ProductTileProps>(
+  ({ product: p, inCartQty, priceMode, lowStockThreshold, expiryWarnDays, onProductClick }) => {
+    const exInfo = expiryInfo(p, expiryWarnDays);
+    const expired = exInfo.status === 'expired';
+    const out = p.stock <= 0 || expired;
+    const low = p.stock > 0 && p.stock <= lowStockThreshold;
+    const hasWholesale = p.wholesalePrice > 0 && p.wholesalePrice < p.retailPrice;
+
+    return (
+      <button
+        type="button"
+        onClick={() => onProductClick(p.id)}
+        disabled={out}
+        className={`relative text-left bg-white p-3 rounded-2xl border transition flex flex-col justify-between gap-2 cursor-pointer ${
+          out
+            ? 'border-slate-200 opacity-55 cursor-not-allowed'
+            : inCartQty > 0
+              ? 'border-emerald-500 ring-1 ring-emerald-500/35 hover:border-emerald-600 active:scale-[0.98]'
+              : 'border-slate-200 hover:border-emerald-500 active:scale-[0.98]'
+        }`}
+      >
+        <div>
+          <div className="flex items-center justify-between gap-1.5 text-[11px]">
+            <span className="text-slate-500 font-semibold truncate">{p.category}</span>
+            <span
+              className={`font-mono-num font-bold shrink-0 ${
+                out ? 'text-rose-600' : low ? 'text-amber-600' : 'text-slate-500'
+              }`}
+            >
+              {expired ? 'EXPIRED' : p.stock <= 0 ? 'OUT' : `${p.stock} ${p.unit}`}
+            </span>
+          </div>
+          <div className="font-bold text-xs sm:text-[13px] text-slate-900 line-clamp-2 mt-1 leading-snug">
+            {p.name}
+          </div>
+          {inCartQty > 0 && (
+            <div className="text-[10px] font-mono-num font-extrabold text-emerald-700 mt-1">
+              {Number(inCartQty.toFixed(3))} {p.unit} in basket
+            </div>
+          )}
+          {(exInfo.status === 'expired' || exInfo.status === 'soon') && (
+            <div
+              className={`text-[10px] font-bold mt-1 flex items-center gap-1 ${
+                expired ? 'text-rose-600' : 'text-amber-600'
+              }`}
+            >
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              <span>{expiryLabel(p, expiryWarnDays)}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="pt-1.5 border-t border-slate-100 flex flex-wrap items-baseline justify-between gap-1">
+          <span className="font-mono-num font-extrabold text-sm text-emerald-700 whitespace-nowrap">
+            {formatPeso(p.retailPrice)}
+            <span className="text-[10px] font-normal text-slate-400">/{p.unit}</span>
+          </span>
+          {hasWholesale && (
+            <span
+              className={`text-[10px] font-mono-num font-semibold whitespace-nowrap ${
+                priceMode === 'wholesale'
+                  ? 'text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded'
+                  : 'text-indigo-600'
+              }`}
+            >
+              {formatPeso(p.wholesalePrice)} ({p.wholesaleMinQty}+)
+            </span>
+          )}
+        </div>
+      </button>
+    );
+  },
+);
+ProductTile.displayName = 'ProductTile';
+
 export const PosView: React.FC<PosViewProps> = ({
   products,
   cart,
@@ -90,19 +176,53 @@ export const PosView: React.FC<PosViewProps> = ({
   onCloseMobileCart,
 }) => {
   const searchRef = useRef<HTMLInputElement>(null);
+  const [inStockOnly, setInStockOnly] = useState(false);
+
+  // Focus search with `/` or `Ctrl+K` / `Cmd+K` when not typing in another field
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT';
+      if ((e.key === '/' && !isInput) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k')) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const productMap = useMemo(() => buildProductMap(products), [products]);
+
+  const cartQtyMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const line of cart) {
+      m.set(line.productId, line.qty);
+    }
+    return m;
+  }, [cart]);
 
   const filteredProducts = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const raw = searchQuery.trim();
+    const multMatch = raw.match(/^\d+(?:\.\d{1,3})?\s*\*\s*(.*)$/);
+    const q = (multMatch ? multMatch[1] : raw).trim().toLowerCase();
+
     return products.filter((p) => {
+      if (inStockOnly) {
+        if (p.stock <= 0 || expiryInfo(p, expiryWarnDays).status === 'expired') return false;
+      }
       const matchCat = selectedCategory === 'All' || p.category === selectedCategory;
-      const matchQuery =
-        !q ||
+      if (!matchCat) return false;
+      if (!q) return true;
+      return (
         p.name.toLowerCase().includes(q) ||
         p.barcode.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q);
-      return matchCat && matchQuery;
+        p.category.toLowerCase().includes(q)
+      );
     });
-  }, [products, selectedCategory, searchQuery]);
+  }, [products, selectedCategory, searchQuery, inStockOnly, expiryWarnDays]);
 
   return (
     <section className="h-full flex flex-col md:flex-row overflow-hidden relative">
@@ -125,7 +245,7 @@ export const PosView: React.FC<PosViewProps> = ({
               }}
               inputMode="search"
               enterKeyHint="search"
-              placeholder="Search item or scan barcode..."
+              placeholder="Search item, barcode, or 5*code... [/]"
               aria-label="Search item or scan barcode"
               className="w-full pl-9 pr-8 py-2 min-h-[42px] bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
               autoComplete="off"
@@ -148,47 +268,68 @@ export const PosView: React.FC<PosViewProps> = ({
             type="button"
             onClick={onOpenScanner}
             className="justify-center px-3.5 py-2 min-h-[42px] rounded-xl text-xs font-bold border border-emerald-500/40 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 active:scale-[0.98] flex items-center gap-1.5 transition whitespace-nowrap shrink-0 cursor-pointer"
-            title="Scan Barcode with Camera"
+            title="Scan Barcode with Camera (F8)"
           >
             <Camera className="w-4 h-4 text-emerald-700" />
             <span>Scan</span>
           </button>
         </div>
 
-        {/* Retail / Wholesale Price Mode */}
-        <div className="flex items-center gap-2.5 shrink-0 px-0.5">
-          <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wide shrink-0">
-            Price
-          </span>
-          <div
-            className="inline-flex border border-slate-300 rounded-xl overflow-hidden bg-white shrink-0"
-            role="group"
-            aria-label="Price mode"
-          >
-            <button
-              type="button"
-              onClick={() => onSetPriceMode('retail')}
-              className={`px-3 py-1.5 min-h-[36px] text-xs font-extrabold transition cursor-pointer ${
-                priceMode === 'retail' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
-              }`}
+        {/* Retail / Wholesale Price Mode & In-Stock Filter */}
+        <div className="flex items-center justify-between gap-2 shrink-0 px-0.5 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wide shrink-0">
+              Price
+            </span>
+            <div
+              className="inline-flex border border-slate-300 rounded-xl overflow-hidden bg-white shrink-0"
+              role="group"
+              aria-label="Price mode"
             >
-              Retail
-            </button>
-            <button
-              type="button"
-              onClick={() => onSetPriceMode('wholesale')}
-              className={`px-3 py-1.5 min-h-[36px] text-xs font-extrabold transition cursor-pointer ${
-                priceMode === 'wholesale' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              Wholesale
-            </button>
+              <button
+                type="button"
+                onClick={() => onSetPriceMode('retail')}
+                className={`px-3 py-1.5 min-h-[36px] text-xs font-extrabold transition cursor-pointer ${
+                  priceMode === 'retail' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Retail
+              </button>
+              <button
+                type="button"
+                onClick={() => onSetPriceMode('wholesale')}
+                className={`px-3 py-1.5 min-h-[36px] text-xs font-extrabold transition cursor-pointer ${
+                  priceMode === 'wholesale' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Wholesale
+              </button>
+            </div>
+            <span className="hidden lg:inline text-[11px] font-semibold text-slate-600 leading-tight truncate">
+              {priceMode === 'wholesale'
+                ? 'Wholesale applies at minimum qty'
+                : 'Retail pricing active'}
+            </span>
           </div>
-          <span className="text-[11px] font-bold text-slate-900 leading-tight min-w-0 truncate">
-            {priceMode === 'wholesale'
-              ? 'Wholesale price applies once item reaches its minimum qty'
-              : 'Items added at retail price'}
-          </span>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setInStockOnly((v) => !v)}
+              aria-pressed={inStockOnly}
+              className={`px-2.5 py-1.5 min-h-[34px] rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+                inStockOnly
+                  ? 'bg-slate-900 text-emerald-400 border-slate-900'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Filter className="w-3 h-3" />
+              <span>In Stock Only</span>
+            </button>
+            <span className="text-[11px] font-mono-num font-semibold text-slate-500 hidden sm:inline">
+              {filteredProducts.length}/{products.length}
+            </span>
+          </div>
         </div>
 
         {/* Category Filter Bar */}
@@ -204,75 +345,34 @@ export const PosView: React.FC<PosViewProps> = ({
         {/* Responsive Product Grid */}
         <div className="flex-1 overflow-y-auto scroll-contain grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-2.5 pb-20 md:pb-3 content-start">
           {filteredProducts.length === 0 ? (
-            <div className="col-span-full py-12 text-center text-xs text-slate-500">
-              No matching products found.
+            <div className="col-span-full py-12 text-center text-xs text-slate-500 space-y-2">
+              <p>No matching products found.</p>
+              {(searchQuery || selectedCategory !== 'All' || inStockOnly) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSetSearchQuery('');
+                    onSelectCategory('All');
+                    setInStockOnly(false);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs cursor-pointer"
+                >
+                  Reset Filters
+                </button>
+              )}
             </div>
           ) : (
-            filteredProducts.map((p) => {
-              const exInfo = expiryInfo(p, expiryWarnDays);
-              const expired = exInfo.status === 'expired';
-              const out = p.stock <= 0 || expired;
-              const low = p.stock > 0 && p.stock <= lowStockThreshold;
-              const hasWholesale = p.wholesalePrice > 0 && p.wholesalePrice < p.retailPrice;
-
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => onProductClick(p.id)}
-                  disabled={out}
-                  className={`text-left bg-white p-3 rounded-2xl border transition flex flex-col justify-between gap-2 cursor-pointer ${
-                    out
-                      ? 'border-slate-200 opacity-55 cursor-not-allowed'
-                      : 'border-slate-200 hover:border-emerald-500 active:scale-[0.98]'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-1.5 text-[11px]">
-                      <span className="text-slate-500 font-semibold truncate">{p.category}</span>
-                      <span
-                        className={`font-mono-num font-bold shrink-0 ${
-                          out ? 'text-rose-600' : low ? 'text-amber-600' : 'text-slate-500'
-                        }`}
-                      >
-                        {expired ? 'EXPIRED' : p.stock <= 0 ? 'OUT' : `${p.stock} ${p.unit}`}
-                      </span>
-                    </div>
-                    <div className="font-bold text-xs sm:text-[13px] text-slate-900 line-clamp-2 mt-1 leading-snug">
-                      {p.name}
-                    </div>
-                    {(exInfo.status === 'expired' || exInfo.status === 'soon') && (
-                      <div
-                        className={`text-[10px] font-bold mt-1 flex items-center gap-1 ${
-                          expired ? 'text-rose-600' : 'text-amber-600'
-                        }`}
-                      >
-                        <AlertTriangle className="w-3 h-3 shrink-0" />
-                        <span>{expiryLabel(p, expiryWarnDays)}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-1.5 border-t border-slate-100 flex items-baseline justify-between gap-1">
-                    <span className="font-mono-num font-extrabold text-sm text-emerald-700">
-                      {formatPeso(p.retailPrice)}
-                      <span className="text-[10px] font-normal text-slate-400">/{p.unit}</span>
-                    </span>
-                    {hasWholesale && (
-                      <span
-                        className={`text-[10px] font-mono-num font-semibold ${
-                          priceMode === 'wholesale'
-                            ? 'text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded'
-                            : 'text-indigo-600'
-                        }`}
-                      >
-                        {formatPeso(p.wholesalePrice)} ({p.wholesaleMinQty}+)
-                      </span>
-                    )}
-                  </div>
-                </button>
-              );
-            })
+            filteredProducts.map((p) => (
+              <ProductTile
+                key={p.id}
+                product={p}
+                inCartQty={cartQtyMap.get(p.id) || 0}
+                priceMode={priceMode}
+                lowStockThreshold={lowStockThreshold}
+                expiryWarnDays={expiryWarnDays}
+                onProductClick={onProductClick}
+              />
+            ))
           )}
         </div>
       </div>
@@ -335,8 +435,9 @@ export const PosView: React.FC<PosViewProps> = ({
             <button
               type="button"
               onClick={onHoldCart}
-              className="px-2.5 py-1.5 min-h-[34px] rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-              title="Park / Hold Order"
+              disabled={cart.length === 0}
+              className="px-2.5 py-1.5 min-h-[34px] rounded-lg bg-amber-50 hover:bg-amber-100 disabled:opacity-45 text-amber-800 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+              title="Park / Hold Order (F4)"
             >
               <Pause className="w-3 h-3" />
               <span>Hold</span>
@@ -358,7 +459,8 @@ export const PosView: React.FC<PosViewProps> = ({
             <button
               type="button"
               onClick={onClearCart}
-              className="px-2.5 py-1.5 min-h-[34px] rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 text-[11px] font-bold flex items-center justify-center cursor-pointer"
+              disabled={cart.length === 0}
+              className="px-2.5 py-1.5 min-h-[34px] rounded-lg bg-rose-50 hover:bg-rose-100 disabled:opacity-45 text-rose-600 text-[11px] font-bold flex items-center justify-center cursor-pointer"
               title="Clear Basket"
               aria-label="Clear basket"
             >
@@ -381,18 +483,18 @@ export const PosView: React.FC<PosViewProps> = ({
             <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 py-10">
               <ShoppingBasket className="w-10 h-10 mb-2 text-slate-300" />
               <p className="text-xs font-semibold text-slate-500">Basket is empty</p>
-              <p className="text-[11px] mt-0.5">Tap an item or scan a barcode to start</p>
+              <p className="text-[11px] mt-0.5">Tap an item, scan a barcode, or type 5*barcode</p>
             </div>
           ) : (
             cart.map((item) => {
-              const isW = isWholesaleLine(item, products);
-              const pr = linePricing(item, products);
-              const block = wholesaleBlock(item, products);
-              const activePrice = getLinePrice(item, products);
+              const isW = isWholesaleLine(item, productMap);
+              const pr = linePricing(item, productMap);
+              const block = wholesaleBlock(item, productMap);
+              const activePrice = getLinePrice(item, productMap);
               const lineTotal = lineTotalPeso(activePrice, item.qty);
               const hasW = block !== 'none';
               const wantsW = item.priceType === 'wholesale';
-              const prod = products.find((x) => x.id === item.productId);
+              const prod = productMap.get(item.productId);
               const stk = Number(prod?.stock) || 0;
               const need = Number((pr.minQty - item.qty).toFixed(3));
 
@@ -411,7 +513,7 @@ export const PosView: React.FC<PosViewProps> = ({
                             · Wholesale
                           </span>
                         )}
-                        {isSeniorPwd && scEligibleLine(item, products) && (
+                        {isSeniorPwd && scEligibleLine(item, productMap) && (
                           <span className="ml-1.5 text-amber-700 font-bold text-[10px]">
                             · SC/PWD 5%
                           </span>
@@ -440,7 +542,7 @@ export const PosView: React.FC<PosViewProps> = ({
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                         }}
-                        className="w-12 h-8 text-center font-mono-num font-bold text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        className="w-12 h-8 text-center font-mono-num font-bold text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                       <button
                         type="button"
@@ -514,7 +616,7 @@ export const PosView: React.FC<PosViewProps> = ({
                         </div>
                       )}
                       {!wantsW && (
-                        <div className="text-[11px] font-extrabold text-slate-900 mt-1">
+                        <div className="text-[11px] font-semibold text-slate-600 mt-1">
                           Wholesale {formatPeso(pr.wholesale)} at {pr.minQty}+ {item.unit}
                         </div>
                       )}
@@ -590,6 +692,16 @@ export const PosView: React.FC<PosViewProps> = ({
             <Banknote className="w-4 h-4" />
             <span>Checkout &amp; Pay (F2)</span>
           </button>
+
+          <div className="hidden md:flex items-center justify-center gap-2 text-[10px] text-slate-400 font-medium">
+            <span>/ Search</span>
+            <span aria-hidden="true">·</span>
+            <span>F4 Hold</span>
+            <span aria-hidden="true">·</span>
+            <span>F8 Scan</span>
+            <span aria-hidden="true">·</span>
+            <span>F9 Wholesale</span>
+          </div>
         </div>
       </aside>
     </section>

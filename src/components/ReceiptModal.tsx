@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Printer, X } from 'lucide-react';
+import { Copy, Download, Printer, X } from 'lucide-react';
 import type { SaleRecord, StoreSettings } from '../types';
 import { formatPeso, formatQty } from '../utils/posMath';
 
@@ -94,9 +94,23 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
     }
   };
 
+  const handleDownloadTxt = () => {
+    const text = buildPlainText();
+    const fileSlug = sale ? sale.receiptNo : reading?.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'receipt';
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fileSlug}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    onToast('Receipt downloaded as .txt', 'success');
+  };
+
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-3"
+      className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-3"
       onClick={onClose}
     >
       <div
@@ -115,7 +129,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 type="button"
                 onClick={() => setWidth(w)}
                 className={`px-2 py-1 rounded text-[11px] font-bold cursor-pointer ${
-                  width === w ? 'bg-blue-600 text-white' : 'bg-white border border-slate-300 text-slate-600'
+                  width === w ? 'bg-slate-900 text-emerald-400' : 'bg-white border border-slate-300 text-slate-600'
                 }`}
               >
                 {w}
@@ -132,10 +146,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
           </button>
         </div>
 
-        {/* Printable Paper Area */}
+        {/* Printable Paper Area — matches #printable-receipt in index.css @media print */}
         <div className="p-4 overflow-y-auto bg-slate-100 flex justify-center">
           <div
-            id="receiptPrintArea"
+            id="printable-receipt"
             className={`bg-white text-slate-900 font-mono text-[11.5px] leading-snug p-4 shadow-sm border border-slate-200 ${
               width === '58mm' ? 'w-[58mm] receipt-58mm text-[10.5px]' : 'w-[80mm]'
             }`}
@@ -159,7 +173,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                     <span>{sale.dateFormatted}</span>
                   </div>
                   {sale.voided && (
-                    <div className="text-center font-bold text-red-700 py-1 border border-red-400 mt-1">
+                    <div className="text-center font-bold text-rose-700 py-1 border border-rose-400 mt-1">
                       *** VOIDED ***
                       {sale.voidReason ? ` (${sale.voidReason})` : ''}
                     </div>
@@ -276,14 +290,24 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             type="button"
             onClick={handleCopy}
             className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+            title="Copy plain text receipt"
           >
             <Copy className="w-4 h-4" />
-            Copy Text
+            <span className="hidden sm:inline">Copy</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadTxt}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+            title="Download receipt as .txt"
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">.TXT</span>
           </button>
           <button
             type="button"
             onClick={() => window.print()}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold cursor-pointer"
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-emerald-400 text-xs font-extrabold cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             Print ({width})
@@ -291,7 +315,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold cursor-pointer"
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold cursor-pointer"
           >
             Done
           </button>

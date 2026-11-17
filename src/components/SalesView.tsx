@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { FileSpreadsheet, Printer, TrendingUp } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileSpreadsheet, Printer, TrendingUp, X } from 'lucide-react';
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -11,12 +13,14 @@ import {
 } from 'recharts';
 import type { Product, SaleRecord } from '../types';
 import {
+  computeHourlySalesSeries,
   computeLast7DaysNetSales,
   computeProfitRanking,
   computeSalesStats,
   DAY_MS,
   escapeCsvCell,
   formatPeso,
+  formatQty,
   inRange,
   itemUnitCapital,
   saleProfitCalc,
@@ -49,7 +53,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
   const [search, setSearch] = useState('');
   const [payFilter, setPayFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'VALID' | 'VOID'>('ALL');
-  const [chartMode, setChartMode] = useState<'hour' | 'day'>('hour');
+  const [expandedReceipt, setExpandedReceipt] = useState<string | null>(null);
   const [shownCount, setShownCount] = useState(100);
 
   const range = useMemo(() => {
@@ -191,41 +195,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
     onToast('Sales CSV downloaded');
   };
 
-  // Hour & Day chart data
-  const hourBars = useMemo(() => {
-    const hrs = Object.keys(stats.hours).map(Number);
-    if (!hrs.length) return null;
-    let lo = Math.min(...hrs);
-    let hi = Math.max(...hrs);
-    while (hi - lo < 7 && (lo > 0 || hi < 23)) {
-      if (lo > 0) lo--;
-      if (hi - lo < 7 && hi < 23) hi++;
-    }
-    const max = Math.max(...Object.values(stats.hours));
-    const arr: { hr: number; label: string; value: number; pct: number }[] = [];
-    for (let hr = lo; hr <= hi; hr++) {
-      const v = stats.hours[hr] || 0;
-      arr.push({
-        hr,
-        label: (hr % 12 || 12) + (hr < 12 ? 'a' : 'p'),
-        value: v,
-        pct: v ? Math.max(6, Math.round((v / max) * 100)) : 3,
-      });
-    }
-    return arr;
-  }, [stats.hours]);
-
-  const dayBars = useMemo(() => {
-    const entries = Object.entries(stats.days).sort((a, b) => a[0].localeCompare(b[0])).slice(-14);
-    if (!entries.length) return null;
-    const max = Math.max(...entries.map((e) => e[1]));
-    return entries.map(([day, value]) => ({
-      day,
-      label: day.slice(5),
-      value,
-      pct: value ? Math.max(6, Math.round((value / max) * 100)) : 3,
-    }));
-  }, [stats.days]);
+  const hourlySeries = useMemo(() => computeHourlySalesSeries(stats.hours), [stats.hours]);
 
   const topProducts = Object.entries(stats.products)
     .sort((a, b) => b[1].amt - a[1].amt)
@@ -271,17 +241,32 @@ export const SalesView: React.FC<SalesViewProps> = ({
             />
           )}
 
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setShownCount(100);
-            }}
-            placeholder="Search receipt # or item..."
-            aria-label="Search receipts or items"
-            className="flex-1 min-w-[150px] px-3 py-2 min-h-[40px] bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          />
+          <div className="relative flex-1 min-w-[150px]">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setShownCount(100);
+              }}
+              placeholder="Search receipt # or item..."
+              aria-label="Search receipts or items"
+              className="w-full pl-3 pr-8 py-2 min-h-[40px] bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch('');
+                  setShownCount(100);
+                }}
+                aria-label="Clear sales search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
 
           <select
             value={payFilter}
@@ -354,11 +339,18 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
           <div className="bg-white p-3.5 rounded-2xl border border-slate-200">
             <div className="text-[11px] font-bold text-slate-500 uppercase">Profit</div>
-            <div className="font-mono-num font-extrabold text-xl text-emerald-700 mt-0.5">
-              {formatPeso(stats.profit)}
+            <div className="flex items-baseline gap-2 mt-0.5">
+              <div className="font-mono-num font-extrabold text-xl text-emerald-700">
+                {formatPeso(stats.profit)}
+              </div>
+              {stats.net > 0 && (
+                <span className="font-mono-num text-[11px] font-bold text-slate-500">
+                  {((stats.profit / stats.net) * 100).toFixed(1)}%
+                </span>
+              )}
             </div>
             <div className="text-[10px] font-bold text-slate-500 mt-0.5 truncate">
-              {noCapCount ? `Sales − Capital · ${noCapCount} item(s) lack capital` : 'Sales − Capital'}
+              {noCapCount ? `Sales − Capital · ${noCapCount} lack capital` : 'Sales − Capital'}
             </div>
           </div>
 
@@ -514,86 +506,54 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
         {/* Insights */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-2.5">
-          {/* Hourly / Daily Chart */}
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-200">
+          {/* Hourly Sales BarChart (Recharts) */}
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 flex flex-col">
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="text-[11px] font-bold text-slate-500 uppercase">
-                {chartMode === 'hour' ? 'Sales by Hour' : 'Daily Trend'}
-              </div>
-              <div className="inline-flex border border-slate-200 rounded-lg overflow-hidden text-[10px] font-bold">
-                <button
-                  type="button"
-                  onClick={() => setChartMode('hour')}
-                  className={`px-2 py-0.5 cursor-pointer ${
-                    chartMode === 'hour' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600'
-                  }`}
-                >
-                  Hour
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setChartMode('day')}
-                  className={`px-2 py-0.5 cursor-pointer ${
-                    chartMode === 'day' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600'
-                  }`}
-                >
-                  Day
-                </button>
+                Sales by Hour ({range.label})
               </div>
             </div>
 
-            {chartMode === 'hour' ? (
-              !hourBars ? (
-                <div className="h-24 flex items-center justify-center text-[11px] text-slate-400">
-                  No sales in this period
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-end gap-1 h-24">
-                    {hourBars.map((b) => (
-                      <div
-                        key={b.hr}
-                        className={`flex-1 min-w-0 rounded-t ${
-                          b.value ? 'bg-emerald-500' : 'bg-slate-200'
-                        }`}
-                        style={{ height: `${b.pct}%` }}
-                        title={`${b.label}: ${formatPeso(b.value)}`}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex gap-1 mt-1 text-[9px] text-slate-500 font-mono-num">
-                    {hourBars.map((b) => (
-                      <div key={b.hr} className="flex-1 min-w-0 text-center">
-                        {b.label}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )
-            ) : !dayBars ? (
-              <div className="h-24 flex items-center justify-center text-[11px] text-slate-400">
+            {hourlySeries.length === 0 ? (
+              <div className="h-32 flex items-center justify-center text-[11px] text-slate-400">
                 No sales in this period
               </div>
             ) : (
-              <>
-                <div className="flex items-end gap-1 h-24">
-                  {dayBars.map((b) => (
-                    <div
-                      key={b.day}
-                      className="flex-1 min-w-0 rounded-t bg-indigo-500"
-                      style={{ height: `${b.pct}%` }}
-                      title={`${b.day}: ${formatPeso(b.value)}`}
+              <div className="w-full h-32">
+                <ResponsiveContainer width="100%" height={128}>
+                  <BarChart data={hourlySeries} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis
+                      dataKey="label"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
                     />
-                  ))}
-                </div>
-                <div className="flex gap-1 mt-1 text-[9px] text-slate-500 font-mono-num">
-                  {dayBars.map((b) => (
-                    <div key={b.day} className="flex-1 min-w-0 text-center truncate">
-                      {b.label}
-                    </div>
-                  ))}
-                </div>
-              </>
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: '#94a3b8', fontSize: 9, fontFamily: 'JetBrains Mono, monospace' }}
+                      tickFormatter={(v: number) => (v >= 1000 ? `₱${(v / 1000).toFixed(0)}k` : `₱${v}`)}
+                    />
+                    <Tooltip
+                      cursor={{ fill: '#f1f5f9' }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        const pt = payload[0].payload as { label: string; sales: number };
+                        return (
+                          <div className="bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-[11px] shadow-md">
+                            <span className="text-slate-300 font-semibold">{pt.label}: </span>
+                            <span className="font-mono-num font-bold text-emerald-400">
+                              {formatPeso(pt.sales)}
+                            </span>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar dataKey="sales" fill="#10b981" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             )}
           </div>
 
@@ -737,6 +697,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
           ) : (
             visibleList.map((s) => {
               const pr = saleProfitCalc(s, prodById, products);
+              const isExpanded = expandedReceipt === s.receiptNo;
               return (
                 <div
                   key={s.receiptNo}
@@ -769,7 +730,28 @@ export const SalesView: React.FC<SalesViewProps> = ({
                       Void reason: {s.voidReason}
                     </div>
                   )}
+                  {isExpanded && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-1 text-[11px]">
+                      {s.items.map((it, idx) => (
+                        <div key={idx} className="flex justify-between gap-2">
+                          <span className="text-slate-700 truncate">
+                            {it.name} ({formatQty(it.qty, it.unit)})
+                          </span>
+                          <span className="font-mono-num font-bold text-slate-900 shrink-0">
+                            {formatPeso(it.lineTotal)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedReceipt(isExpanded ? null : s.receiptNo)}
+                      className="px-3 py-1.5 min-h-[36px] rounded-lg bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+                    >
+                      {isExpanded ? 'Hide Items' : 'Items'}
+                    </button>
                     <button
                       type="button"
                       onClick={() => onReprintReceipt(s)}
@@ -826,57 +808,92 @@ export const SalesView: React.FC<SalesViewProps> = ({
               ) : (
                 visibleList.map((s) => {
                   const pr = saleProfitCalc(s, prodById, products);
+                  const isExpanded = expandedReceipt === s.receiptNo;
                   return (
-                    <tr key={s.receiptNo} className={`hover:bg-slate-50 transition ${s.voided ? 'bg-rose-50/40' : ''}`}>
-                      <td className="py-3 px-4 font-mono-num font-bold text-xs text-slate-800">
-                        {s.receiptNo}
-                        {s.voided && (
-                          <span className="ml-1.5 text-rose-600 text-[10px] font-extrabold">VOID</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-xs text-slate-500">{s.dateFormatted}</td>
-                      <td className="py-3 px-4 text-xs text-slate-700">
-                        {s.items.length} item(s)
-                        {s.voided && s.voidReason && (
-                          <span className="block text-[10px] text-rose-600">{s.voidReason}</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-xs font-semibold text-indigo-600">
-                        {s.paymentMethod}
-                      </td>
-                      <td
-                        className={`py-3 px-4 text-right font-mono-num font-extrabold ${
-                          s.voided ? 'line-through text-slate-400' : 'text-emerald-700'
-                        }`}
-                      >
-                        {formatPeso(s.grandTotal)}
-                      </td>
-                      <td
-                        className={`py-3 px-4 text-right font-mono-num font-bold text-xs ${
-                          s.voided ? 'text-slate-400' : 'text-emerald-700'
-                        }`}
-                      >
-                        {s.voided || pr === null ? '—' : formatPeso(pr)}
-                      </td>
-                      <td className="py-3 px-4 text-right space-x-1 whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => onReprintReceipt(s)}
-                          className="px-3 py-1.5 min-h-[34px] rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
-                        >
-                          Receipt
-                        </button>
-                        {!s.voided && (
+                    <React.Fragment key={s.receiptNo}>
+                      <tr className={`hover:bg-slate-50 transition ${s.voided ? 'bg-rose-50/40' : ''}`}>
+                        <td className="py-3 px-4 font-mono-num font-bold text-xs text-slate-800">
                           <button
                             type="button"
-                            onClick={() => onVoidSale(s.receiptNo)}
-                            className="px-3 py-1.5 min-h-[34px] rounded-lg bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-600 cursor-pointer"
+                            onClick={() => setExpandedReceipt(isExpanded ? null : s.receiptNo)}
+                            aria-expanded={isExpanded}
+                            className="inline-flex items-center gap-1.5 hover:text-emerald-700 cursor-pointer"
                           >
-                            Void
+                            {isExpanded ? (
+                              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                            ) : (
+                              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                            )}
+                            <span>{s.receiptNo}</span>
                           </button>
-                        )}
-                      </td>
-                    </tr>
+                          {s.voided && (
+                            <span className="ml-1.5 text-rose-600 text-[10px] font-extrabold">VOID</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-xs text-slate-500">{s.dateFormatted}</td>
+                        <td className="py-3 px-4 text-xs text-slate-700">
+                          {s.items.length} item(s)
+                          {s.voided && s.voidReason && (
+                            <span className="block text-[10px] text-rose-600">{s.voidReason}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-xs font-semibold text-indigo-600">
+                          {s.paymentMethod}
+                        </td>
+                        <td
+                          className={`py-3 px-4 text-right font-mono-num font-extrabold ${
+                            s.voided ? 'line-through text-slate-400' : 'text-emerald-700'
+                          }`}
+                        >
+                          {formatPeso(s.grandTotal)}
+                        </td>
+                        <td
+                          className={`py-3 px-4 text-right font-mono-num font-bold text-xs ${
+                            s.voided ? 'text-slate-400' : 'text-emerald-700'
+                          }`}
+                        >
+                          {s.voided || pr === null ? '—' : formatPeso(pr)}
+                        </td>
+                        <td className="py-3 px-4 text-right space-x-1 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => onReprintReceipt(s)}
+                            aria-label={`Receipt ${s.receiptNo}`}
+                            className="px-3 py-1.5 min-h-[34px] rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+                          >
+                            Receipt
+                          </button>
+                          {!s.voided && (
+                            <button
+                              type="button"
+                              onClick={() => onVoidSale(s.receiptNo)}
+                              aria-label={`Void ${s.receiptNo}`}
+                              className="px-3 py-1.5 min-h-[34px] rounded-lg bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-600 cursor-pointer"
+                            >
+                              Void
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="bg-slate-50/80">
+                          <td colSpan={7} className="px-6 py-2.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1 text-[11px]">
+                              {s.items.map((it, idx) => (
+                                <div key={idx} className="flex justify-between gap-2 py-0.5 border-b border-slate-200/70">
+                                  <span className="text-slate-700 truncate">
+                                    {it.name} · <span className="text-slate-500">{formatQty(it.qty, it.unit)}</span>
+                                  </span>
+                                  <span className="font-mono-num font-bold text-slate-900 shrink-0">
+                                    {formatPeso(it.lineTotal)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })
               )}

@@ -135,7 +135,7 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                   <div
                     className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 ${
                       m.role === 'user'
-                        ? 'bg-blue-600 text-white rounded-br-xs font-medium'
+                        ? 'bg-slate-900 text-white rounded-br-xs font-medium'
                         : 'bg-white border border-slate-200 text-slate-800 rounded-bl-xs shadow-2xs'
                     }`}
                   >
@@ -150,7 +150,7 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                           key={chip}
                           type="button"
                           onClick={() => askQuestion(chip)}
-                          className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-[11px] font-semibold text-slate-700 cursor-pointer"
+                          className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50 text-[11px] font-semibold text-slate-700 cursor-pointer"
                         >
                           {chip}
                         </button>
@@ -174,13 +174,13 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask: benta ngayon, restock, magkano..."
-                className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs focus:border-blue-600 focus:outline-none"
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs focus:border-emerald-600 focus:outline-none"
               />
               <button
                 type="submit"
                 disabled={!input.trim()}
                 aria-label="Send question"
-                className="w-9 h-9 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center cursor-pointer disabled:opacity-40"
+                className="w-9 h-9 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center cursor-pointer disabled:opacity-40"
               >
                 <Send className="w-4 h-4" />
               </button>

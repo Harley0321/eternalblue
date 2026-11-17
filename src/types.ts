@@ -73,6 +73,8 @@ export interface HeldOrder {
   time: string;
   items: CartLine[];
   total: number;
+  isSeniorPwd?: boolean;
+  priceMode?: PriceType;
 }
 
 export interface StoreSettings {

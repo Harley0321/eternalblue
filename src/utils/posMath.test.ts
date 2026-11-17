@@ -663,6 +663,45 @@ test('applyBatchStockUpdates handles atomic delta/set updates and parseInventory
   assert.equal(preview.rows[2].action, 'skip');
 });
 
+test('cashier multiplier parser, product Map lookup, and hourly sales series work accurately', async () => {
+  const {
+    buildProductMap,
+    computeHourlySalesSeries,
+    parseQtySearchInput,
+  } = await import('./posMath');
+
+  assert.deepEqual(parseQtySearchInput('5*4800016644801'), { qty: 5, query: '4800016644801' });
+  assert.deepEqual(parseQtySearchInput(' 2.5 * sinandomeng '), { qty: 2.5, query: 'sinandomeng' });
+  assert.deepEqual(parseQtySearchInput('0*4800016644801'), { qty: 1, query: '0*4800016644801' });
+  assert.deepEqual(parseQtySearchInput('Nescafe 3x100g'), { qty: 1, query: 'Nescafe 3x100g' });
+
+  const catalog = buildDefaultCatalog();
+  const map = buildProductMap(catalog);
+  const sampleCart: CartLine[] = [
+    {
+      productId: catalog[0].id,
+      name: catalog[0].name,
+      unit: catalog[0].unit,
+      retailPrice: catalog[0].retailPrice,
+      wholesalePrice: catalog[0].wholesalePrice,
+      wholesaleMinQty: catalog[0].wholesaleMinQty,
+      priceType: 'wholesale',
+      qty: 12,
+    },
+  ];
+  const fromArray = computeCartTotals(sampleCart, catalog, true, DEFAULT_SETTINGS);
+  const fromMap = computeCartTotals(sampleCart, map, true, DEFAULT_SETTINGS);
+  assert.deepEqual(fromMap, fromArray);
+
+  assert.deepEqual(computeHourlySalesSeries({}), []);
+  const hourly = computeHourlySalesSeries({ 9: 450.5, 11: 1200 });
+  assert.equal(hourly.length, 8);
+  assert.equal(hourly.find((h) => h.hr === 9)?.label, '9a');
+  assert.equal(hourly.find((h) => h.hr === 9)?.sales, 450.5);
+  assert.equal(hourly.find((h) => h.hr === 11)?.sales, 1200);
+});
+
+
 
 
 
