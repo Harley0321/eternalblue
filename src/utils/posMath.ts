@@ -20,6 +20,14 @@ export const STORAGE_KEYS = {
   STOCKLOG: 'omnimart_ph_stocklog_v1', // strictly additive log; never modifies existing keys
   CONFIG_HISTORY: 'omnimart_ph_config_history_v1', // strictly additive configuration revision history
   SECURITY_LOG: 'omnimart_ph_seclog_v1', // strictly additive tamper-evident hash-chained audit ledger
+  CUSTOMERS: 'omnimart_ph_customers_v1',
+  UTANG_TX: 'omnimart_ph_utang_tx_v1',
+  REPACK_RULES: 'omnimart_ph_repack_rules_v1',
+  REPACK_LOG: 'omnimart_ph_repack_log_v1',
+  DRAWER_EVENTS: 'omnimart_ph_drawer_events_v1',
+  SERVICE_LOGS: 'omnimart_ph_service_logs_v1',
+  CASHIERS: 'omnimart_ph_cashiers_v1',
+  ACTIVE_SHIFT: 'omnimart_ph_active_shift_v1',
 } as const;
 
 export const DEFAULT_SETTINGS: StoreSettings = {
@@ -38,6 +46,8 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   lastBackup: '',
   scDiscountCap: 125,
   receiptWidth: '80mm',
+  loyaltyPesoPerPoint: 50,
+  loyaltyPointValue: 1,
   autoLockMinutes: 5,
   lockWholePos: false,
 };

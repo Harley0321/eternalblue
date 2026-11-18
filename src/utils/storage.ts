@@ -1,11 +1,19 @@
 import type {
+  ActiveShiftState,
+  CashDrawerEvent,
+  CashierAccount,
   ConfigSnapshot,
+  DigitalServiceEntry,
   HeldOrder,
   Product,
+  RepackLogEntry,
+  RepackRule,
   SaleRecord,
   SecurityLogEntry,
   StockLogEntry,
   StoreSettings,
+  SukiCustomer,
+  UtangTransaction,
 } from '../types';
 import {
   buildDefaultCatalog,
@@ -227,6 +235,136 @@ export function saveSecurityLogToStorage(entries: SecurityLogEntry[]): void {
   }
 }
 
+// ============================================================================
+// Additive Store Ops Storage Helpers
+// ============================================================================
+
+function loadArrayKey<T>(key: string): T[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = safeJsonParse<unknown>(raw);
+      if (Array.isArray(parsed)) return parsed as T[];
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function saveArrayKey<T>(key: string, items: T[], maxItems?: number): SaveResult {
+  try {
+    const list = maxItems ? items.slice(0, maxItems) : items;
+    localStorage.setItem(key, JSON.stringify(list));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+export function loadCustomersFromStorage(): SukiCustomer[] {
+  return loadArrayKey<SukiCustomer>(STORAGE_KEYS.CUSTOMERS);
+}
+
+export function saveCustomersToStorage(customers: SukiCustomer[]): SaveResult {
+  return saveArrayKey(STORAGE_KEYS.CUSTOMERS, customers);
+}
+
+export function loadUtangTxFromStorage(): UtangTransaction[] {
+  return loadArrayKey<UtangTransaction>(STORAGE_KEYS.UTANG_TX);
+}
+
+export function saveUtangTxToStorage(txs: UtangTransaction[]): SaveResult {
+  return saveArrayKey(STORAGE_KEYS.UTANG_TX, txs, 600);
+}
+
+export function loadRepackRulesFromStorage(): RepackRule[] {
+  return loadArrayKey<RepackRule>(STORAGE_KEYS.REPACK_RULES);
+}
+
+export function saveRepackRulesToStorage(rules: RepackRule[]): SaveResult {
+  return saveArrayKey(STORAGE_KEYS.REPACK_RULES, rules);
+}
+
+export function loadRepackLogFromStorage(): RepackLogEntry[] {
+  return loadArrayKey<RepackLogEntry>(STORAGE_KEYS.REPACK_LOG);
+}
+
+export function saveRepackLogToStorage(logs: RepackLogEntry[]): SaveResult {
+  return saveArrayKey(STORAGE_KEYS.REPACK_LOG, logs, 300);
+}
+
+export function loadDrawerEventsFromStorage(): CashDrawerEvent[] {
+  return loadArrayKey<CashDrawerEvent>(STORAGE_KEYS.DRAWER_EVENTS);
+}
+
+export function saveDrawerEventsToStorage(events: CashDrawerEvent[]): SaveResult {
+  return saveArrayKey(STORAGE_KEYS.DRAWER_EVENTS, events, 400);
+}
+
+export function loadServiceLogsFromStorage(): DigitalServiceEntry[] {
+  return loadArrayKey<DigitalServiceEntry>(STORAGE_KEYS.SERVICE_LOGS);
+}
+
+export function saveServiceLogsToStorage(entries: DigitalServiceEntry[]): SaveResult {
+  return saveArrayKey(STORAGE_KEYS.SERVICE_LOGS, entries, 400);
+}
+
+export function buildDefaultCashiers(): CashierAccount[] {
+  return [
+    {
+      id: 'CSH-OWNER',
+      name: 'Owner / Manager',
+      role: 'manager',
+      active: true,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+}
+
+export function loadCashiersFromStorage(): CashierAccount[] {
+  const existing = loadArrayKey<CashierAccount>(STORAGE_KEYS.CASHIERS);
+  if (existing.length > 0) return existing;
+  const seeded = buildDefaultCashiers();
+  saveCashiersToStorage(seeded);
+  return seeded;
+}
+
+export function saveCashiersToStorage(cashiers: CashierAccount[]): SaveResult {
+  return saveArrayKey(STORAGE_KEYS.CASHIERS, cashiers);
+}
+
+export function loadActiveShiftFromStorage(): ActiveShiftState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.ACTIVE_SHIFT);
+    if (raw) {
+      const parsed = safeJsonParse<unknown>(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const rec = parsed as Partial<ActiveShiftState>;
+        if (rec.shiftId && rec.cashierId && rec.cashierName) {
+          return rec as ActiveShiftState;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function saveActiveShiftToStorage(shift: ActiveShiftState | null): SaveResult {
+  try {
+    if (!shift) {
+      localStorage.removeItem(STORAGE_KEYS.ACTIVE_SHIFT);
+    } else {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_SHIFT, JSON.stringify(shift));
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 export function getUsedStorageBytes(): number {
   let bytes = 0;
   try {
@@ -257,6 +395,14 @@ const STORAGE_LABELS: Record<string, string> = {
   [STORAGE_KEYS.CONFIG_HISTORY]: 'Config History',
   [STORAGE_KEYS.SCANPREFS]: 'Scanner Prefs',
   [STORAGE_KEYS.PINLOCK]: 'PIN Lockout State',
+  [STORAGE_KEYS.CUSTOMERS]: 'Suki & Utang Ledger',
+  [STORAGE_KEYS.UTANG_TX]: 'Utang Transactions',
+  [STORAGE_KEYS.REPACK_RULES]: 'Tingi / Repack Rules',
+  [STORAGE_KEYS.REPACK_LOG]: 'Tingi / Repack History',
+  [STORAGE_KEYS.DRAWER_EVENTS]: 'Shift Float & Expenses',
+  [STORAGE_KEYS.SERVICE_LOGS]: 'GCash / Maya / E-Load',
+  [STORAGE_KEYS.CASHIERS]: 'Cashier Accounts',
+  [STORAGE_KEYS.ACTIVE_SHIFT]: 'Active Shift State',
 };
 
 export function getStorageBreakdown(): { totalBytes: number; items: StorageBreakdownItem[] } {

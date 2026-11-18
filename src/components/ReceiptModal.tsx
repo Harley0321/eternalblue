@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Download, Printer, X } from 'lucide-react';
+import { Bluetooth, Copy, Download, Printer, X } from 'lucide-react';
 import type { SaleRecord, StoreSettings } from '../types';
+import {
+  buildEscPosReceiptBytes,
+  connectBluetoothPrinter,
+  getBluetoothPrinterSession,
+  isWebBluetoothSupported,
+  sendBytesToBluetoothPrinter,
+} from '../utils/escPosPrinter';
 import { formatPeso, formatQty } from '../utils/posMath';
 
 export interface ReadingReport {
@@ -30,6 +37,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   const [width, setWidth] = useState<'80mm' | '58mm'>(() =>
     settings.receiptWidth === '58mm' ? '58mm' : '80mm',
   );
+  const [btSending, setBtSending] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -52,6 +60,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
     if (sale) {
       out.push(`Receipt: ${sale.receiptNo}`);
       out.push(`Date: ${sale.dateFormatted}`);
+      if (sale.cashierName) out.push(`Cashier: ${sale.cashierName}`);
+      if (sale.customerName) out.push(`Suki: ${sale.customerName}`);
       if (sale.voided) out.push(`*** VOIDED (${sale.voidReason || 'Cancelled'}) ***`);
       out.push('--------------------------------');
       sale.items.forEach((it) => {
@@ -66,6 +76,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
       if (sale.seniorDiscount > 0) {
         out.push(`SC/PWD 5% Disc${sale.seniorId ? ` (${sale.seniorId})` : ''}: -${formatPeso(sale.seniorDiscount)}`);
       }
+      if (sale.pointsDiscount && sale.pointsDiscount > 0) {
+        out.push(`Suki Points (${sale.pointsRedeemed || 0} pts): -${formatPeso(sale.pointsDiscount)}`);
+      }
       out.push(`TOTAL: ${formatPeso(sale.grandTotal)}`);
       if (sale.paymentMethod === 'Split' && sale.splitDetails) {
         out.push(`Paid Split: Cash ${formatPeso(sale.splitDetails.cash)} + ${sale.splitDetails.digitalMethod} ${formatPeso(sale.splitDetails.digital)}`);
@@ -73,6 +86,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
         out.push(`Payment (${sale.paymentMethod}): ${formatPeso(sale.tendered)}`);
         if (sale.change > 0) out.push(`Change: ${formatPeso(sale.change)}`);
       }
+      if (sale.utangDueDate) out.push(`Utang Due Date: ${sale.utangDueDate}`);
+      if (sale.pointsEarned && sale.pointsEarned > 0) out.push(`Points Earned: +${sale.pointsEarned} pts`);
       if (sale.refNo) out.push(`Ref #: ${sale.refNo}`);
       out.push('--------------------------------');
       out.push(settings.receiptFooter || 'Thank you for shopping!');
@@ -108,6 +123,34 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
     a.remove();
     URL.revokeObjectURL(url);
     onToast('Receipt downloaded as .txt', 'success');
+  };
+
+  const handleBluetoothPrint = async () => {
+    if (!isWebBluetoothSupported()) {
+      onToast('Web Bluetooth requires Chrome or Edge over HTTPS / localhost', 'warning');
+      return;
+    }
+    setBtSending(true);
+    try {
+      let session = getBluetoothPrinterSession();
+      if (!session.connected) {
+        session = await connectBluetoothPrinter();
+      }
+      const bytes = buildEscPosReceiptBytes({
+        sale,
+        reading,
+        settings,
+        width,
+        kickDrawer: sale?.paymentMethod === 'Cash' || sale?.paymentMethod === 'Split',
+      });
+      await sendBytesToBluetoothPrinter(bytes);
+      onToast(`Printed to ${session.deviceName}`, 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Bluetooth print cancelled or failed';
+      onToast(msg, 'warning');
+    } finally {
+      setBtSending(false);
+    }
   };
 
   return (
@@ -175,6 +218,18 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                     <span>Date:</span>
                     <span>{sale.dateFormatted}</span>
                   </div>
+                  {sale.cashierName && (
+                    <div className="flex justify-between">
+                      <span>Cashier:</span>
+                      <span>{sale.cashierName}</span>
+                    </div>
+                  )}
+                  {sale.customerName && (
+                    <div className="flex justify-between">
+                      <span>Suki:</span>
+                      <span className="font-semibold">{sale.customerName}</span>
+                    </div>
+                  )}
                   {sale.voided && (
                     <div className="text-center font-bold text-rose-700 py-1 border border-rose-400 mt-1">
                       *** VOIDED ***
@@ -215,6 +270,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                       <span>−{formatPeso(sale.seniorDiscount)}</span>
                     </div>
                   )}
+                  {sale.pointsDiscount && sale.pointsDiscount > 0 && (
+                    <div className="flex justify-between">
+                      <span>Suki Points ({sale.pointsRedeemed || 0} pts)</span>
+                      <span>−{formatPeso(sale.pointsDiscount)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between font-bold text-sm pt-1">
                     <span>TOTAL</span>
                     <span>{formatPeso(sale.grandTotal)}</span>
@@ -246,6 +307,18 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                         </div>
                       )}
                     </>
+                  )}
+                  {sale.utangDueDate && (
+                    <div className="flex justify-between font-semibold">
+                      <span>Utang Due Date</span>
+                      <span>{sale.utangDueDate}</span>
+                    </div>
+                  )}
+                  {sale.pointsEarned && sale.pointsEarned > 0 && (
+                    <div className="flex justify-between">
+                      <span>Points Earned</span>
+                      <span>+{sale.pointsEarned} pts</span>
+                    </div>
                   )}
                   {sale.refNo && (
                     <div className="flex justify-between">
@@ -288,11 +361,11 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
         </div>
 
         {/* Actions */}
-        <div className="no-print px-4 py-3 border-t border-slate-200 bg-white flex gap-2">
+        <div className="no-print px-4 py-3 border-t border-slate-200 bg-white flex flex-wrap gap-1.5">
           <button
             type="button"
             onClick={handleCopy}
-            className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+            className="inline-flex items-center justify-center gap-1 px-2.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
             title="Copy plain text receipt"
           >
             <Copy className="w-4 h-4" />
@@ -301,7 +374,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
           <button
             type="button"
             onClick={handleDownloadTxt}
-            className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+            className="inline-flex items-center justify-center gap-1 px-2.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
             title="Download receipt as .txt"
           >
             <Download className="w-4 h-4" />
@@ -309,8 +382,19 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
           </button>
           <button
             type="button"
+            onClick={handleBluetoothPrint}
+            disabled={btSending}
+            data-testid="receipt-bt-print-btn"
+            className="inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold cursor-pointer disabled:opacity-60"
+            title="Send ESC/POS directly via Web Bluetooth"
+          >
+            <Bluetooth className="w-4 h-4" />
+            <span>{btSending ? 'Sending…' : 'BT Print'}</span>
+          </button>
+          <button
+            type="button"
             onClick={() => window.print()}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-emerald-400 text-xs font-extrabold cursor-pointer"
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-emerald-400 text-xs font-extrabold cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             Print ({width})

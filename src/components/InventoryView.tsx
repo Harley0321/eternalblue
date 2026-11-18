@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   Download,
   History,
+  PackageOpen,
   PackagePlus,
   Pencil,
   Percent,
@@ -69,6 +70,7 @@ interface InventoryViewProps {
   onOpenBatchStock: (mode?: 'delta' | 'set') => void;
   onOpenCsvImport: () => void;
   onOpenStockLog: () => void;
+  onOpenRepack?: () => void;
   onOpenProductModal: (productId?: string) => void;
   onOpenStockAdjust: (productId: string) => void;
   onPullExpiredBatch?: () => void;
@@ -96,6 +98,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onOpenBatchStock,
   onOpenCsvImport,
   onOpenStockLog,
+  onOpenRepack,
   onOpenProductModal,
   onOpenStockAdjust,
   onPullExpiredBatch,
@@ -549,6 +552,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             <PackagePlus className="w-3.5 h-3.5" />
             <span>Reorder</span>
           </button>
+          {onOpenRepack && (
+            <button
+              type="button"
+              onClick={onOpenRepack}
+              data-testid="inventory-repack-shortcut"
+              className="px-3 min-h-[40px] rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <PackageOpen className="w-3.5 h-3.5" />
+              <span>Unpack / Tingi</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onOpenScReview}

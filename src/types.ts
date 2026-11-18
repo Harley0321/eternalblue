@@ -1,6 +1,7 @@
 export type PriceType = 'retail' | 'wholesale';
-export type PaymentMethod = 'Cash' | 'GCash' | 'Card' | 'Split';
-export type TabName = 'pos' | 'inventory' | 'sales' | 'settings';
+export type PaymentMethod = 'Cash' | 'GCash' | 'Card' | 'Split' | 'Utang';
+export type TabName = 'pos' | 'inventory' | 'operations' | 'sales' | 'settings';
+export type OperationsSubTab = 'utang' | 'repack' | 'shift' | 'services' | 'printing';
 export type ScannerMode = 'pos' | 'inventory' | 'product-form';
 
 export interface Product {
@@ -68,6 +69,16 @@ export interface SaleRecord {
   voided?: boolean;
   voidedAt?: string;
   voidReason?: string;
+  // Additive Store Ops metadata
+  customerId?: string;
+  customerName?: string;
+  pointsEarned?: number;
+  pointsRedeemed?: number;
+  pointsDiscount?: number;
+  utangDueDate?: string;
+  cashierId?: string;
+  cashierName?: string;
+  shiftId?: string;
 }
 
 export interface HeldOrder {
@@ -98,6 +109,8 @@ export interface StoreSettings {
   lastBackup: string;
   scDiscountCap: number;
   receiptWidth?: '80mm' | '58mm';
+  loyaltyPesoPerPoint?: number;
+  loyaltyPointValue?: number;
   // PIN & Hardware Security fields (legacy adminPin, PBKDF2-SHA256, or PBKDF2-SHA512)
   adminPin?: string;
   adminPinHash?: string;
@@ -113,6 +126,110 @@ export interface StoreSettings {
   passkeyLabel?: string;
   passkeyRegisteredAt?: string;
   [key: string]: unknown;
+}
+
+export interface SukiCustomer {
+  id: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  creditLimit: number;
+  balance: number;
+  dueDate?: string;
+  points: number;
+  totalSpent: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UtangTransaction {
+  id: string;
+  customerId: string;
+  customerName: string;
+  type: 'charge' | 'payment' | 'adjustment';
+  amount: number;
+  balanceAfter: number;
+  receiptNo?: string;
+  paymentMethod?: 'Cash' | 'GCash' | 'Card';
+  note?: string;
+  dateIso: string;
+  cashierName?: string;
+}
+
+export interface RepackRule {
+  id: string;
+  name: string;
+  masterProductId: string;
+  targetProductId: string;
+  yieldQty: number;
+  autoComputeCost: boolean;
+  updatedAt: string;
+}
+
+export interface RepackLogEntry {
+  id: string;
+  dateIso: string;
+  ruleId: string;
+  masterProductId: string;
+  masterName: string;
+  masterQtyUsed: number;
+  targetProductId: string;
+  targetName: string;
+  targetQtyAdded: number;
+  unitCost: number;
+  cashierName?: string;
+}
+
+export type DrawerEventType = 'float' | 'expense' | 'drop' | 'topup';
+
+export interface CashDrawerEvent {
+  id: string;
+  dateIso: string;
+  type: DrawerEventType;
+  category: string;
+  amount: number;
+  note?: string;
+  cashierName?: string;
+  shiftId?: string;
+}
+
+export type DigitalServiceKind =
+  | 'GCash Cash-In'
+  | 'GCash Cash-Out'
+  | 'Maya Cash-In'
+  | 'Maya Cash-Out'
+  | 'E-Load'
+  | 'Bills Pay';
+
+export interface DigitalServiceEntry {
+  id: string;
+  dateIso: string;
+  kind: DigitalServiceKind;
+  amount: number;
+  fee: number;
+  reference?: string;
+  customerPhone?: string;
+  note?: string;
+  cashierName?: string;
+}
+
+export interface CashierAccount {
+  id: string;
+  name: string;
+  role: 'manager' | 'cashier';
+  pin?: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface ActiveShiftState {
+  shiftId: string;
+  cashierId: string;
+  cashierName: string;
+  cashierRole: 'manager' | 'cashier';
+  openedAt: string;
+  openingFloat: number;
 }
 
 export type SecuritySeverity = 'info' | 'warning' | 'critical';

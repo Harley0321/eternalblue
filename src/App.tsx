@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  ActiveShiftState,
   CartLine,
+  CashDrawerEvent,
+  CashierAccount,
   ConfigSnapshot,
+  DigitalServiceEntry,
+  DigitalServiceKind,
+  DrawerEventType,
   HeldOrder,
+  OperationsSubTab,
   PaymentMethod,
   PriceType,
   Product,
+  RepackLogEntry,
+  RepackRule,
   SaleRecord,
   ScannerMode,
   SecurityEventType,
@@ -13,7 +22,9 @@ import type {
   SecuritySeverity,
   StockLogEntry,
   StoreSettings,
+  SukiCustomer,
   TabName,
+  UtangTransaction,
 } from './types';
 import {
   applyBatchStockUpdates,
@@ -43,6 +54,14 @@ import {
   type BatchStockAdjustmentInput,
   type CsvImportRowPreview,
 } from './utils/posMath';
+import {
+  applyUtangCharge,
+  applyUtangPayment,
+  computeLoyaltyPointsEarned,
+  computeShiftLedgerSummary,
+  executeRepackConversion,
+  isCustomerOverdue,
+} from './utils/opsMath';
 import { warmUpScannerEngine } from './utils/scannerEngine';
 import { APP_VERSION } from './version';
 import { pinIsSet } from './utils/pinSecurity';
@@ -52,20 +71,37 @@ import {
   verifySecurityChain,
 } from './utils/cryptoVault';
 import {
+  buildDefaultCashiers,
+  loadActiveShiftFromStorage,
+  loadCashiersFromStorage,
   loadConfigHistoryFromStorage,
+  loadCustomersFromStorage,
+  loadDrawerEventsFromStorage,
   loadHeldFromStorage,
   loadProductsFromStorage,
+  loadRepackLogFromStorage,
+  loadRepackRulesFromStorage,
   loadSalesFromStorage,
   loadSecurityLogFromStorage,
+  loadServiceLogsFromStorage,
   loadSettingsFromStorage,
   loadStockLogFromStorage,
+  loadUtangTxFromStorage,
+  saveActiveShiftToStorage,
+  saveCashiersToStorage,
   saveConfigHistoryToStorage,
+  saveCustomersToStorage,
+  saveDrawerEventsToStorage,
   saveHeldToStorage,
   saveProductsToStorage,
+  saveRepackLogToStorage,
+  saveRepackRulesToStorage,
   saveSalesToStorage,
   saveSecurityLogToStorage,
+  saveServiceLogsToStorage,
   saveSettingsToStorage,
   saveStockLogToStorage,
+  saveUtangTxToStorage,
 } from './utils/storage';
 
 import { TopBar } from './components/TopBar';
@@ -73,6 +109,7 @@ import { ToastContainer, type ToastItem } from './components/ToastContainer';
 import { CategorySheetModal } from './components/CategorySheetModal';
 import { PosView } from './components/PosView';
 import { InventoryView, type StockFilter } from './components/InventoryView';
+import { OperationsView } from './components/OperationsView';
 import { ProductModal } from './components/ProductModal';
 import { StockAdjustModal } from './components/StockAdjustModal';
 import { ScReviewModal } from './components/ScReviewModal';
@@ -120,8 +157,20 @@ export default function App() {
     return [baseline];
   });
 
+  // Additive Store Ops persistent state
+  const [customers, setCustomers] = useState<SukiCustomer[]>(() => loadCustomersFromStorage());
+  const [utangTxs, setUtangTxs] = useState<UtangTransaction[]>(() => loadUtangTxFromStorage());
+  const [repackRules, setRepackRules] = useState<RepackRule[]>(() => loadRepackRulesFromStorage());
+  const [repackLogs, setRepackLogs] = useState<RepackLogEntry[]>(() => loadRepackLogFromStorage());
+  const [drawerEvents, setDrawerEvents] = useState<CashDrawerEvent[]>(() => loadDrawerEventsFromStorage());
+  const [serviceEntries, setServiceEntries] = useState<DigitalServiceEntry[]>(() => loadServiceLogsFromStorage());
+  const [cashiers, setCashiers] = useState<CashierAccount[]>(() => loadCashiersFromStorage());
+  const [activeShift, setActiveShift] = useState<ActiveShiftState | null>(() => loadActiveShiftFromStorage());
+
   // Navigation & filter state
   const [activeTab, setActiveTab] = useState<TabName>('pos');
+  const [opsSubTab, setOpsSubTab] = useState<OperationsSubTab>('utang');
+  const [opsSubTabSignal, setOpsSubTabSignal] = useState(0);
   const [posCategory, setPosCategory] = useState('All');
   const [invCategory, setInvCategory] = useState('All');
   const [invStockFilter, setInvStockFilter] = useState<StockFilter>('ALL');
@@ -286,6 +335,11 @@ export default function App() {
     return products.filter((p) => p.stock <= th).length;
   }, [products, settings.lowStockThreshold]);
 
+  const overdueUtangCount = useMemo(
+    () => customers.filter((c) => isCustomerOverdue(c)).length,
+    [customers],
+  );
+
   // Persistence wrappers
   const updateProducts = useCallback(
     (updater: (prev: Product[]) => Product[]) => {
@@ -408,6 +462,303 @@ export default function App() {
       return next;
     });
   }, []);
+
+  // Store Ops mutations
+  const handleAddCustomer = useCallback(
+    (data: {
+      name: string;
+      phone?: string;
+      address?: string;
+      creditLimit: number;
+      notes?: string;
+    }): SukiCustomer => {
+      const nowIso = new Date().toISOString();
+      const created: SukiCustomer = {
+        id: 'SUKI-' + Date.now().toString(36).toUpperCase(),
+        name: data.name.trim(),
+        phone: data.phone,
+        address: data.address,
+        creditLimit: Math.max(0, round2(data.creditLimit)),
+        balance: 0,
+        points: 0,
+        totalSpent: 0,
+        notes: data.notes,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      setCustomers((prev) => {
+        const next = [created, ...prev];
+        saveCustomersToStorage(next);
+        return next;
+      });
+      toast(`Added Suki account: ${created.name}`, 'success');
+      return created;
+    },
+    [toast],
+  );
+
+  const handleUpdateCustomer = useCallback((id: string, patch: Partial<SukiCustomer>) => {
+    setCustomers((prev) => {
+      const next = prev.map((c) =>
+        c.id === id ? { ...c, ...patch, updatedAt: new Date().toISOString() } : c,
+      );
+      saveCustomersToStorage(next);
+      return next;
+    });
+  }, []);
+
+  const handleUtangPayment = useCallback(
+    (customerId: string, amount: number, method: 'Cash' | 'GCash' | 'Card', note?: string) => {
+      const cust = customers.find((c) => c.id === customerId);
+      if (!cust) return;
+      const res = applyUtangPayment(cust, amount, {
+        paymentMethod: method,
+        note,
+        cashierName: activeShift?.cashierName,
+      });
+      if (!res.ok) {
+        toast(res.error, 'warning');
+        return;
+      }
+      setCustomers((prev) => {
+        const next = prev.map((c) => (c.id === customerId ? res.nextCustomer : c));
+        saveCustomersToStorage(next);
+        return next;
+      });
+      setUtangTxs((prev) => {
+        const next = [res.transaction, ...prev].slice(0, 600);
+        saveUtangTxToStorage(next);
+        return next;
+      });
+      toast(`Posted bayad ${formatPeso(res.appliedAmount)} from ${cust.name}`, 'success');
+    },
+    [activeShift?.cashierName, customers, toast],
+  );
+
+  const handleUtangManualCharge = useCallback(
+    (
+      customerId: string,
+      amount: number,
+      dueDate?: string,
+      note?: string,
+      allowOverLimit?: boolean,
+    ) => {
+      const cust = customers.find((c) => c.id === customerId);
+      if (!cust) return;
+      const res = applyUtangCharge(cust, amount, {
+        dueDate,
+        note,
+        allowOverLimit,
+        cashierName: activeShift?.cashierName,
+      });
+      if (!res.ok) {
+        toast(res.error, 'warning');
+        return;
+      }
+      setCustomers((prev) => {
+        const next = prev.map((c) => (c.id === customerId ? res.nextCustomer : c));
+        saveCustomersToStorage(next);
+        return next;
+      });
+      setUtangTxs((prev) => {
+        const next = [res.transaction, ...prev].slice(0, 600);
+        saveUtangTxToStorage(next);
+        return next;
+      });
+      toast(`Added ${formatPeso(amount)} charge to ${cust.name}`, 'success');
+    },
+    [activeShift?.cashierName, customers, toast],
+  );
+
+  const handleCreateRepackRule = useCallback(
+    (rule: Omit<RepackRule, 'id' | 'updatedAt'>) => {
+      const created: RepackRule = {
+        ...rule,
+        id: 'RULE-' + Date.now().toString(36).toUpperCase(),
+        updatedAt: new Date().toISOString(),
+      };
+      setRepackRules((prev) => {
+        const next = [created, ...prev];
+        saveRepackRulesToStorage(next);
+        return next;
+      });
+      toast(`Saved repack rule: ${created.name}`, 'success');
+    },
+    [toast],
+  );
+
+  const handleDeleteRepackRule = useCallback(
+    (ruleId: string) => {
+      setRepackRules((prev) => {
+        const next = prev.filter((r) => r.id !== ruleId);
+        saveRepackRulesToStorage(next);
+        return next;
+      });
+      toast('Repack rule removed', 'warning');
+    },
+    [toast],
+  );
+
+  const handleRunRepack = useCallback(
+    (ruleId: string, qty: number) => {
+      const rule = repackRules.find((r) => r.id === ruleId);
+      if (!rule) return;
+      const res = executeRepackConversion(products, rule, qty, {
+        cashierName: activeShift?.cashierName,
+      });
+      if (!res.ok) {
+        toast(res.error, 'warning');
+        return;
+      }
+      updateProducts(() => res.nextProducts);
+      setStockLog((prev) => {
+        const next = [...res.stockLogs, ...prev].slice(0, 500);
+        saveStockLogToStorage(next);
+        return next;
+      });
+      setRepackLogs((prev) => {
+        const next = [res.repackLog, ...prev].slice(0, 300);
+        saveRepackLogToStorage(next);
+        return next;
+      });
+      toast(
+        `Unpacked ${qty} bulk → +${res.addedQty} ${res.repackLog.targetName}`,
+        'success',
+      );
+    },
+    [activeShift?.cashierName, products, repackRules, toast, updateProducts],
+  );
+
+  const handleOpenShift = useCallback(
+    (cashierId: string, openingFloat: number, pinInput?: string): boolean => {
+      const cashier = cashiers.find((c) => c.id === cashierId && c.active);
+      if (!cashier) {
+        toast('Select an active cashier profile', 'warning');
+        return false;
+      }
+      if (cashier.pin && cashier.pin !== (pinInput || '').trim()) {
+        toast(`Incorrect cashier PIN for ${cashier.name}`, 'error');
+        return false;
+      }
+      const nextShift: ActiveShiftState = {
+        shiftId: 'SHF-' + Date.now().toString(36).toUpperCase(),
+        cashierId: cashier.id,
+        cashierName: cashier.name,
+        cashierRole: cashier.role,
+        openedAt: new Date().toISOString(),
+        openingFloat: Math.max(0, round2(openingFloat)),
+      };
+      setActiveShift(nextShift);
+      saveActiveShiftToStorage(nextShift);
+      toast(`Shift started for ${cashier.name} (${formatPeso(nextShift.openingFloat)} float)`, 'success');
+      return true;
+    },
+    [cashiers, toast],
+  );
+
+  const handleAddCashier = useCallback(
+    (data: { name: string; role: 'manager' | 'cashier'; pin?: string }) => {
+      const created: CashierAccount = {
+        id: 'CSH-' + Date.now().toString(36).toUpperCase(),
+        name: data.name.trim(),
+        role: data.role,
+        pin: data.pin,
+        active: true,
+        createdAt: new Date().toISOString(),
+      };
+      setCashiers((prev) => {
+        const next = [...prev, created];
+        saveCashiersToStorage(next);
+        return next;
+      });
+      toast(`Added ${created.role}: ${created.name}`, 'success');
+    },
+    [toast],
+  );
+
+  const handleToggleCashierActive = useCallback((cashierId: string) => {
+    setCashiers((prev) => {
+      const next = prev.map((c) => (c.id === cashierId ? { ...c, active: !c.active } : c));
+      saveCashiersToStorage(next);
+      return next;
+    });
+  }, []);
+
+  const handleAddDrawerEvent = useCallback(
+    (data: { type: DrawerEventType; category: string; amount: number; note?: string }) => {
+      const entry: CashDrawerEvent = {
+        id: 'DRW-' + Date.now().toString(36).toUpperCase(),
+        dateIso: new Date().toISOString(),
+        type: data.type,
+        category: data.category,
+        amount: round2(data.amount),
+        note: data.note,
+        cashierName: activeShift?.cashierName,
+        shiftId: activeShift?.shiftId,
+      };
+      setDrawerEvents((prev) => {
+        const next = [entry, ...prev].slice(0, 400);
+        saveDrawerEventsToStorage(next);
+        return next;
+      });
+      toast(`Recorded ${data.type}: ${formatPeso(entry.amount)}`, 'success');
+    },
+    [activeShift?.cashierName, activeShift?.shiftId, toast],
+  );
+
+  const handleDeleteDrawerEvent = useCallback(
+    (id: string) => {
+      setDrawerEvents((prev) => {
+        const next = prev.filter((ev) => ev.id !== id);
+        saveDrawerEventsToStorage(next);
+        return next;
+      });
+      toast('Drawer entry removed', 'warning');
+    },
+    [toast],
+  );
+
+  const handleAddServiceEntry = useCallback(
+    (data: {
+      kind: DigitalServiceKind;
+      amount: number;
+      fee: number;
+      reference?: string;
+      customerPhone?: string;
+      note?: string;
+    }) => {
+      const entry: DigitalServiceEntry = {
+        id: 'SVC-' + Date.now().toString(36).toUpperCase(),
+        dateIso: new Date().toISOString(),
+        kind: data.kind,
+        amount: round2(data.amount),
+        fee: round2(data.fee),
+        reference: data.reference,
+        customerPhone: data.customerPhone,
+        note: data.note,
+        cashierName: activeShift?.cashierName,
+      };
+      setServiceEntries((prev) => {
+        const next = [entry, ...prev].slice(0, 400);
+        saveServiceLogsToStorage(next);
+        return next;
+      });
+      toast(`Logged ${entry.kind}: ${formatPeso(entry.amount)} (Fee ${formatPeso(entry.fee)})`, 'success');
+    },
+    [activeShift?.cashierName, toast],
+  );
+
+  const handleDeleteServiceEntry = useCallback(
+    (id: string) => {
+      setServiceEntries((prev) => {
+        const next = prev.filter((e) => e.id !== id);
+        saveServiceLogsToStorage(next);
+        return next;
+      });
+      toast('Service log entry removed', 'warning');
+    },
+    [toast],
+  );
 
   const handleLockTerminal = useCallback(() => {
     if (!pinIsSet(settings)) return;
@@ -783,13 +1134,18 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [activeTab, cart.length, products, addQtyToCart, handleSetPriceMode, priceMode, settings, terminalLocked, handleLockTerminal, toast]);
 
-  // Complete sale
+  // Complete sale (supports Cash, GCash, Card, Split, Utang + Suki Loyalty + Cashier tag)
   const handleCompleteSale = (payload: {
     paymentMethod: PaymentMethod;
     tendered: number;
     change: number;
     refNo?: string;
     seniorId?: string;
+    customerId?: string;
+    pointsRedeemed?: number;
+    pointsDiscount?: number;
+    utangDueDate?: string;
+    allowOverLimit?: boolean;
     splitDetails?: {
       cash: number;
       digital: number;
@@ -798,6 +1154,68 @@ export default function App() {
   }) => {
     const now = new Date();
     const receiptNo = nextReceiptNo(sales, now);
+    const nowIso = now.toISOString();
+
+    const pointsDiscount = round2(payload.pointsDiscount || 0);
+    const pointsRedeemed = Math.max(0, Math.floor(payload.pointsRedeemed || 0));
+    const finalGrandTotal = round2(Math.max(0, cartTotals.grandTotal - pointsDiscount));
+
+    let customer = payload.customerId
+      ? customers.find((c) => c.id === payload.customerId) || null
+      : null;
+
+    if (payload.paymentMethod === 'Utang' && !customer) {
+      toast('Select a Suki customer account for Utang checkout', 'warning');
+      return;
+    }
+
+    const pesoPerPoint =
+      Number(settings.loyaltyPesoPerPoint) > 0 ? Number(settings.loyaltyPesoPerPoint) : 50;
+    const pointsEarned = customer ? computeLoyaltyPointsEarned(finalGrandTotal, pesoPerPoint) : 0;
+
+    if (customer) {
+      if (payload.paymentMethod === 'Utang') {
+        const chargeRes = applyUtangCharge(customer, finalGrandTotal, {
+          receiptNo,
+          dueDate: payload.utangDueDate,
+          cashierName: activeShift?.cashierName,
+          allowOverLimit: payload.allowOverLimit,
+          nowIso,
+        });
+        if (!chargeRes.ok) {
+          toast(chargeRes.error, 'warning');
+          return;
+        }
+        const updatedCust: SukiCustomer = {
+          ...chargeRes.nextCustomer,
+          points: Math.max(0, chargeRes.nextCustomer.points - pointsRedeemed + pointsEarned),
+        };
+        setCustomers((prev) => {
+          const next = prev.map((c) => (c.id === updatedCust.id ? updatedCust : c));
+          saveCustomersToStorage(next);
+          return next;
+        });
+        setUtangTxs((prev) => {
+          const next = [chargeRes.transaction, ...prev].slice(0, 600);
+          saveUtangTxToStorage(next);
+          return next;
+        });
+        customer = updatedCust;
+      } else {
+        const updatedCust: SukiCustomer = {
+          ...customer,
+          points: Math.max(0, customer.points - pointsRedeemed + pointsEarned),
+          totalSpent: round2((customer.totalSpent || 0) + finalGrandTotal),
+          updatedAt: nowIso,
+        };
+        setCustomers((prev) => {
+          const next = prev.map((c) => (c.id === updatedCust.id ? updatedCust : c));
+          saveCustomersToStorage(next);
+          return next;
+        });
+        customer = updatedCust;
+      }
+    }
 
     const saleItems = cart.map((line) => {
       const prod = productMap.get(line.productId);
@@ -818,7 +1236,7 @@ export default function App() {
 
     const record: SaleRecord = {
       receiptNo,
-      dateIso: now.toISOString(),
+      dateIso: nowIso,
       dateFormatted: now.toLocaleString('en-PH', {
         month: 'short',
         day: 'numeric',
@@ -830,7 +1248,7 @@ export default function App() {
       retailSubtotal: cartTotals.retailSubtotal,
       wholesaleSavings: cartTotals.wholesaleSavings,
       seniorDiscount: cartTotals.seniorDiscount,
-      grandTotal: cartTotals.grandTotal,
+      grandTotal: finalGrandTotal,
       paymentMethod: payload.paymentMethod,
       tendered: payload.tendered,
       change: payload.change,
@@ -839,6 +1257,15 @@ export default function App() {
       seniorId: payload.seniorId,
       seniorBase: cartTotals.seniorDiscount > 0 ? cartTotals.seniorBase : undefined,
       seniorCapped: cartTotals.seniorDiscount > 0 ? cartTotals.seniorCapped : undefined,
+      customerId: customer?.id,
+      customerName: customer?.name,
+      pointsEarned: pointsEarned > 0 ? pointsEarned : undefined,
+      pointsRedeemed: pointsRedeemed > 0 ? pointsRedeemed : undefined,
+      pointsDiscount: pointsDiscount > 0 ? pointsDiscount : undefined,
+      utangDueDate: payload.paymentMethod === 'Utang' ? payload.utangDueDate : undefined,
+      cashierId: activeShift?.cashierId,
+      cashierName: activeShift?.cashierName,
+      shiftId: activeShift?.shiftId,
     };
 
     // Deduct stock safely
@@ -950,6 +1377,16 @@ export default function App() {
     const live = todaySales.filter((s) => !s.voided);
     const voided = todaySales.filter((s) => s.voided);
     const st = computeSalesStats(live, products);
+    const shiftSum = computeShiftLedgerSummary({
+      sales,
+      products,
+      drawerEvents,
+      utangTransactions: utangTxs,
+      serviceEntries,
+      openingFloat: activeShift?.openingFloat ?? 0,
+      from: today,
+      to: tomorrow,
+    });
 
     let nextZCount = settings.zCount || 0;
     if (isZ) {
@@ -959,6 +1396,7 @@ export default function App() {
 
     const lines: ReadingReport['lines'] = [
       { label: 'Date', value: today.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) },
+      ...(activeShift ? [{ label: 'Cashier', value: activeShift.cashierName }] : []),
       ...(isZ ? [{ label: 'Z-Counter', value: `#${nextZCount}` }] : []),
       { label: 'Valid Transactions', value: String(st.count) },
       { label: 'Voided Transactions', value: String(voided.length), dividerAfter: true },
@@ -966,7 +1404,13 @@ export default function App() {
       { label: 'Wholesale Savings', value: `-${formatPeso(st.wholesaleDisc)}` },
       { label: 'SC/PWD Discounts', value: `-${formatPeso(st.seniorDisc)}` },
       { label: 'NET SALES', value: formatPeso(st.net), bold: true },
-      { label: 'Est. Profit', value: formatPeso(st.profit), dividerAfter: true },
+      { label: 'GCash/Maya/Load Fees', value: `+${formatPeso(shiftSum.serviceFeesTotal)}` },
+      { label: 'Store Gastos / Expenses', value: `-${formatPeso(shiftSum.expensesTotal)}` },
+      { label: 'TRUE NET PROFIT', value: formatPeso(shiftSum.trueNetProfit), bold: true, dividerAfter: true },
+      { label: 'Opening Float', value: formatPeso(activeShift?.openingFloat ?? 0) },
+      { label: 'Utang Cash Collected', value: formatPeso(shiftSum.utangCashCollected) },
+      { label: 'Cash Drops / Top-Ups', value: `-${formatPeso(shiftSum.cashDrops)} / +${formatPeso(shiftSum.cashTopUps)}` },
+      { label: 'EXPECTED DRAWER CASH', value: formatPeso(shiftSum.expectedDrawerCash), bold: true, dividerAfter: true },
       ...Object.entries(st.tender).map(([method, data]) => ({
         label: `${method} (${data.n})`,
         value: formatPeso(data.amt),
@@ -1257,6 +1701,49 @@ export default function App() {
       ),
     );
 
+    // Reverse Suki Utang charge / loyalty points if sale was linked to a customer
+    if (target.customerId) {
+      const linkedCust = customers.find((c) => c.id === target.customerId);
+      if (linkedCust) {
+        const balAdj = target.paymentMethod === 'Utang' ? round2(Math.max(0, linkedCust.balance - target.grandTotal)) : linkedCust.balance;
+        const ptsAdj = Math.max(0, linkedCust.points - (target.pointsEarned || 0) + (target.pointsRedeemed || 0));
+        setCustomers((prev) => {
+          const next = prev.map((c) =>
+            c.id === linkedCust.id
+              ? {
+                  ...c,
+                  balance: balAdj,
+                  points: ptsAdj,
+                  totalSpent: round2(Math.max(0, c.totalSpent - target.grandTotal)),
+                  updatedAt: nowIso,
+                }
+              : c,
+          );
+          saveCustomersToStorage(next);
+          return next;
+        });
+        if (target.paymentMethod === 'Utang') {
+          const revTx: UtangTransaction = {
+            id: `UREV-${Date.now().toString(36).toUpperCase()}`,
+            customerId: linkedCust.id,
+            customerName: linkedCust.name,
+            type: 'adjustment',
+            amount: target.grandTotal,
+            balanceAfter: balAdj,
+            receiptNo: target.receiptNo,
+            note: `Void reversal (${reason})`,
+            dateIso: nowIso,
+            cashierName: activeShift?.cashierName,
+          };
+          setUtangTxs((prev) => {
+            const next = [revTx, ...prev].slice(0, 600);
+            saveUtangTxToStorage(next);
+            return next;
+          });
+        }
+      }
+    }
+
     void logSecurityEvent(
       'SALE_VOIDED',
       `Voided receipt ${receiptNo} (${formatPeso(target.grandTotal)}) — ${reason}`,
@@ -1368,6 +1855,23 @@ export default function App() {
       setCart([]);
       setStockLog([]);
       saveStockLogToStorage([]);
+      setCustomers([]);
+      saveCustomersToStorage([]);
+      setUtangTxs([]);
+      saveUtangTxToStorage([]);
+      setRepackRules([]);
+      saveRepackRulesToStorage([]);
+      setRepackLogs([]);
+      saveRepackLogToStorage([]);
+      setDrawerEvents([]);
+      saveDrawerEventsToStorage([]);
+      setServiceEntries([]);
+      saveServiceLogsToStorage([]);
+      const defaultCashiers = buildDefaultCashiers();
+      setCashiers(defaultCashiers);
+      saveCashiersToStorage(defaultCashiers);
+      setActiveShift(null);
+      saveActiveShiftToStorage(null);
       updateSettings({
         ...DEFAULT_SETTINGS,
       });
@@ -1471,6 +1975,8 @@ export default function App() {
         storeName={settings.storeName}
         activeTab={activeTab}
         lowStockCount={lowStockCount}
+        overdueUtangCount={overdueUtangCount}
+        activeCashierName={activeShift?.cashierName}
         hasPin={pinIsSet(settings)}
         onSelectTab={handleSelectTab}
         onOpenSettings={openSettingsTab}
@@ -1544,6 +2050,11 @@ export default function App() {
           onOpenBatchStock={(mode = 'delta') => setBatchStockModal({ open: true, mode })}
           onOpenCsvImport={() => setCsvImportOpen(true)}
           onOpenStockLog={() => setStockLogOpen(true)}
+          onOpenRepack={() => {
+            setOpsSubTab('repack');
+            setOpsSubTabSignal((n) => n + 1);
+            setActiveTab('operations');
+          }}
           onOpenProductModal={(pid) =>
             setProductModal({ open: true, editingId: pid || null, initialBarcode: '' })
           }
@@ -1569,10 +2080,48 @@ export default function App() {
         />
       )}
 
+      {activeTab === 'operations' && (
+        <OperationsView
+          initialSubTab={opsSubTab}
+          subTabSignal={opsSubTabSignal}
+          settings={settings}
+          products={products}
+          sales={sales}
+          customers={customers}
+          utangTxs={utangTxs}
+          repackRules={repackRules}
+          repackLogs={repackLogs}
+          drawerEvents={drawerEvents}
+          serviceEntries={serviceEntries}
+          cashiers={cashiers}
+          activeShift={activeShift}
+          onUpdateSettings={(next) => updateSettings(next)}
+          onAddCustomer={handleAddCustomer}
+          onUpdateCustomer={handleUpdateCustomer}
+          onUtangPayment={handleUtangPayment}
+          onUtangManualCharge={handleUtangManualCharge}
+          onCreateRepackRule={handleCreateRepackRule}
+          onDeleteRepackRule={handleDeleteRepackRule}
+          onRunRepack={handleRunRepack}
+          onOpenShift={handleOpenShift}
+          onAddCashier={handleAddCashier}
+          onToggleCashierActive={handleToggleCashierActive}
+          onAddDrawerEvent={handleAddDrawerEvent}
+          onDeleteDrawerEvent={handleDeleteDrawerEvent}
+          onAddServiceEntry={handleAddServiceEntry}
+          onDeleteServiceEntry={handleDeleteServiceEntry}
+          onToast={toast}
+        />
+      )}
+
       {activeTab === 'sales' && (
         <SalesView
           sales={sales}
           products={products}
+          drawerEvents={drawerEvents}
+          utangTxs={utangTxs}
+          serviceEntries={serviceEntries}
+          activeShift={activeShift}
           openCashDrawerSignal={salesCashDrawerSignal}
           onReprintReceipt={(s) => {
             setReceiptReading(null);
@@ -1722,6 +2271,9 @@ export default function App() {
         open={checkoutOpen}
         totals={cartTotals}
         itemCount={cart.length}
+        customers={customers}
+        settings={settings}
+        onQuickAddCustomer={handleAddCustomer}
         onClose={() => setCheckoutOpen(false)}
         onCompleteSale={handleCompleteSale}
       />

@@ -11,7 +11,15 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { Product, SaleRecord } from '../types';
+import type {
+  ActiveShiftState,
+  CashDrawerEvent,
+  DigitalServiceEntry,
+  Product,
+  SaleRecord,
+  UtangTransaction,
+} from '../types';
+import { computeShiftLedgerSummary } from '../utils/opsMath';
 import {
   computeCashDrawerSummary,
   computeHourlySalesSeries,
@@ -25,6 +33,7 @@ import {
   inRange,
   itemUnitCapital,
   PH_DENOMINATIONS,
+  round2,
   saleProfitCalc,
   startOfDay,
   summarize7DayTrend,
@@ -36,6 +45,10 @@ type SalesPeriod = 'today' | 'yesterday' | '7d' | '30d' | 'month' | 'lastmonth' 
 interface SalesViewProps {
   sales: SaleRecord[];
   products: Product[];
+  drawerEvents?: CashDrawerEvent[];
+  utangTxs?: UtangTransaction[];
+  serviceEntries?: DigitalServiceEntry[];
+  activeShift?: ActiveShiftState | null;
   openCashDrawerSignal?: number;
   onReprintReceipt: (sale: SaleRecord) => void;
   onVoidSale: (receiptNo: string) => void;
@@ -46,6 +59,10 @@ interface SalesViewProps {
 export const SalesView: React.FC<SalesViewProps> = ({
   sales,
   products,
+  drawerEvents = [],
+  utangTxs = [],
+  serviceEntries = [],
+  activeShift = null,
   openCashDrawerSignal,
   onReprintReceipt,
   onVoidSale,
@@ -60,7 +77,9 @@ export const SalesView: React.FC<SalesViewProps> = ({
   const [expandedReceipts, setExpandedReceipts] = useState<Set<string>>(() => new Set());
   const [shownCount, setShownCount] = useState(100);
   const [showCashDrawer, setShowCashDrawer] = useState(false);
-  const [openingFloatStr, setOpeningFloatStr] = useState('1000');
+  const [openingFloatStr, setOpeningFloatStr] = useState(() =>
+    String(activeShift?.openingFloat ?? 1000),
+  );
   const [denomCounts, setDenomCounts] = useState<Record<number, number>>({});
 
   useEffect(() => {
@@ -173,6 +192,8 @@ export const SalesView: React.FC<SalesViewProps> = ({
   const allVisibleExpanded =
     visibleList.length > 0 && visibleList.every((s) => expandedReceipts.has(s.receiptNo));
 
+  const openingFloatNum = Math.max(0, parseFloat(openingFloatStr) || 0);
+
   const cashDrawer = useMemo(
     () =>
       computeCashDrawerSummary(
@@ -180,10 +201,30 @@ export const SalesView: React.FC<SalesViewProps> = ({
         range.from,
         range.to,
         denomCounts,
-        Math.max(0, parseFloat(openingFloatStr) || 0),
+        openingFloatNum,
       ),
-    [sales, range.from, range.to, denomCounts, openingFloatStr],
+    [sales, range.from, range.to, denomCounts, openingFloatNum],
   );
+
+  const opsShiftLedger = useMemo(
+    () =>
+      computeShiftLedgerSummary({
+        sales,
+        products,
+        drawerEvents,
+        utangTransactions: utangTxs,
+        serviceEntries,
+        openingFloat: openingFloatNum,
+        from: range.from,
+        to: range.to,
+      }),
+    [sales, products, drawerEvents, utangTxs, serviceEntries, openingFloatNum, range.from, range.to],
+  );
+
+  const adjustedExpectedDrawer = opsShiftLedger.expectedDrawerCash;
+  const adjustedVariance = round2(cashDrawer.countedTotal - adjustedExpectedDrawer);
+  const adjustedStatus: 'balanced' | 'over' | 'short' =
+    Math.abs(adjustedVariance) < 0.005 ? 'balanced' : adjustedVariance > 0 ? 'over' : 'short';
 
   const exportSalesCsv = () => {
     const prodByName = new Map<string, Product>();
@@ -452,15 +493,19 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                <div className="text-[10px] font-bold uppercase text-slate-500">Expected Cash Sales</div>
+                <div className="text-[10px] font-bold uppercase text-slate-500">Cash Sales + Utang Bayad</div>
                 <div className="font-mono-num font-extrabold text-sm text-slate-900 mt-0.5">
-                  {formatPeso(cashDrawer.expectedCashSales)}
+                  {formatPeso(cashDrawer.expectedCashSales + opsShiftLedger.utangCashCollected)}
+                </div>
+                <div className="text-[10px] text-slate-500 font-mono-num">
+                  Svc {opsShiftLedger.serviceCashImpact >= 0 ? '+' : ''}
+                  {formatPeso(opsShiftLedger.serviceCashImpact)} · Out −{formatPeso(opsShiftLedger.expensesTotal + opsShiftLedger.cashDrops)}
                 </div>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
                 <div className="text-[10px] font-bold uppercase text-slate-500">Expected in Drawer</div>
                 <div className="font-mono-num font-extrabold text-sm text-indigo-700 mt-0.5">
-                  {formatPeso(cashDrawer.expectedDrawerTotal)}
+                  {formatPeso(adjustedExpectedDrawer)}
                 </div>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
@@ -475,18 +520,18 @@ export const SalesView: React.FC<SalesViewProps> = ({
               <div
                 data-testid="drawer-variance-box"
                 className={`p-2.5 rounded-xl border ${
-                  cashDrawer.status === 'balanced'
+                  adjustedStatus === 'balanced'
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                    : cashDrawer.status === 'over'
+                    : adjustedStatus === 'over'
                       ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
                       : 'bg-rose-50 border-rose-200 text-rose-900'
                 }`}
               >
                 <div className="text-[10px] font-bold uppercase opacity-80">
-                  Variance ({cashDrawer.status === 'balanced' ? 'Balanced' : cashDrawer.status === 'over' ? 'Over' : 'Short'})
+                  Variance ({adjustedStatus === 'balanced' ? 'Balanced' : adjustedStatus === 'over' ? 'Over' : 'Short'})
                 </div>
                 <div className="font-mono-num font-extrabold text-sm mt-0.5">
-                  {cashDrawer.variance > 0 ? `+${formatPeso(cashDrawer.variance)}` : formatPeso(cashDrawer.variance)}
+                  {adjustedVariance > 0 ? `+${formatPeso(adjustedVariance)}` : formatPeso(adjustedVariance)}
                 </div>
               </div>
             </div>
@@ -512,19 +557,23 @@ export const SalesView: React.FC<SalesViewProps> = ({
           </div>
 
           <div className="bg-white p-3.5 rounded-2xl border border-slate-200">
-            <div className="text-[11px] font-bold text-slate-500 uppercase">Profit</div>
+            <div className="text-[11px] font-bold text-slate-500 uppercase">Net Profit</div>
             <div className="flex items-baseline gap-2 mt-0.5">
               <div className="font-mono-num font-extrabold text-xl text-emerald-700">
-                {formatPeso(stats.profit)}
+                {formatPeso(opsShiftLedger.trueNetProfit)}
               </div>
               {stats.net > 0 && (
                 <span className="font-mono-num text-[11px] font-bold text-slate-500">
-                  {((stats.profit / stats.net) * 100).toFixed(1)}%
+                  {((opsShiftLedger.trueNetProfit / stats.net) * 100).toFixed(1)}%
                 </span>
               )}
             </div>
             <div className="text-[10px] font-bold text-slate-500 mt-0.5 truncate">
-              {noCapCount ? `Sales − Capital · ${noCapCount} lack capital` : 'Sales − Capital'}
+              {opsShiftLedger.expensesTotal > 0 || opsShiftLedger.serviceFeesTotal > 0
+                ? `+Fees ${formatPeso(opsShiftLedger.serviceFeesTotal)} · −Gastos ${formatPeso(opsShiftLedger.expensesTotal)}`
+                : noCapCount
+                  ? `Sales − Capital · ${noCapCount} lack capital`
+                  : 'Sales − Capital'}
             </div>
           </div>
 
