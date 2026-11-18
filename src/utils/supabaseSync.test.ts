@@ -452,4 +452,23 @@ test('handleSyncApiRequest normalizes quoted, dashboard, bare-ref, and malformed
   assert.equal(urlsSeen.every((u) => u.startsWith('https://xahsyugciihrrnchufwo.supabase.co/')), true);
 });
 
+test('handleSyncApiRequest accepts SUPABASE_SECRET_KEY and SUPABASE_KEY aliases', async () => {
+  const okFetch: typeof fetch = async () =>
+    new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
+  for (const env of [
+    { SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co', SUPABASE_SECRET_KEY: 'sb_secret_test' },
+    { SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co', SUPABASE_KEY: 'test_key' },
+  ]) {
+    const res = await handleSyncApiRequest(
+      new Request('https://eternalblue.workers.dev/api/sync/status'),
+      env,
+      { runtime: 'cloudflare-worker' },
+      okFetch,
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { configured: boolean; schemaReady: boolean };
+    assert.equal(body.configured, true);
+    assert.equal(body.schemaReady, true);
+  }
+});

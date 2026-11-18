@@ -513,8 +513,11 @@ export default function App() {
       try {
         const status = await refreshSyncStatus();
         if (!status?.configured || !status.schemaReady) {
+          const isWorker = status?.cloudflareWorker?.runtime === 'cloudflare-worker';
           const reason = !status?.configured
-            ? 'Supabase key not configured on server yet.'
+            ? isWorker
+              ? 'Supabase key not configured on Cloudflare Worker yet. Add SUPABASE_SERVICE_ROLE_KEY under Worker Settings → Variables and Secrets.'
+              : 'Supabase key not configured on server yet.'
             : status.error || 'Supabase tables are not initialized yet.';
           setSyncError(reason);
           if (!silent) toast(reason, 'warning');

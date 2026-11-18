@@ -1478,7 +1478,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </li>
                     <li>
                       Add <span className="font-mono-num font-semibold text-slate-800">SUPABASE_SERVICE_ROLE_KEY</span>{' '}
-                      (from Supabase Project Settings → API) to your server environment variables and restart.
+                      (from Supabase Project Settings → API) to{' '}
+                      {syncStatus.cloudflareWorker?.runtime === 'cloudflare-worker' ? (
+                        <>
+                          <a
+                            href={CLOUDFLARE_VARIABLES_URL}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-semibold text-amber-800 underline"
+                          >
+                            Cloudflare Worker ({syncStatus.cloudflareWorker.serviceName || CLOUDFLARE_WORKER_NAME}) → Settings → Variables and Secrets
+                          </a>{' '}
+                          as an encrypted Secret (or run{' '}
+                          <span className="font-mono-num font-semibold text-slate-800">
+                            npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+                          </span>
+                          ).
+                        </>
+                      ) : (
+                        'your server environment variables and restart.'
+                      )}
                     </li>
                   </ol>
                 </div>

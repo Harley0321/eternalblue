@@ -11,7 +11,11 @@ import {
 export interface SyncRuntimeEnv {
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  SUPABASE_SECRET_KEY?: string;
+  SUPABASE_SERVICE_KEY?: string;
+  SUPABASE_KEY?: string;
   SUPABASE_ANON_KEY?: string;
+  SUPABASE_PUBLISHABLE_KEY?: string;
   GITHUB_REPO?: string;
   GITHUB_BRANCH?: string;
   GITHUB_TOKEN?: string;
@@ -196,7 +200,15 @@ function jsonResponse(payload: unknown, status = 200): Response {
 
 function resolveEnvConfig(env: SyncRuntimeEnv) {
   const supabaseUrl = normalizeSupabaseUrl(env.SUPABASE_URL);
-  const supabaseKey = (env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_ANON_KEY || '')
+  const rawKey =
+    env.SUPABASE_SERVICE_ROLE_KEY ||
+    env.SUPABASE_SECRET_KEY ||
+    env.SUPABASE_SERVICE_KEY ||
+    env.SUPABASE_KEY ||
+    env.SUPABASE_ANON_KEY ||
+    env.SUPABASE_PUBLISHABLE_KEY ||
+    '';
+  const supabaseKey = rawKey
     .trim()
     .replace(/^['"]+|['"]+$/g, '')
     .trim();

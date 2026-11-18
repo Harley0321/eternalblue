@@ -76,7 +76,11 @@ async function startServer() {
         {
           SUPABASE_URL: process.env.SUPABASE_URL,
           SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+          SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
+          SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY,
+          SUPABASE_KEY: process.env.SUPABASE_KEY,
           SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+          SUPABASE_PUBLISHABLE_KEY: process.env.SUPABASE_PUBLISHABLE_KEY,
           GITHUB_REPO: process.env.GITHUB_REPO,
           GITHUB_BRANCH: process.env.GITHUB_BRANCH,
           GITHUB_TOKEN: process.env.GITHUB_TOKEN,
