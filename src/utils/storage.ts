@@ -89,13 +89,40 @@ export function saveHeldToStorage(heldOrders: HeldOrder[]): SaveResult {
   }
 }
 
+const LEGACY_SYNC_LOCAL_KEYS = [
+  'omnimart_ph_sync_tombstones_v1',
+  'omnimart_ph_device_sync_id_v1',
+];
+
+const LEGACY_SYNC_SETTING_FIELDS = [
+  'syncEnabled',
+  'syncStoreId',
+  'syncStoreIdCustomized',
+  'lastSyncedAt',
+];
+
 export function loadSettingsFromStorage(): StoreSettings {
   try {
+    for (const legacyKey of LEGACY_SYNC_LOCAL_KEYS) {
+      localStorage.removeItem(legacyKey);
+    }
     const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (raw) {
       const parsed = safeJsonParse<unknown>(raw);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return { ...DEFAULT_SETTINGS, ...(parsed as Partial<StoreSettings>) };
+        const record = { ...(parsed as Record<string, unknown>) };
+        let hadLegacySyncFields = false;
+        for (const field of LEGACY_SYNC_SETTING_FIELDS) {
+          if (field in record) {
+            delete record[field];
+            hadLegacySyncFields = true;
+          }
+        }
+        const merged: StoreSettings = { ...DEFAULT_SETTINGS, ...(record as Partial<StoreSettings>) };
+        if (hadLegacySyncFields) {
+          saveSettingsToStorage(merged);
+        }
+        return merged;
       }
     }
   } catch {
