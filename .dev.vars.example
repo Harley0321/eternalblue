@@ -1,0 +1,9 @@
+# Local Cloudflare Wrangler secrets template (`cp .dev.vars.example .dev.vars`)
+# In production, set these as Encrypted Secrets in:
+# Cloudflare Dashboard -> Workers & Pages -> eternalblue -> Settings -> Variables and Secrets
+
+SUPABASE_SERVICE_ROLE_KEY=
+# Optional fallback if service role key is not set (requires permissive RLS policies):
+SUPABASE_ANON_KEY=
+# Optional GitHub token if Harley0321/eternalblue is private:
+GITHUB_TOKEN=

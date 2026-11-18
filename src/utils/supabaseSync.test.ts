@@ -232,7 +232,10 @@ test('reconcileStoreData combines held orders, stock logs, and config history cl
   assert.equal(result.stockLog[0].id, 'LOG-2');
 });
 
-test('buildGithubIntegrationBundleFiles outputs config.toml, migration SQL, seed.sql, and workflow', () => {
+import worker from '../../worker';
+import { handleSyncApiRequest } from './syncApiHandler';
+
+test('buildGithubIntegrationBundleFiles outputs Wrangler, Supabase, and GitHub CI workflow files', () => {
   const files = buildGithubIntegrationBundleFiles();
   const byPath = new Map(files.map((f) => [f.path, f.content]));
   assert.equal(byPath.get('supabase/config.toml')?.includes('project_id = "xahsyugciihrrnchufwo"'), true);
@@ -241,6 +244,212 @@ test('buildGithubIntegrationBundleFiles outputs config.toml, migration SQL, seed
     true,
   );
   assert.equal(byPath.get('.github/workflows/supabase-sync.yml')?.includes('supabase db push'), true);
+  assert.equal(byPath.get('.github/workflows/cloudflare-deploy.yml')?.includes('wrangler-action'), true);
   assert.equal(byPath.has('supabase/seed.sql'), true);
+
+  const wranglerParsed = JSON.parse(byPath.get('wrangler.jsonc') || '{}') as {
+    name?: string;
+    main?: string;
+    assets?: { not_found_handling?: string; run_worker_first?: string[] };
+  };
+  assert.equal(wranglerParsed.name, 'eternalblue');
+  assert.equal(wranglerParsed.main, 'worker.ts');
+  assert.equal(wranglerParsed.assets?.not_found_handling, 'single-page-application');
+  assert.deepEqual(wranglerParsed.assets?.run_worker_first, ['/api/*']);
+  assert.equal(byPath.get('.dev.vars.example')?.includes('SUPABASE_SERVICE_ROLE_KEY='), true);
 });
+
+test('handleSyncApiRequest /api/sync/status reports unconfigured cleanly with Cloudflare & GitHub metadata', async () => {
+  const res = await handleSyncApiRequest(
+    new Request('https://eternalblue.workers.dev/api/sync/status'),
+    { SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co' },
+    { runtime: 'cloudflare-worker' },
+  );
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as {
+    configured: boolean;
+    schemaReady: boolean;
+    projectRef: string;
+    cloudflareWorker?: { serviceName: string; runtime: string; dashboardUrl: string };
+    githubIntegration?: { repo: string; branch: string };
+  };
+  assert.equal(body.configured, false);
+  assert.equal(body.schemaReady, false);
+  assert.equal(body.projectRef, 'xahsyugciihrrnchufwo');
+  assert.equal(body.cloudflareWorker?.serviceName, 'eternalblue');
+  assert.equal(body.cloudflareWorker?.runtime, 'cloudflare-worker');
+  assert.equal(body.githubIntegration?.repo, 'Harley0321/eternalblue');
+  assert.equal(body.githubIntegration?.branch, 'main');
+});
+
+test('handleSyncApiRequest /api/sync/status checks all 5 Supabase tables and detects missing schema', async () => {
+  const readyFetch: typeof fetch = async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (/\/rest\/v1\/pos_(stores|products|sales|held_orders|stock_logs)/.test(url)) {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response('Not Found', { status: 404 });
+  };
+
+  const resReady = await handleSyncApiRequest(
+    new Request('https://eternalblue.workers.dev/api/sync/status'),
+    {
+      SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+    },
+    { runtime: 'cloudflare-worker' },
+    readyFetch,
+  );
+  assert.equal(resReady.status, 200);
+  const bodyReady = (await resReady.json()) as { configured: boolean; schemaReady: boolean };
+  assert.equal(bodyReady.configured, true);
+  assert.equal(bodyReady.schemaReady, true);
+
+  const missingTableFetch: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        code: 'PGRST205',
+        message: "Could not find the table 'public.pos_stores' in the schema cache",
+      }),
+      { status: 404, headers: { 'Content-Type': 'application/json' } },
+    );
+
+  const resMissing = await handleSyncApiRequest(
+    new Request('https://eternalblue.workers.dev/api/sync/status'),
+    {
+      SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+    },
+    { runtime: 'cloudflare-worker' },
+    missingTableFetch,
+  );
+  assert.equal(resMissing.status, 200);
+  const bodyMissing = (await resMissing.json()) as {
+    configured: boolean;
+    schemaReady: boolean;
+    error?: string;
+  };
+  assert.equal(bodyMissing.configured, true);
+  assert.equal(bodyMissing.schemaReady, false);
+  assert.equal(bodyMissing.error?.includes('pos_stores'), true);
+});
+
+test('handleSyncApiRequest /api/sync/github-check detects Supabase & Wrangler files in one tree scan', async () => {
+  const mockFetch: typeof fetch = async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.endsWith('/repos/Harley0321/eternalblue')) {
+      return new Response(JSON.stringify({ default_branch: 'main' }), { status: 200 });
+    }
+    if (url.includes('/git/trees/main')) {
+      return new Response(
+        JSON.stringify({
+          tree: [
+            { path: 'wrangler.jsonc', type: 'blob' },
+            { path: 'worker.ts', type: 'blob' },
+            { path: 'supabase/config.toml', type: 'blob' },
+            { path: 'supabase/migrations/20261118000001_omnimart_pos_schema.sql', type: 'blob' },
+            { path: '.github/workflows/supabase-sync.yml', type: 'blob' },
+            { path: '.github/workflows/cloudflare-deploy.yml', type: 'blob' },
+          ],
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes('/commits/main')) {
+      return new Response(
+        JSON.stringify({
+          sha: 'abcdef1234567890',
+          commit: { message: 'Sync Cloudflare + Supabase + GitHub', author: { date: '2026-11-18T00:00:00Z' } },
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response('Not Found', { status: 404 });
+  };
+
+  const res = await handleSyncApiRequest(
+    new Request('https://eternalblue.workers.dev/api/sync/github-check'),
+    {},
+    { runtime: 'cloudflare-worker' },
+    mockFetch,
+  );
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as {
+    reachable: boolean;
+    hasRemoteConfigToml: boolean;
+    hasRemoteWranglerConfig: boolean;
+    hasRemoteWorkerEntry: boolean;
+    hasRemoteWorkflow: boolean;
+    hasRemoteCloudflareWorkflow: boolean;
+    remoteMigrations: string[];
+    latestCommitSha: string;
+  };
+  assert.equal(body.reachable, true);
+  assert.equal(body.hasRemoteConfigToml, true);
+  assert.equal(body.hasRemoteWranglerConfig, true);
+  assert.equal(body.hasRemoteWorkerEntry, true);
+  assert.equal(body.hasRemoteWorkflow, true);
+  assert.equal(body.hasRemoteCloudflareWorkflow, true);
+  assert.deepEqual(body.remoteMigrations, ['20261118000001_omnimart_pos_schema.sql']);
+  assert.equal(body.latestCommitSha, 'abcdef1');
+});
+
+test('worker.fetch routes /api/sync/status and delegates static assets cleanly', async () => {
+  let assetFetchedUrl = '';
+  const env = {
+    SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co',
+    ASSETS: {
+      async fetch(input: Request | URL | string) {
+        assetFetchedUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        return new Response('<html>SPA</html>', { status: 200, headers: { 'Content-Type': 'text/html' } });
+      },
+    },
+  };
+
+  const apiRes = await worker.fetch(new Request('https://eternalblue.workers.dev/api/sync/status'), env);
+  assert.equal(apiRes.status, 200);
+  const apiJson = (await apiRes.json()) as { cloudflareWorker?: { runtime: string } };
+  assert.equal(apiJson.cloudflareWorker?.runtime, 'cloudflare-worker');
+
+  const spaRes = await worker.fetch(new Request('https://eternalblue.workers.dev/settings'), env);
+  assert.equal(spaRes.status, 200);
+  assert.equal(assetFetchedUrl, 'https://eternalblue.workers.dev/settings');
+
+  const badApiRes = await worker.fetch(new Request('https://eternalblue.workers.dev/api/unknown', { method: 'POST', body: '{}' }), env);
+  assert.equal(badApiRes.status, 404);
+});
+
+test('handleSyncApiRequest normalizes quoted, dashboard, bare-ref, and malformed SUPABASE_URL safely', async () => {
+  const urlsSeen: string[] = [];
+  const mockFetch: typeof fetch = async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    urlsSeen.push(url);
+    return new Response(null, { status: 200, headers: { 'Content-Range': '0-0/0' } });
+  };
+
+  for (const rawUrl of [
+    '"https://xahsyugciihrrnchufwo.supabase.co/"',
+    'https://supabase.com/dashboard/project/xahsyugciihrrnchufwo/settings/general',
+    'xahsyugciihrrnchufwo',
+    'xahsyugciihrrnchufwo.supabase.co',
+    '   ',
+  ]) {
+    const res = await handleSyncApiRequest(
+      new Request('https://eternalblue.workers.dev/api/sync/status'),
+      { SUPABASE_URL: rawUrl, SUPABASE_SERVICE_ROLE_KEY: 'test-key' },
+      { runtime: 'cloudflare-worker' },
+      mockFetch,
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { projectUrl: string; projectRef: string; schemaReady: boolean };
+    assert.equal(body.projectRef, 'xahsyugciihrrnchufwo');
+    assert.equal(body.projectUrl, 'https://xahsyugciihrrnchufwo.supabase.co');
+    assert.equal(body.schemaReady, true);
+  }
+  assert.equal(urlsSeen.every((u) => u.startsWith('https://xahsyugciihrrnchufwo.supabase.co/')), true);
+});
+
 

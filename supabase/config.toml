@@ -29,6 +29,8 @@ api_url = "http://127.0.0.1"
 enabled = true
 site_url = "http://localhost:3000"
 additional_redirect_urls = [
+  "http://localhost:8787",
+  "https://*.workers.dev",
   "https://ais-dev-skjoiwxfowfscywb3bccw2-888641477712.asia-northeast1.run.app",
   "https://ais-pre-skjoiwxfowfscywb3bccw2-888641477712.asia-northeast1.run.app"
 ]

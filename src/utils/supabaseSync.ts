@@ -10,11 +10,14 @@ import { PIN_SETTING_KEYS } from './pinSecurity';
 import { DEFAULT_SETTINGS } from './posMath';
 
 import {
+  CLOUDFLARE_DEV_VARS_EXAMPLE,
+  GITHUB_CLOUDFLARE_WORKFLOW_YML,
   GITHUB_SUPABASE_WORKFLOW_YML,
   SUPABASE_CONFIG_TOML,
   SUPABASE_MIGRATION_FILENAME,
   SUPABASE_SCHEMA_SQL,
   SUPABASE_SEED_SQL,
+  WRANGLER_JSONC,
 } from './supabaseSchemaSql';
 
 export interface GithubIntegrationStatus {
@@ -28,6 +31,17 @@ export interface GithubIntegrationStatus {
   ready: boolean;
 }
 
+export interface CloudflareWorkerStatus {
+  serviceName: string;
+  accountId: string;
+  dashboardUrl: string;
+  runtime: 'node' | 'cloudflare-worker';
+  hasWranglerConfig: boolean;
+  hasWorkerEntry: boolean;
+  hasCloudflareWorkflow: boolean;
+  ready: boolean;
+}
+
 export interface GithubRemoteCheckResponse {
   reachable: boolean;
   repo: string;
@@ -37,6 +51,9 @@ export interface GithubRemoteCheckResponse {
   hasRemoteConfigToml: boolean;
   hasRemoteWorkflow: boolean;
   remoteMigrations: string[];
+  hasRemoteWranglerConfig?: boolean;
+  hasRemoteWorkerEntry?: boolean;
+  hasRemoteCloudflareWorkflow?: boolean;
   latestCommitSha?: string;
   latestCommitMessage?: string;
   latestCommitAt?: string;
@@ -50,6 +67,7 @@ export interface SyncStatusResponse {
   projectUrl: string;
   dashboardUrl: string;
   githubIntegration?: GithubIntegrationStatus;
+  cloudflareWorker?: CloudflareWorkerStatus;
   error?: string;
 }
 
@@ -392,6 +410,14 @@ export async function fetchGithubIntegrationCheck(): Promise<GithubRemoteCheckRe
 export function buildGithubIntegrationBundleFiles(): Array<{ path: string; content: string }> {
   return [
     {
+      path: 'wrangler.jsonc',
+      content: WRANGLER_JSONC,
+    },
+    {
+      path: '.dev.vars.example',
+      content: CLOUDFLARE_DEV_VARS_EXAMPLE,
+    },
+    {
       path: 'supabase/config.toml',
       content: SUPABASE_CONFIG_TOML,
     },
@@ -410,6 +436,10 @@ export function buildGithubIntegrationBundleFiles(): Array<{ path: string; conte
     {
       path: '.github/workflows/supabase-sync.yml',
       content: GITHUB_SUPABASE_WORKFLOW_YML,
+    },
+    {
+      path: '.github/workflows/cloudflare-deploy.yml',
+      content: GITHUB_CLOUDFLARE_WORKFLOW_YML,
     },
   ];
 }

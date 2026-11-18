@@ -5,6 +5,10 @@ export const SUPABASE_INTEGRATIONS_URL = `https://supabase.com/dashboard/project
 export const GITHUB_REPO = 'Harley0321/eternalblue';
 export const GITHUB_BRANCH = 'main';
 export const GITHUB_REPO_URL = `https://github.com/${GITHUB_REPO}`;
+export const CLOUDFLARE_ACCOUNT_ID = '30cccc3f125f4e676291be3956855ece';
+export const CLOUDFLARE_WORKER_NAME = 'eternalblue';
+export const CLOUDFLARE_DASHBOARD_URL = `https://dash.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/workers/services/view/${CLOUDFLARE_WORKER_NAME}/production/deployments`;
+export const CLOUDFLARE_VARIABLES_URL = `https://dash.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/workers/services/view/${CLOUDFLARE_WORKER_NAME}/settings/variables`;
 export const SUPABASE_MIGRATION_FILENAME = '20261118000001_omnimart_pos_schema.sql';
 
 export const SUPABASE_CONFIG_TOML = `# Supabase CLI & GitHub Integration configuration
@@ -38,6 +42,8 @@ api_url = "http://127.0.0.1"
 enabled = true
 site_url = "http://localhost:3000"
 additional_redirect_urls = [
+  "http://localhost:8787",
+  "https://*.workers.dev",
   "https://ais-dev-skjoiwxfowfscywb3bccw2-888641477712.asia-northeast1.run.app",
   "https://ais-pre-skjoiwxfowfscywb3bccw2-888641477712.asia-northeast1.run.app"
 ]
@@ -50,6 +56,42 @@ enabled = false
 
 export const SUPABASE_SEED_SQL = `-- Seed placeholder for Supabase GitHub Branching / \`supabase db reset\`.
 -- POS store catalog and transactions are seeded/synced directly per store_id.
+`;
+
+export const WRANGLER_JSONC = `{
+  "name": "${CLOUDFLARE_WORKER_NAME}",
+  "main": "worker.ts",
+  "compatibility_date": "2025-11-01",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "vars": {
+    "SUPABASE_URL": "${SUPABASE_PROJECT_URL}",
+    "GITHUB_REPO": "${GITHUB_REPO}",
+    "GITHUB_BRANCH": "${GITHUB_BRANCH}",
+    "CLOUDFLARE_ACCOUNT_ID": "${CLOUDFLARE_ACCOUNT_ID}",
+    "CLOUDFLARE_WORKER_NAME": "${CLOUDFLARE_WORKER_NAME}"
+  }
+}
+`;
+
+export const CLOUDFLARE_DEV_VARS_EXAMPLE = `# Local Cloudflare Wrangler secrets template (\`cp .dev.vars.example .dev.vars\`)
+# In production, set these as Encrypted Secrets in:
+# Cloudflare Dashboard -> Workers & Pages -> ${CLOUDFLARE_WORKER_NAME} -> Settings -> Variables and Secrets
+
+SUPABASE_SERVICE_ROLE_KEY=
+# Optional fallback if service role key is not set (requires permissive RLS policies):
+SUPABASE_ANON_KEY=
+# Optional GitHub token if ${GITHUB_REPO} is private:
+GITHUB_TOKEN=
 `;
 
 export const GITHUB_SUPABASE_WORKFLOW_YML = `name: Supabase Schema Sync
@@ -67,34 +109,110 @@ on:
 
 jobs:
   push-migrations:
-    name: Push Migrations to Supabase (${SUPABASE_PROJECT_REF})
+    name: Validate & Sync Supabase (${SUPABASE_PROJECT_REF})
     runs-on: ubuntu-latest
-    env:
-      SUPABASE_ACCESS_TOKEN: \${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: \${{ secrets.SUPABASE_DB_PASSWORD }}
-      SUPABASE_PROJECT_ID: ${SUPABASE_PROJECT_REF}
     steps:
       - name: Checkout ${GITHUB_REPO}
         uses: actions/checkout@v4
 
-      - name: Verify Supabase secrets are configured
+      - name: Validate Supabase config & migration SQL
         run: |
-          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_DB_PASSWORD" ]; then
-            echo "Missing SUPABASE_ACCESS_TOKEN or SUPABASE_DB_PASSWORD repository secrets."
-            echo "Add both in GitHub Repo Settings -> Secrets and variables -> Actions, or use Supabase Dashboard -> Integrations -> GitHub."
-            exit 1
+          test -f supabase/config.toml
+          ls -1 supabase/migrations/*.sql >/dev/null
+          grep -q 'project_id = "${SUPABASE_PROJECT_REF}"' supabase/config.toml
+
+      - name: Check optional CLI push secrets
+        id: check-secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: \${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: \${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_DB_PASSWORD" ]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+            echo "Supabase CLI Action secrets omitted — using native Supabase Dashboard GitHub Integration."
           fi
 
       - name: Setup Supabase CLI
+        if: steps.check-secrets.outputs.has_secrets == 'true'
         uses: supabase/setup-cli@v1
         with:
           version: latest
 
       - name: Link Supabase Project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+        if: steps.check-secrets.outputs.has_secrets == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: \${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: \${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref "${SUPABASE_PROJECT_REF}"
 
       - name: Push SQL Migrations
+        if: steps.check-secrets.outputs.has_secrets == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: \${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: \${{ secrets.SUPABASE_DB_PASSWORD }}
         run: supabase db push
+`;
+
+export const GITHUB_CLOUDFLARE_WORKFLOW_YML = `name: Cloudflare Worker CI & Deploy
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-verify:
+    name: Build, Test & Verify (${CLOUDFLARE_WORKER_NAME})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ${GITHUB_REPO}
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npx tsx --test src/utils/posMath.test.ts src/utils/supabaseSync.test.ts
+
+      - name: Build production Vite bundle
+        run: npm run build
+
+      - name: Validate Wrangler Worker config
+        run: node -e "const fs=require('fs'); const cfg=JSON.parse(fs.readFileSync('wrangler.jsonc','utf8')); if(cfg.name!=='${CLOUDFLARE_WORKER_NAME}') throw new Error('Unexpected worker name'); if(!fs.existsSync(cfg.main)) throw new Error('Missing worker entrypoint');"
+
+      - name: Check optional Cloudflare API Token secret
+        id: cf-auth
+        env:
+          CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ "\${{ github.event_name }}" != "pull_request" ] && [ "\${{ github.ref_name }}" = "main" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping GitHub Action deploy — Cloudflare Workers Builds Git Integration deploys from main automatically."
+          fi
+
+      - name: Deploy Worker via Wrangler (when CLOUDFLARE_API_TOKEN is set)
+        if: steps.cf-auth.outputs.deploy == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: \${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${CLOUDFLARE_ACCOUNT_ID}
 `;
 
 export const SUPABASE_SCHEMA_SQL = `-- OmniMart PH POS — Supabase Cloud Sync Schema

@@ -61,6 +61,9 @@ import {
 import { formatPeso, safeJsonParse, validateBackupPayload } from '../utils/posMath';
 import { getStorageBreakdown, getUsedStorageBytes } from '../utils/storage';
 import {
+  CLOUDFLARE_DASHBOARD_URL,
+  CLOUDFLARE_VARIABLES_URL,
+  CLOUDFLARE_WORKER_NAME,
   GITHUB_REPO,
   GITHUB_REPO_URL,
   SUPABASE_DASHBOARD_URL,
@@ -1618,7 +1621,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </pre>
               )}
 
-              {/* GitHub Repository <-> Supabase Integration */}
+              {/* GitHub Repository <-> Supabase <-> Cloudflare Workers Integration */}
               <div
                 data-testid="github-supabase-integration"
                 className="border-t border-slate-100 pt-3 space-y-2.5"
@@ -1628,16 +1631,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <GitBranch className="w-4 h-4 text-slate-700 shrink-0" />
                     <div className="min-w-0">
                       <div className="text-xs font-extrabold text-slate-900">
-                        GitHub Repository Integration
+                        GitHub, Cloudflare &amp; Supabase Sync
                       </div>
-                      <div className="text-[11px] text-slate-500 font-mono-num truncate">
-                        {syncStatus?.githubIntegration?.repo || GITHUB_REPO} (
-                        {syncStatus?.githubIntegration?.branch || 'main'}) ↔{' '}
-                        {syncStatus?.projectRef || SUPABASE_PROJECT_REF}
+                      <div className="text-[11px] text-slate-500 font-mono-num flex flex-wrap items-center gap-x-1">
+                        <span>
+                          {syncStatus?.githubIntegration?.repo || GITHUB_REPO} (
+                          {syncStatus?.githubIntegration?.branch || 'main'})
+                        </span>
+                        <span aria-hidden>↔</span>
+                        <span>{syncStatus?.cloudflareWorker?.serviceName || CLOUDFLARE_WORKER_NAME}</span>
+                        <span aria-hidden>↔</span>
+                        <span>{syncStatus?.projectRef || SUPABASE_PROJECT_REF}</span>
                       </div>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
+                    <a
+                      href={syncStatus?.cloudflareWorker?.dashboardUrl || CLOUDFLARE_DASHBOARD_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 hover:text-amber-900 bg-amber-50 border border-amber-200 px-2 py-1 rounded-md"
+                    >
+                      <span>Cloudflare Worker</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
                     <a
                       href={syncStatus?.githubIntegration?.repoUrl || GITHUB_REPO_URL}
                       target="_blank"
@@ -1659,25 +1676,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
                   <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
-                    <div className="text-slate-500 font-medium">supabase/config.toml</div>
-                    <div className="font-bold text-slate-800 mt-0.5">
-                      {syncStatus?.githubIntegration?.hasConfigToml ? 'Configured locally' : 'Included in repo'}
-                    </div>
-                  </div>
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
-                    <div className="text-slate-500 font-medium">supabase/migrations</div>
+                    <div className="text-slate-500 font-medium">Supabase Config &amp; Migrations</div>
                     <div className="font-bold text-slate-800 mt-0.5 font-mono-num">
+                      {syncStatus?.githubIntegration?.hasConfigToml ? 'config.toml ready' : 'config.toml included'} ·{' '}
                       {syncStatus?.githubIntegration?.migrations?.length
                         ? `${syncStatus.githubIntegration.migrations.length} migration SQL`
                         : '1 migration SQL'}
                     </div>
                   </div>
                   <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
-                    <div className="text-slate-500 font-medium">GitHub Action</div>
-                    <div className="font-bold text-slate-800 mt-0.5">
-                      {syncStatus?.githubIntegration?.hasWorkflow ? 'supabase-sync.yml ready' : 'Workflow included'}
+                    <div className="text-slate-500 font-medium">Cloudflare Worker ({syncStatus?.cloudflareWorker?.serviceName || CLOUDFLARE_WORKER_NAME})</div>
+                    <div className="font-bold text-slate-800 mt-0.5 font-mono-num">
+                      {syncStatus?.cloudflareWorker?.hasWranglerConfig ? 'wrangler.jsonc ready' : 'wrangler.jsonc included'} ·{' '}
+                      {syncStatus?.cloudflareWorker?.runtime === 'cloudflare-worker' ? 'Edge Runtime' : 'worker.ts ready'}
                     </div>
                   </div>
                 </div>
@@ -1688,7 +1701,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     className={`rounded-lg border p-2.5 text-[11px] space-y-1 ${
                       githubCheck.reachable &&
                       githubCheck.hasRemoteConfigToml &&
-                      githubCheck.remoteMigrations.length > 0
+                      githubCheck.remoteMigrations.length > 0 &&
+                      githubCheck.hasRemoteWranglerConfig &&
+                      githubCheck.hasRemoteWorkerEntry
                         ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
                         : 'bg-amber-50 border-amber-200 text-amber-950'
                     }`}
@@ -1696,9 +1711,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <div className="font-bold flex flex-wrap items-center justify-between gap-2">
                       <span>
                         {githubCheck.reachable
-                          ? githubCheck.hasRemoteConfigToml && githubCheck.remoteMigrations.length > 0
-                            ? `GitHub (${githubCheck.repo}) has Supabase integration files synced`
-                            : `GitHub (${githubCheck.repo}) reachable — push supabase/ & .github/ commits to finish linking`
+                          ? githubCheck.hasRemoteConfigToml &&
+                            githubCheck.remoteMigrations.length > 0 &&
+                            githubCheck.hasRemoteWranglerConfig &&
+                            githubCheck.hasRemoteWorkerEntry
+                            ? `GitHub (${githubCheck.repo}) is synced for Supabase & Cloudflare Worker`
+                            : `GitHub (${githubCheck.repo}) reachable — push latest workspace files to finish syncing`
                           : githubCheck.error || `Unable to verify ${githubCheck.repo}`}
                       </span>
                       {githubCheck.latestCommitSha && (
@@ -1709,9 +1727,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                     {githubCheck.reachable && (
                       <div className="text-[11px] opacity-90">
-                        Remote config.toml: {githubCheck.hasRemoteConfigToml ? 'Yes' : 'Not pushed yet'} · Migrations:{' '}
-                        {githubCheck.remoteMigrations.length} · Workflow:{' '}
-                        {githubCheck.hasRemoteWorkflow ? 'Yes' : 'Not pushed yet'}
+                        Supabase config: {githubCheck.hasRemoteConfigToml ? 'Yes' : 'No'} · Migrations:{' '}
+                        {githubCheck.remoteMigrations.length} · Wrangler:{' '}
+                        {githubCheck.hasRemoteWranglerConfig && githubCheck.hasRemoteWorkerEntry ? 'Yes' : 'Push wrangler.jsonc & worker.ts'} · CI:{' '}
+                        {githubCheck.hasRemoteWorkflow && githubCheck.hasRemoteCloudflareWorkflow ? 'Ready' : 'Partial'}
                       </div>
                     )}
                   </div>
@@ -1727,10 +1746,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       try {
                         const res = await fetchGithubIntegrationCheck();
                         setGithubCheck(res);
-                        if (res.reachable && res.hasRemoteConfigToml && res.remoteMigrations.length > 0) {
-                          onToast('GitHub repo has Supabase config & migrations synced', 'success');
+                        const fullySynced =
+                          res.reachable &&
+                          res.hasRemoteConfigToml &&
+                          res.remoteMigrations.length > 0 &&
+                          Boolean(res.hasRemoteWranglerConfig) &&
+                          Boolean(res.hasRemoteWorkerEntry);
+                        if (fullySynced) {
+                          onToast('GitHub, Supabase & Cloudflare Worker files are synced', 'success');
                         } else if (res.reachable) {
-                          onToast('GitHub reachable — push workspace Supabase files to main', 'warning');
+                          onToast('GitHub reachable — push workspace config files to main', 'warning');
                         } else {
                           onToast(res.error || 'Could not verify GitHub repository', 'warning');
                         }
@@ -1764,10 +1789,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = `omnimart-supabase-github-sync-${SUPABASE_PROJECT_REF}.zip`;
+                        a.download = `omnimart-sync-kit-${SUPABASE_PROJECT_REF}.zip`;
                         a.click();
                         URL.revokeObjectURL(url);
-                        onToast('Downloaded Supabase + GitHub sync kit (.zip)', 'success');
+                        onToast('Downloaded GitHub + Cloudflare + Supabase sync kit (.zip)', 'success');
                       } catch {
                         onToast('Failed to build sync kit archive', 'error');
                       } finally {
@@ -1798,19 +1823,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   >
                     <ol className="list-decimal list-inside space-y-1">
                       <li>
-                        Commit and push <span className="font-mono-num font-semibold">supabase/</span> and{' '}
-                        <span className="font-mono-num font-semibold">.github/workflows/supabase-sync.yml</span> to{' '}
+                        Push <span className="font-mono-num font-semibold">wrangler.jsonc</span>,{' '}
+                        <span className="font-mono-num font-semibold">worker.ts</span>,{' '}
+                        <span className="font-mono-num font-semibold">supabase/</span>, and{' '}
+                        <span className="font-mono-num font-semibold">.github/workflows/</span> to{' '}
                         <span className="font-mono-num font-semibold">{GITHUB_REPO}</span> (<span className="font-mono-num">main</span>).
                       </li>
                       <li>
-                        Open <span className="font-semibold text-slate-900">Supabase Integrations</span> above, connect{' '}
-                        <span className="font-mono-num font-semibold">{GITHUB_REPO}</span>, and enable automatic branching / migration deploys.
+                        In{' '}
+                        <a
+                          href={CLOUDFLARE_VARIABLES_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-semibold text-amber-800 underline"
+                        >
+                          Cloudflare Worker Settings ({CLOUDFLARE_WORKER_NAME})
+                        </a>
+                        , set Build command <span className="font-mono-num font-semibold">npm run build</span>, Deploy command{' '}
+                        <span className="font-mono-num font-semibold">npx wrangler deploy</span>, and add secret{' '}
+                        <span className="font-mono-num font-semibold">SUPABASE_SERVICE_ROLE_KEY</span>.
                       </li>
                       <li>
-                        Optional CI push: set <span className="font-mono-num font-semibold">SUPABASE_ACCESS_TOKEN</span> and{' '}
-                        <span className="font-mono-num font-semibold">SUPABASE_DB_PASSWORD</span> in GitHub Repository Secrets, or run locally:
+                        In <span className="font-semibold text-slate-900">Supabase Integrations</span>, confirm{' '}
+                        <span className="font-mono-num font-semibold">{GITHUB_REPO}</span> is connected so{' '}
+                        <span className="font-mono-num">supabase/migrations/</span> deploys cleanly.
                       </li>
                     </ol>
+                    <div className="flex items-center justify-between gap-2 bg-slate-900 text-emerald-300 rounded-lg px-2.5 py-2 font-mono-num text-[11px]">
+                      <span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap select-text">
+                        npm run build && npx wrangler deploy
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const cmd = 'npm run build && npx wrangler deploy';
+                          try {
+                            await navigator.clipboard.writeText(cmd);
+                            onToast('Cloudflare Worker deploy command copied', 'success');
+                          } catch {
+                            onToast('Select and copy the command manually', 'warning');
+                          }
+                        }}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-bold shrink-0 cursor-pointer"
+                      >
+                        Copy Deploy
+                      </button>
+                    </div>
                     <div className="flex items-center justify-between gap-2 bg-slate-900 text-emerald-300 rounded-lg px-2.5 py-2 font-mono-num text-[11px]">
                       <span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap select-text">
                         supabase link --project-ref {SUPABASE_PROJECT_REF} && supabase db push
