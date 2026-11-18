@@ -247,37 +247,8 @@ export const SalesView: React.FC<SalesViewProps> = ({
     <section className="h-full flex flex-col overflow-hidden p-3 sm:p-4 lg:p-6 gap-3">
       <div className="flex-1 overflow-y-auto scroll-contain space-y-3 pb-4">
         {/* Sales Toolbar */}
-        <div className="bg-white p-2.5 rounded-2xl border border-slate-200 flex flex-wrap items-center gap-2">
-          <select
-            value={period}
-            onChange={(e) => {
-              setPeriod(e.target.value as SalesPeriod);
-              setShownCount(100);
-            }}
-            aria-label="Sales period"
-            className="px-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
-          >
-            <option value="today">Today</option>
-            <option value="yesterday">Yesterday</option>
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="month">This month</option>
-            <option value="lastmonth">Last month</option>
-            <option value="all">All time</option>
-            <option value="date">Pick a date…</option>
-          </select>
-
-          {period === 'date' && (
-            <input
-              type="date"
-              value={pickedDate}
-              onChange={(e) => setPickedDate(e.target.value)}
-              aria-label="Pick a date"
-              className="px-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
-            />
-          )}
-
-          <div className="relative flex-1 min-w-[150px]">
+        <div className="bg-white p-2.5 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
+          <div className="relative w-full sm:flex-1 sm:min-w-[160px]">
             <input
               type="search"
               value={search}
@@ -287,7 +258,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
               }}
               placeholder="Search receipt # or item..."
               aria-label="Search receipts or items"
-              className="w-full pl-3 pr-8 py-2 min-h-[40px] bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full pl-3 pr-8 py-2 min-h-[40px] bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
             {search && (
               <button
@@ -304,69 +275,102 @@ export const SalesView: React.FC<SalesViewProps> = ({
             )}
           </div>
 
-          <select
-            value={payFilter}
-            onChange={(e) => setPayFilter(e.target.value)}
-            aria-label="Filter by payment method"
-            className="px-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
-          >
-            <option value="ALL">All payments</option>
-            {paymentMethods.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+          <div className="grid grid-cols-3 sm:flex sm:items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
+            <select
+              value={period}
+              onChange={(e) => {
+                setPeriod(e.target.value as SalesPeriod);
+                setShownCount(100);
+              }}
+              aria-label="Sales period"
+              className="w-full sm:w-auto px-1.5 sm:px-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-[11px] sm:text-xs font-bold text-slate-700"
+            >
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="month">This month</option>
+              <option value="lastmonth">Last month</option>
+              <option value="all">All time</option>
+              <option value="date">Pick a date…</option>
+            </select>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as 'ALL' | 'VALID' | 'VOID')}
-            aria-label="Filter by receipt status"
-            className="px-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
-          >
-            <option value="ALL">All status</option>
-            <option value="VALID">Valid only</option>
-            <option value="VOID">Voided only</option>
-          </select>
+            <select
+              value={payFilter}
+              onChange={(e) => setPayFilter(e.target.value)}
+              aria-label="Filter by payment method"
+              className="w-full sm:w-auto px-1.5 sm:px-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-[11px] sm:text-xs font-bold text-slate-700"
+            >
+              <option value="ALL">All Pay</option>
+              {paymentMethods.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
 
-          <button
-            type="button"
-            onClick={() => setShowCashDrawer((v) => !v)}
-            aria-pressed={showCashDrawer}
-            data-testid="toggle-cash-drawer-btn"
-            className={`px-3 py-2 min-h-[40px] rounded-xl font-bold text-xs whitespace-nowrap flex items-center gap-1.5 cursor-pointer border transition ${
-              showCashDrawer
-                ? 'bg-emerald-600 text-white border-emerald-600'
-                : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
-            }`}
-          >
-            <Coins className="w-3.5 h-3.5" />
-            <span>Cash Drawer</span>
-          </button>
-          <button
-            type="button"
-            onClick={exportSalesCsv}
-            className="px-3 py-2 min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>CSV</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onPrintReading(false)}
-            className="px-3 py-2 min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>X-Read</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onPrintReading(true)}
-            className="px-3 py-2 min-h-[40px] rounded-xl bg-slate-900 text-emerald-400 font-bold text-xs whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Z-Read</span>
-          </button>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'ALL' | 'VALID' | 'VOID')}
+              aria-label="Filter by receipt status"
+              className="w-full sm:w-auto px-1.5 sm:px-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-[11px] sm:text-xs font-bold text-slate-700"
+            >
+              <option value="ALL">All Status</option>
+              <option value="VALID">Valid only</option>
+              <option value="VOID">Voided only</option>
+            </select>
+          </div>
+
+          {period === 'date' && (
+            <input
+              type="date"
+              value={pickedDate}
+              onChange={(e) => setPickedDate(e.target.value)}
+              aria-label="Pick a date"
+              className="w-full sm:w-auto px-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
+            />
+          )}
+
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => setShowCashDrawer((v) => !v)}
+              aria-pressed={showCashDrawer}
+              data-testid="toggle-cash-drawer-btn"
+              className={`px-2.5 sm:px-3 py-2 min-h-[40px] rounded-xl font-bold text-[11px] sm:text-xs whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer border transition flex-1 sm:flex-initial ${
+                showCashDrawer
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+              }`}
+            >
+              <Coins className="w-3.5 h-3.5 shrink-0" />
+              <span>Cash Drawer</span>
+            </button>
+            <button
+              type="button"
+              onClick={exportSalesCsv}
+              className="px-2.5 sm:px-3 py-2 min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] sm:text-xs whitespace-nowrap flex items-center justify-center gap-1 cursor-pointer shrink-0"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+              <span>CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onPrintReading(false)}
+              className="px-2.5 sm:px-3 py-2 min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] sm:text-xs whitespace-nowrap flex items-center justify-center gap-1 cursor-pointer shrink-0"
+            >
+              <Printer className="w-3.5 h-3.5 shrink-0" />
+              <span>X-Read</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onPrintReading(true)}
+              className="px-2.5 sm:px-3 py-2 min-h-[40px] rounded-xl bg-slate-900 text-emerald-400 font-bold text-[11px] sm:text-xs whitespace-nowrap flex items-center justify-center gap-1 cursor-pointer shrink-0"
+            >
+              <Printer className="w-3.5 h-3.5 shrink-0" />
+              <span>Z-Read</span>
+            </button>
+          </div>
         </div>
 
         {/* Collapsible PH Cash Drawer Reconciliation */}
@@ -428,6 +432,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
                     </div>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min="0"
                       step="1"
                       aria-label={`Count for ${denom >= 1 ? `${denom} peso` : '25 centavo'}`}
@@ -438,7 +443,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
                         const val = Math.max(0, Math.floor(parseFloat(e.target.value) || 0));
                         setDenomCounts((prev) => ({ ...prev, [denom]: val }));
                       }}
-                      className="w-14 px-1.5 py-1 rounded-lg border border-slate-300 bg-white text-center font-mono-num font-bold text-xs focus:border-emerald-600 focus:outline-none"
+                      className="w-14 px-1.5 py-1.5 min-h-[36px] sm:min-h-0 rounded-lg border border-slate-300 bg-white text-center font-mono-num font-bold text-sm sm:text-xs focus:border-emerald-600 focus:outline-none"
                     />
                   </div>
                 );

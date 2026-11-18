@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { Product, StockLogEntry } from '../types';
 import { computeWeightedAverageCapital, formatPeso } from '../utils/posMath';
+import { ProductIconBadge } from './ProductIconBadge';
 
 interface StockAdjustModalProps {
   product: Product | null;
@@ -99,10 +100,13 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
         onSubmit={handleSubmit}
         className="bg-white w-full max-w-md rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[92dvh] overflow-y-auto"
       >
-        <div className="flex items-center justify-between">
-          <div className="min-w-0 pr-2">
-            <h3 className="font-extrabold text-base text-slate-900">Quick Stock Adjustment</h3>
-            <p className="text-xs text-slate-500 truncate">{product.name}</p>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0 pr-2">
+            <ProductIconBadge product={product} size="md" />
+            <div className="min-w-0">
+              <h3 className="font-extrabold text-base text-slate-900">Quick Stock Adjustment</h3>
+              <p className="text-xs text-slate-500 truncate">{product.name}</p>
+            </div>
           </div>
           <button
             type="button"

@@ -42,6 +42,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   const buildPlainText = () => {
     const out: string[] = [
       settings.storeName.toUpperCase(),
+      settings.storeTagline ? settings.storeTagline.trim() : '',
       settings.storeAddress,
       settings.storeTin,
       settings.storePhone ? `Tel: ${settings.storePhone}` : '',
@@ -157,6 +158,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
           >
             <div className="text-center space-y-0.5 pb-2 border-b border-dashed border-slate-400">
               <div className="font-bold text-sm uppercase">{settings.storeName}</div>
+              {settings.storeTagline && <div className="text-[11px] font-semibold">{settings.storeTagline}</div>}
               <div>{settings.storeAddress}</div>
               <div>{settings.storeTin}</div>
               {settings.storePhone && <div>Tel: {settings.storePhone}</div>}

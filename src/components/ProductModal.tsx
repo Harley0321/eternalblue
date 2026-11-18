@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Camera, Wand2, X } from 'lucide-react';
+import { Camera, Check, Wand2, X } from 'lucide-react';
 import type { Product } from '../types';
 import { BASE_CATEGORIES, formatPeso, normBarcode, round2, scEligibleProduct, scSuggest } from '../utils/posMath';
+import {
+  PRODUCT_ICON_OPTIONS,
+  PRODUCT_TINT_OPTIONS,
+  resolveProductIcon,
+} from '../utils/productIcons';
+import { ProductIconBadge } from './ProductIconBadge';
 
 interface ProductModalProps {
   open: boolean;
@@ -37,9 +43,13 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [expiry, setExpiry] = useState('');
   const [scEligible, setScEligible] = useState(false);
   const [scTouched, setScTouched] = useState(false);
+  const [icon, setIcon] = useState<string>('auto');
+  const [iconColor, setIconColor] = useState<string>('auto');
+  const [showIconPicker, setShowIconPicker] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    setShowIconPicker(false);
     if (editingProduct) {
       setName(editingProduct.name);
       setBarcode(editingProduct.barcode);
@@ -54,6 +64,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setExpiry(editingProduct.expiry || '');
       setScEligible(scEligibleProduct(editingProduct));
       setScTouched(true);
+      setIcon(editingProduct.icon || 'auto');
+      setIconColor(editingProduct.iconColor || 'auto');
     } else {
       setName('');
       setBarcode(initialBarcode || `480${Date.now().toString().slice(-10)}`);
@@ -68,6 +80,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setExpiry('');
       setScEligible(false);
       setScTouched(false);
+      setIcon('auto');
+      setIconColor('auto');
     }
   }, [open, editingProduct]);
 
@@ -179,10 +193,20 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         stock: Number(rawStk.toFixed(3)),
         expiry: expiry || '',
         scEligible,
+        icon: icon !== 'auto' ? icon : undefined,
+        iconColor: iconColor !== 'auto' ? iconColor : undefined,
       },
       editingProduct?.id,
     );
   };
+
+  const resolvedCategory = category === '__new__' ? newCategory.trim() || 'General' : category;
+  const liveIconPreview = resolveProductIcon({
+    name,
+    category: resolvedCategory,
+    icon,
+    iconColor,
+  });
 
   return (
     <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
@@ -207,14 +231,132 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         <div className="space-y-2.5 text-xs">
           <div>
             <label className="font-bold text-slate-600 block mb-1">Product Name *</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => handleNameChange(e.target.value)}
-              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl"
-              required
-            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowIconPicker((v) => !v)}
+                aria-label="Customize product icon"
+                data-testid="product-icon-toggle"
+                title={`Product icon: ${liveIconPreview.meta.label} (${icon === 'auto' ? 'Auto' : 'Custom'})`}
+                className="shrink-0 rounded-2xl p-0.5 border border-slate-200 hover:border-emerald-400 transition cursor-pointer"
+              >
+                <ProductIconBadge
+                  product={{ name, category: resolvedCategory, icon, iconColor }}
+                  size="lg"
+                />
+              </button>
+              <div className="flex-1 min-w-0 space-y-1">
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => handleNameChange(e.target.value)}
+                  placeholder="e.g. Bear Brand Milk 300g"
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-base sm:text-xs"
+                  required
+                />
+                <div className="flex items-center justify-between gap-2 text-[10.5px] text-slate-500">
+                  <span>
+                    Icon: <b className="text-slate-700">{liveIconPreview.meta.label}</b>{' '}
+                    {icon === 'auto' ? '(Auto-matched)' : '(Custom)'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowIconPicker((v) => !v)}
+                    className="font-bold text-emerald-700 hover:underline cursor-pointer"
+                  >
+                    {showIconPicker ? 'Hide Icons' : 'Change Icon'}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
+
+          {showIconPicker && (
+            <div
+              data-testid="product-icon-picker"
+              className="rounded-2xl bg-slate-50 border border-slate-200 p-3 space-y-2.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-extrabold text-slate-800 text-[11px]">
+                  Choose Product Icon
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIcon('auto');
+                    setIconColor('auto');
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold border cursor-pointer ${
+                    icon === 'auto' && iconColor === 'auto'
+                      ? 'bg-slate-900 text-emerald-400 border-slate-900'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                  }`}
+                >
+                  Auto Smart Match
+                </button>
+              </div>
+
+              <div className="grid grid-cols-5 gap-1.5">
+                {PRODUCT_ICON_OPTIONS.map((opt) => {
+                  const IconComp = opt.icon;
+                  const active = icon === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setIcon(opt.id)}
+                      aria-label={`Select ${opt.label} icon`}
+                      data-testid={`product-icon-opt-${opt.id}`}
+                      title={opt.label}
+                      className={`py-2 px-1 rounded-xl border flex flex-col items-center justify-center gap-1 text-[9.5px] font-bold cursor-pointer transition ${
+                        active
+                          ? 'bg-slate-900 text-emerald-400 border-slate-900 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <IconComp className="w-4 h-4" />
+                      <span className="truncate max-w-full">{opt.label.split(' ')[0]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200">
+                <span className="text-[10.5px] font-bold text-slate-600">Color Tint</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setIconColor('auto')}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border cursor-pointer ${
+                      iconColor === 'auto'
+                        ? 'bg-slate-900 text-white border-slate-900'
+                        : 'bg-white text-slate-600 border-slate-300'
+                    }`}
+                  >
+                    Auto
+                  </button>
+                  {PRODUCT_TINT_OPTIONS.map((t) => {
+                    const selected = iconColor === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setIconColor(t.id)}
+                        aria-label={`Select ${t.label} color tint`}
+                        data-testid={`product-tint-opt-${t.id}`}
+                        title={t.label}
+                        className={`w-6 h-6 rounded-full ${t.swatchClass} flex items-center justify-center text-white cursor-pointer transition ${
+                          selected ? 'ring-2 ring-offset-1 ring-slate-900 scale-110' : 'opacity-80 hover:opacity-100'
+                        }`}
+                      >
+                        {selected && <Check className="w-3 h-3 stroke-[3]" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="font-bold text-slate-600 block mb-1">Barcode</label>

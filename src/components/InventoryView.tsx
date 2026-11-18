@@ -25,6 +25,7 @@ import {
   lineTotalPeso,
 } from '../utils/posMath';
 import { CategoryBar } from './CategoryBar';
+import { ProductIconBadge } from './ProductIconBadge';
 
 export type StockFilter =
   | 'ALL'
@@ -444,77 +445,82 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
       {/* Inventory Toolbar — Balanced 2-tier layout */}
       <div className="bg-white p-2.5 rounded-2xl border border-slate-200 flex flex-col gap-2 shrink-0">
-        {/* Primary Row: Search, Filters, Scan, Add Product */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(e) => onSetSearchQuery(e.target.value)}
-              placeholder="Search stock name or barcode..."
-              aria-label="Search stock name or barcode"
-              className="w-full pl-9 pr-8 min-h-[42px] bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => onSetSearchQuery('')}
-                aria-label="Clear stock search"
-                className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
+        {/* Primary Row: Search + Scan on Row 1, Filter/Sort/Add on responsive wrap */}
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
+          <div className="flex items-center gap-2 sm:flex-1 min-w-0">
+            <div className="relative flex-1 min-w-0">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => onSetSearchQuery(e.target.value)}
+                placeholder="Search stock name or barcode..."
+                aria-label="Search stock name or barcode"
+                className="w-full pl-9 pr-8 min-h-[42px] bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => onSetSearchQuery('')}
+                  aria-label="Clear stock search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onOpenScanner}
+              className="px-3 min-h-[42px] rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>Scan Stock</span>
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onOpenScanner}
-            className="px-3 min-h-[42px] rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Scan Stock</span>
-          </button>
-          <select
-            value={stockFilter}
-            onChange={(e) => setStockFilter(e.target.value as StockFilter)}
-            aria-label="Filter stock status"
-            className="px-3 min-h-[42px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
-          >
-            <option value="ALL">All Items ({kpis.totalSkus})</option>
-            <option value="LOW">Low Stock (≤{lowStockThreshold})</option>
-            <option value="OUT">Out of Stock ({kpis.outCount})</option>
-            <option value="FAST_LOW">Running Out (≤{coverWarnDays}d cover)</option>
-            <option value="DEAD">Slow / Dead Stock (30d)</option>
-            <option value="EXPIRED">Expired ({kpis.expiredCount})</option>
-            <option value="SOON">Expiring Soon ({kpis.soonCount})</option>
-            <option value="NO_CAP">Missing Capital ({kpis.missingCapitalCount})</option>
-            <option value="LOSS">Below Capital ({kpis.lossMarginCount})</option>
-          </select>
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as StockSort)}
-            aria-label="Sort stock"
-            className="px-3 min-h-[42px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
-          >
-            <option value="default">Sort: Default</option>
-            <option value="cover-asc">Cover: Soonest Out</option>
-            <option value="velocity-desc">Fastest Moving (30d)</option>
-            <option value="stock-asc">Stock: Low → High</option>
-            <option value="stock-desc">Stock: High → Low</option>
-            <option value="value-desc">Highest Value</option>
-            <option value="expiry-asc">Expiry: Soonest</option>
-            <option value="margin-asc">Margin: Low → High</option>
-            <option value="name-asc">Name: A → Z</option>
-          </select>
-          <button
-            type="button"
-            onClick={() => onOpenProductModal()}
-            className="px-4 min-h-[42px] rounded-xl bg-slate-900 hover:bg-slate-800 text-emerald-400 font-bold text-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 ml-auto cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Product</span>
-          </button>
+
+          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2">
+            <select
+              value={stockFilter}
+              onChange={(e) => setStockFilter(e.target.value as StockFilter)}
+              aria-label="Filter stock status"
+              className="w-full sm:w-auto px-3 min-h-[42px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
+            >
+              <option value="ALL">All Items ({kpis.totalSkus})</option>
+              <option value="LOW">Low Stock (≤{lowStockThreshold})</option>
+              <option value="OUT">Out of Stock ({kpis.outCount})</option>
+              <option value="FAST_LOW">Running Out (≤{coverWarnDays}d cover)</option>
+              <option value="DEAD">Slow / Dead Stock (30d)</option>
+              <option value="EXPIRED">Expired ({kpis.expiredCount})</option>
+              <option value="SOON">Expiring Soon ({kpis.soonCount})</option>
+              <option value="NO_CAP">Missing Capital ({kpis.missingCapitalCount})</option>
+              <option value="LOSS">Below Capital ({kpis.lossMarginCount})</option>
+            </select>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as StockSort)}
+              aria-label="Sort stock"
+              className="w-full sm:w-auto px-3 min-h-[42px] rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"
+            >
+              <option value="default">Sort: Default</option>
+              <option value="cover-asc">Cover: Soonest Out</option>
+              <option value="velocity-desc">Fastest Moving (30d)</option>
+              <option value="stock-asc">Stock: Low → High</option>
+              <option value="stock-desc">Stock: High → Low</option>
+              <option value="value-desc">Highest Value</option>
+              <option value="expiry-asc">Expiry: Soonest</option>
+              <option value="margin-asc">Margin: Low → High</option>
+              <option value="name-asc">Name: A → Z</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => onOpenProductModal()}
+              className="col-span-2 sm:col-span-1 px-4 min-h-[42px] rounded-xl bg-slate-900 hover:bg-slate-800 text-emerald-400 font-bold text-xs flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 sm:ml-auto cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Product</span>
+            </button>
+          </div>
         </div>
 
         {/* Utility Row: Single horizontal strip on mobile, clean left-aligned actions on desktop */}
@@ -659,7 +665,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       )}
 
       {/* Mobile Card List */}
-      <div className="md:hidden space-y-2 pb-6">
+      <div className="md:hidden space-y-2 pb-[calc(1rem+env(safe-area-inset-bottom))]">
         {visibleRows.length === 0 ? (
           <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-xs text-slate-400">
             No matching stock items.
@@ -670,32 +676,35 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               key={p.id}
               className="bg-white p-3 rounded-2xl border border-slate-200 flex items-center justify-between gap-2"
             >
-              <div className="min-w-0">
-                <div className="font-bold text-xs text-slate-900 truncate">{p.name}</div>
-                <div className="text-[11px] font-mono-num text-slate-500">
-                  {p.barcode} · {formatPeso(p.retailPrice)}/{p.unit}
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <ProductIconBadge product={p} size="md" muted={p.stock <= 0} className="mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-xs text-slate-900 truncate">{p.name}</div>
+                  <div className="text-[11px] font-mono-num text-slate-500">
+                    {p.barcode} · {formatPeso(p.retailPrice)}/{p.unit}
+                  </div>
+                  <div className="text-[11px] font-mono-num text-slate-500">
+                    Cap: {Number(p.capital) > 0 ? formatPeso(p.capital) : '—'}/{p.unit} · Margin:{' '}
+                    {renderMarginBadge(p)}
+                  </div>
+                  <div className="text-[11px] font-mono-num mt-0.5 flex flex-wrap items-center gap-x-2">
+                    <span
+                      className={`font-bold ${
+                        p.stock <= 0
+                          ? 'text-rose-600'
+                          : p.stock <= lowStockThreshold
+                            ? 'text-amber-600'
+                            : 'text-emerald-700'
+                      }`}
+                    >
+                      Stock: {p.stock} {p.unit}
+                    </span>
+                    {velocity.hasSalesInWindow && (
+                      <span className="text-slate-500">· Cover: {renderVelocityCell(p)}</span>
+                    )}
+                  </div>
+                  {p.expiry && <div className="text-[11px] mt-0.5">Exp: {renderExpiryCell(p)}</div>}
                 </div>
-                <div className="text-[11px] font-mono-num text-slate-500">
-                  Cap: {Number(p.capital) > 0 ? formatPeso(p.capital) : '—'}/{p.unit} · Margin:{' '}
-                  {renderMarginBadge(p)}
-                </div>
-                <div className="text-[11px] font-mono-num mt-0.5 flex flex-wrap items-center gap-x-2">
-                  <span
-                    className={`font-bold ${
-                      p.stock <= 0
-                        ? 'text-rose-600'
-                        : p.stock <= lowStockThreshold
-                          ? 'text-amber-600'
-                          : 'text-emerald-700'
-                    }`}
-                  >
-                    Stock: {p.stock} {p.unit}
-                  </span>
-                  {velocity.hasSalesInWindow && (
-                    <span className="text-slate-500">· Cover: {renderVelocityCell(p)}</span>
-                  )}
-                </div>
-                {p.expiry && <div className="text-[11px] mt-0.5">Exp: {renderExpiryCell(p)}</div>}
               </div>
 
               <div className="flex items-center gap-1.5 shrink-0">
@@ -768,12 +777,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <tr key={p.id} className="hover:bg-slate-50">
                   <td className="py-2.5 px-4 font-mono-num text-slate-500">{p.barcode}</td>
                   <td className="py-2.5 px-4">
-                    <div className="font-bold text-slate-900">{p.name}</div>
-                    {p.wholesalePrice > 0 && p.wholesalePrice < p.retailPrice && (
-                      <div className="text-[10px] font-mono-num text-indigo-600">
-                        Whls: {formatPeso(p.wholesalePrice)} ({p.wholesaleMinQty}+)
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <ProductIconBadge product={p} size="sm" muted={p.stock <= 0} />
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900">{p.name}</div>
+                        {p.wholesalePrice > 0 && p.wholesalePrice < p.retailPrice && (
+                          <div className="text-[10px] font-mono-num text-indigo-600">
+                            Whls: {formatPeso(p.wholesalePrice)} ({p.wholesaleMinQty}+)
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </td>
                   <td className="py-2.5 px-4 text-slate-600">{p.category}</td>
                   <td className="py-2.5 px-4 text-right font-mono-num text-slate-600">

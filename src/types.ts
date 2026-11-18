@@ -16,6 +16,8 @@ export interface Product {
   stock: number;
   expiry?: string;
   scEligible?: boolean;
+  icon?: string;
+  iconColor?: string;
 }
 
 export interface CartLine {
@@ -84,6 +86,8 @@ export interface StoreSettings {
   zCount: number;
   storePhone: string;
   receiptFooter: string;
+  storeIcon?: string;
+  storeTagline?: string;
   lowStockThreshold: number;
   expiryWarnDays: number;
   reorderLeadDays: number;
@@ -199,6 +203,8 @@ export interface ConfigSnapshot {
     storeTin: string;
     storePhone: string;
     receiptFooter: string;
+    storeIcon?: string;
+    storeTagline?: string;
     lowStockThreshold: number;
     expiryWarnDays: number;
     reorderLeadDays: number;

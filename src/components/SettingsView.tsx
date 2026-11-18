@@ -545,8 +545,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-3 sm:p-5 bg-slate-50">
-      <div className="max-w-5xl mx-auto space-y-4 pb-8">
+    <div className="flex-1 overflow-y-auto scroll-contain p-3 sm:p-5 bg-slate-50">
+      <div className="max-w-5xl mx-auto space-y-4 pb-[calc(2rem+env(safe-area-inset-bottom))]">
         {/* Header bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-xs">
           <div>

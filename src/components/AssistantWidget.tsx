@@ -544,7 +544,7 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
             e.preventDefault();
             askQuestion(input);
           }}
-          className="p-2.5 border-t border-slate-200 bg-white flex items-center gap-2 shrink-0"
+          className="p-2.5 pb-safe border-t border-slate-200 bg-white flex items-center gap-2 shrink-0"
         >
           <input
             ref={inputRef}
@@ -557,13 +557,13 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                 : 'Ask: briefing, forecast, combos, receipt, magkano...'
             }
             aria-label="Ask OmniMart Store AI"
-            className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-slate-300 text-xs focus:border-emerald-600 focus:outline-none"
+            className="flex-1 min-w-0 px-3 py-2 min-h-[40px] rounded-xl border border-slate-300 text-base sm:text-xs focus:border-emerald-600 focus:outline-none"
           />
           <button
             type="submit"
             disabled={!input.trim()}
             aria-label="Send question"
-            className="w-9 h-9 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center cursor-pointer disabled:opacity-40 shrink-0"
+            className="w-10 h-10 sm:w-9 sm:h-9 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center cursor-pointer disabled:opacity-40 shrink-0"
           >
             <Send className="w-4 h-4" />
           </button>

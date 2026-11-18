@@ -28,6 +28,7 @@ import {
   wholesaleBlock,
 } from '../utils/posMath';
 import { CategoryBar } from './CategoryBar';
+import { ProductIconBadge } from './ProductIconBadge';
 
 interface PosViewProps {
   products: Product[];
@@ -94,17 +95,20 @@ const ProductTile = memo<ProductTileProps>(
         }`}
       >
         <div>
-          <div className="flex items-center justify-between gap-1.5 text-[11px]">
-            <span className="text-slate-500 font-semibold truncate">{p.category}</span>
-            <span
-              className={`font-mono-num font-bold shrink-0 ${
-                out ? 'text-rose-600' : low ? 'text-amber-600' : 'text-slate-500'
-              }`}
-            >
-              {expired ? 'EXPIRED' : p.stock <= 0 ? 'OUT' : `${p.stock} ${p.unit}`}
-            </span>
+          <div className="flex items-start justify-between gap-2">
+            <ProductIconBadge product={p} size="sm" muted={out} />
+            <div className="min-w-0 flex-1 text-right">
+              <div
+                className={`text-[11px] font-mono-num font-bold leading-tight ${
+                  out ? 'text-rose-600' : low ? 'text-amber-600' : 'text-slate-600'
+                }`}
+              >
+                {expired ? 'EXPIRED' : p.stock <= 0 ? 'OUT' : `${p.stock} ${p.unit}`}
+              </div>
+              <div className="text-[10px] text-slate-500 font-semibold truncate">{p.category}</div>
+            </div>
           </div>
-          <div className="font-bold text-xs sm:text-[13px] text-slate-900 line-clamp-2 mt-1 leading-snug">
+          <div className="font-bold text-xs sm:text-[13px] text-slate-900 line-clamp-2 mt-2 leading-snug">
             {p.name}
           </div>
           {inCartQty > 0 && (
@@ -265,7 +269,7 @@ export const PosView: React.FC<PosViewProps> = ({
               enterKeyHint="search"
               placeholder="Search item, barcode, or 5*code... [/]"
               aria-label="Search item or scan barcode"
-              className="w-full pl-9 pr-8 py-2 min-h-[42px] bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
+              className="w-full pl-9 pr-8 py-2 min-h-[42px] bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
               autoComplete="off"
             />
             {searchQuery && (
@@ -377,7 +381,7 @@ export const PosView: React.FC<PosViewProps> = ({
         />
 
         {/* Responsive Product Grid */}
-        <div className="flex-1 overflow-y-auto scroll-contain grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-2.5 pb-20 md:pb-3 content-start">
+        <div className="flex-1 overflow-y-auto scroll-contain grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-2.5 pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-3 content-start">
           {filteredProducts.length === 0 ? (
             <div className="col-span-full py-12 text-center text-xs text-slate-500 space-y-2">
               <p>No matching products found.</p>
@@ -412,14 +416,14 @@ export const PosView: React.FC<PosViewProps> = ({
         </div>
       </div>
 
-      {/* Mobile Bottom Floating Cart Bar (compact <= 60px to stay within mobile sticky cap) */}
-      <div className="md:hidden fixed bottom-0 inset-x-0 bg-slate-900 text-white px-3 py-2 pb-safe border-t border-slate-800 flex items-center justify-between gap-2 z-20 shadow-2xl">
+      {/* Mobile Bottom Floating Cart Bar (compact to stay within mobile sticky cap) */}
+      <div className="md:hidden fixed bottom-0 inset-x-0 bg-slate-900 text-white px-3 py-1.5 pb-safe border-t border-slate-800 flex items-center justify-between gap-2 z-20 shadow-2xl">
         <button
           type="button"
           onClick={onOpenMobileCart}
-          className="flex items-center gap-2.5 text-left min-w-0 flex-1 cursor-pointer"
+          className="flex items-center gap-2.5 text-left min-w-0 flex-1 min-h-[42px] cursor-pointer"
         >
-          <div className="relative w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-emerald-400 shrink-0">
+          <div className="relative w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-emerald-400 shrink-0">
             <ShoppingCart className="w-4 h-4" />
             <span className="absolute -top-1.5 -right-1.5 px-1.5 rounded-full bg-emerald-500 text-slate-950 font-extrabold text-[10px] font-mono-num">
               {cart.length}
@@ -429,7 +433,7 @@ export const PosView: React.FC<PosViewProps> = ({
             <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
               Basket
             </div>
-            <div className="font-mono-num font-extrabold text-base text-emerald-400 leading-tight">
+            <div className="font-mono-num font-extrabold text-sm text-emerald-400 leading-tight">
               {formatPeso(totals.grandTotal)}
             </div>
           </div>
@@ -438,7 +442,7 @@ export const PosView: React.FC<PosViewProps> = ({
           type="button"
           onClick={onOpenCheckout}
           disabled={cart.length === 0}
-          className="px-5 py-2.5 min-h-[44px] rounded-xl bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-slate-950 font-extrabold text-xs uppercase tracking-wider shrink-0 cursor-pointer"
+          className="px-4 py-2 min-h-[42px] rounded-xl bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-slate-950 font-extrabold text-xs uppercase tracking-wider shrink-0 cursor-pointer"
         >
           Pay Now
         </button>
@@ -458,8 +462,9 @@ export const PosView: React.FC<PosViewProps> = ({
           mobileCartOpen ? 'translate-y-0' : 'translate-y-full md:translate-y-0'
         }`}
       >
+        <div className="md:hidden w-10 h-1 rounded-full bg-slate-300 mx-auto mt-2 shrink-0" />
         {/* Cart Header */}
-        <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
+        <div className="px-4 py-2.5 sm:py-3 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <h2 className="font-extrabold text-sm text-slate-900">Order Basket</h2>
             <span className="text-[11px] text-slate-500 font-semibold font-mono-num">
@@ -542,20 +547,23 @@ export const PosView: React.FC<PosViewProps> = ({
                   className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="font-bold text-xs text-slate-900 truncate">{item.name}</div>
-                      <div className="text-[11px] font-mono-num text-slate-500 mt-0.5">
-                        {formatPeso(activePrice)}/{item.unit}
-                        {isW && (
-                          <span className="ml-1.5 text-indigo-700 font-bold text-[10px]">
-                            · Wholesale{savedPeso > 0 ? ` (Save ${formatPeso(savedPeso)})` : ''}
-                          </span>
-                        )}
-                        {isSeniorPwd && scEligibleLine(item, productMap) && (
-                          <span className="ml-1.5 text-amber-700 font-bold text-[10px]">
-                            · SC/PWD 5%
-                          </span>
-                        )}
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <ProductIconBadge product={prod || item} size="xs" />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-xs text-slate-900 truncate">{item.name}</div>
+                        <div className="text-[11px] font-mono-num text-slate-500 mt-0.5">
+                          {formatPeso(activePrice)}/{item.unit}
+                          {isW && (
+                            <span className="ml-1.5 text-indigo-700 font-bold text-[10px]">
+                              · Wholesale{savedPeso > 0 ? ` (Save ${formatPeso(savedPeso)})` : ''}
+                            </span>
+                          )}
+                          {isSeniorPwd && scEligibleLine(item, productMap) && (
+                            <span className="ml-1.5 text-amber-700 font-bold text-[10px]">
+                              · SC/PWD 5%
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -564,7 +572,7 @@ export const PosView: React.FC<PosViewProps> = ({
                         type="button"
                         onClick={() => onChangeCartQty(item.productId, -1)}
                         aria-label={`Decrease quantity for ${item.name}`}
-                        className="w-8 h-8 rounded-lg bg-white border border-slate-300 text-slate-700 font-bold text-xs cursor-pointer"
+                        className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-white border border-slate-300 text-slate-700 font-bold text-sm sm:text-xs cursor-pointer"
                       >
                         -
                       </button>
@@ -580,13 +588,13 @@ export const PosView: React.FC<PosViewProps> = ({
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                         }}
-                        className="w-12 h-8 text-center font-mono-num font-bold text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-12 h-9 sm:h-8 text-center font-mono-num font-bold text-sm sm:text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                       <button
                         type="button"
                         onClick={() => onChangeCartQty(item.productId, 1)}
                         aria-label={`Increase quantity for ${item.name}`}
-                        className="w-8 h-8 rounded-lg bg-white border border-slate-300 text-slate-700 font-bold text-xs cursor-pointer"
+                        className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-white border border-slate-300 text-slate-700 font-bold text-sm sm:text-xs cursor-pointer"
                       >
                         +
                       </button>
@@ -594,7 +602,7 @@ export const PosView: React.FC<PosViewProps> = ({
                         type="button"
                         onClick={() => onRemoveCartLine(item.productId)}
                         aria-label={`Remove ${item.name}`}
-                        className="w-7 h-8 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center cursor-pointer"
+                        className="w-8 h-9 sm:w-7 sm:h-8 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>

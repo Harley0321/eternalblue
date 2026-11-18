@@ -935,6 +935,8 @@ export function sanitizeConfigForSnapshot(settings: StoreSettings): ConfigSnapsh
     storeTin: String(settings.storeTin || DEFAULT_SETTINGS.storeTin),
     storePhone: String(settings.storePhone || ''),
     receiptFooter: String(settings.receiptFooter || DEFAULT_SETTINGS.receiptFooter),
+    storeIcon: String(settings.storeIcon || 'basket'),
+    storeTagline: String(settings.storeTagline || ''),
     lowStockThreshold: Number(settings.lowStockThreshold ?? DEFAULT_SETTINGS.lowStockThreshold),
     expiryWarnDays: Number(settings.expiryWarnDays ?? DEFAULT_SETTINGS.expiryWarnDays),
     reorderLeadDays: Number(settings.reorderLeadDays ?? DEFAULT_SETTINGS.reorderLeadDays),
