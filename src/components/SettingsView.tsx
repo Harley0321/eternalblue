@@ -1449,21 +1449,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </span>
                 </div>
                 <span className="text-[11px] font-semibold text-slate-500">
-                  {settings.syncEnabled !== true
-                    ? 'Device isolated (auto-sync off)'
-                    : !isOnline
-                      ? 'Device offline — queued locally'
-                      : syncStatus?.configured && syncStatus?.schemaReady
-                        ? 'This device synced'
-                        : syncStatus?.configured
+                  {!isOnline
+                    ? 'Device offline — queued locally'
+                    : syncStatus?.keyRole === 'anon'
+                      ? 'Wrong key (anon/publishable — need service_role)'
+                      : syncStatus && !syncStatus.configured
+                        ? 'Server key pending'
+                        : syncStatus?.configured && !syncStatus?.schemaReady
                           ? 'Schema setup needed'
-                          : 'Server key pending'}
+                          : settings.syncEnabled !== true
+                            ? 'Device isolated (manual sync ready)'
+                            : syncStatus?.configured && syncStatus?.schemaReady
+                              ? 'This device synced'
+                              : 'Checking server…'}
                 </span>
               </div>
 
-              {syncError && (
+              {(syncError || (syncStatus?.configured && !syncStatus.schemaReady && syncStatus.error)) && (
                 <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
-                  {syncError}
+                  {syncError || syncStatus?.error}
                 </div>
               )}
 
@@ -1479,8 +1483,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <span className="font-semibold text-slate-800">SQL Editor</span> to create the POS tables.
                     </li>
                     <li>
-                      Add <span className="font-mono-num font-semibold text-slate-800">SUPABASE_SERVICE_ROLE_KEY</span>{' '}
-                      (from Supabase Project Settings → API) to{' '}
+                      Copy your <span className="font-mono-num font-semibold text-slate-800">service_role</span> (or{' '}
+                      <span className="font-mono-num font-semibold text-slate-800">sb_secret_...</span>) key from{' '}
+                      <a
+                        href={`https://supabase.com/dashboard/project/${syncStatus.projectRef || SUPABASE_PROJECT_REF}/settings/api-keys`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-emerald-700 underline"
+                      >
+                        Supabase Project → Settings → API Keys
+                      </a>{' '}
+                      (do not use the <span className="font-mono-num">anon</span> / publishable key).
+                    </li>
+                    <li>
+                      Add it as{' '}
+                      <span className="font-mono-num font-semibold text-slate-800">SUPABASE_SERVICE_ROLE_KEY</span> in{' '}
                       {syncStatus.cloudflareWorker?.runtime === 'cloudflare-worker' ? (
                         <>
                           <a
@@ -1491,7 +1508,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           >
                             Cloudflare Worker ({syncStatus.cloudflareWorker.serviceName || CLOUDFLARE_WORKER_NAME}) → Settings → Variables and Secrets
                           </a>{' '}
-                          as an encrypted Secret (or run{' '}
+                          (click <span className="font-semibold text-slate-800">+ Add</span> → Type:{' '}
+                          <span className="font-semibold text-slate-800">Secret</span>, not Bindings, or run{' '}
                           <span className="font-mono-num font-semibold text-slate-800">
                             npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
                           </span>

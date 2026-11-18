@@ -513,9 +513,15 @@ export default function App() {
       setSyncError(null);
       try {
         const status = await refreshSyncStatus();
-        if (!status?.configured || !status.schemaReady) {
-          const isWorker = status?.cloudflareWorker?.runtime === 'cloudflare-worker';
-          const reason = !status?.configured
+        if (!status) {
+          const reason = 'Unable to reach /api/sync/status. Check your connection or Worker deployment.';
+          setSyncError(reason);
+          if (!silent) toast(reason, 'warning');
+          return;
+        }
+        if (!status.configured || !status.schemaReady) {
+          const isWorker = status.cloudflareWorker?.runtime === 'cloudflare-worker';
+          const reason = !status.configured
             ? isWorker
               ? 'Supabase key not configured on Cloudflare Worker yet. Add SUPABASE_SERVICE_ROLE_KEY under Worker Settings → Variables and Secrets.'
               : 'Supabase key not configured on server yet.'
@@ -616,7 +622,7 @@ export default function App() {
           reconciled.heldOrders,
           reconciled.stockLog,
           reconciled.configHistory,
-          reconciled.settings,
+          { ...reconciled.settings, syncStoreId: storeId },
           finalSyncedAt,
         );
         setPendingCloudPush(false);

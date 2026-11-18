@@ -201,6 +201,46 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
+function decodeJwtRole(token: string): string | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const json = atob(padded);
+    const parsed = JSON.parse(json) as { role?: unknown };
+    return typeof parsed.role === 'string' ? parsed.role : null;
+  } catch {
+    return null;
+  }
+}
+
+export function detectSupabaseKeyRole(key: string): 'service' | 'anon' | 'unknown' | 'none' {
+  const trimmed = key.trim();
+  if (!trimmed) return 'none';
+  if (trimmed.startsWith('sb_publishable_')) return 'anon';
+  if (trimmed.startsWith('sb_secret_')) return 'service';
+  const jwtRole = decodeJwtRole(trimmed);
+  if (jwtRole === 'anon' || jwtRole === 'authenticated') return 'anon';
+  if (jwtRole === 'service_role') return 'service';
+  return 'unknown';
+}
+
+function dedupeByKey<T>(rows: T[], getKey: (row: T) => string): T[] {
+  const map = new Map<string, T>();
+  for (const row of rows) {
+    map.set(getKey(row), row);
+  }
+  return Array.from(map.values());
+}
+
+function formatSupabaseDbError(message: string): string {
+  if (/row-level security|42501/i.test(message)) {
+    return `${message} — Ensure SUPABASE_SERVICE_ROLE_KEY (service_role or sb_secret_...), not the public/anon key, is set on the server/Worker.`;
+  }
+  return message;
+}
+
 function resolveEnvConfig(env: SyncRuntimeEnv) {
   const supabaseUrl = normalizeSupabaseUrl(env.SUPABASE_URL);
   const rawKey =
@@ -215,6 +255,7 @@ function resolveEnvConfig(env: SyncRuntimeEnv) {
     .trim()
     .replace(/^['"]+|['"]+$/g, '')
     .trim();
+  const keyRole = detectSupabaseKeyRole(supabaseKey);
   const projectRef = extractProjectRef(supabaseUrl);
   const dashboardUrl = `https://supabase.com/dashboard/project/${projectRef}/settings/general`;
   const integrationsUrl = `https://supabase.com/dashboard/project/${projectRef}/settings/integrations`;
@@ -231,6 +272,7 @@ function resolveEnvConfig(env: SyncRuntimeEnv) {
   return {
     supabaseUrl,
     supabaseKey,
+    keyRole,
     projectRef,
     dashboardUrl,
     integrationsUrl,
@@ -321,6 +363,7 @@ export async function handleSyncApiRequest(
       return jsonResponse({
         configured: false,
         schemaReady: false,
+        keyRole: 'none',
         projectRef: cfg.projectRef,
         projectUrl: cfg.supabaseUrl,
         dashboardUrl: cfg.dashboardUrl,
@@ -341,16 +384,31 @@ export async function handleSyncApiRequest(
         return jsonResponse({
           configured: true,
           schemaReady: false,
+          keyRole: cfg.keyRole,
           projectRef: cfg.projectRef,
           projectUrl: cfg.supabaseUrl,
           dashboardUrl: cfg.dashboardUrl,
           ...integration,
-          error: firstErr.message,
+          error: formatSupabaseDbError(firstErr.message),
+        });
+      }
+      if (cfg.keyRole === 'anon') {
+        return jsonResponse({
+          configured: true,
+          schemaReady: false,
+          keyRole: cfg.keyRole,
+          projectRef: cfg.projectRef,
+          projectUrl: cfg.supabaseUrl,
+          dashboardUrl: cfg.dashboardUrl,
+          ...integration,
+          error:
+            'Configured Supabase key is a public/anon key, which is blocked by Row Level Security on writes. Set SUPABASE_SERVICE_ROLE_KEY (service_role or sb_secret_...) on the server/Worker.',
         });
       }
       return jsonResponse({
         configured: true,
         schemaReady: true,
+        keyRole: cfg.keyRole,
         projectRef: cfg.projectRef,
         projectUrl: cfg.supabaseUrl,
         dashboardUrl: cfg.dashboardUrl,
@@ -361,6 +419,7 @@ export async function handleSyncApiRequest(
       return jsonResponse({
         configured: true,
         schemaReady: false,
+        keyRole: cfg.keyRole,
         projectRef: cfg.projectRef,
         projectUrl: cfg.supabaseUrl,
         dashboardUrl: cfg.dashboardUrl,
@@ -672,7 +731,7 @@ export async function handleSyncApiRequest(
         },
         { onConflict: 'store_id' },
       );
-      if (storeErr) return jsonResponse({ error: storeErr.message }, 500);
+      if (storeErr) return jsonResponse({ error: formatSupabaseDbError(storeErr.message) }, 500);
 
       const activeProducts = Array.isArray(body.products) ? body.products : [];
       const activeIds = new Set(activeProducts.map((p) => p.id));
@@ -742,69 +801,76 @@ export async function handleSyncApiRequest(
         });
       }
 
-      for (const chunk of chunkArray(productRows, 200)) {
+      const dedupedProductRows = dedupeByKey(productRows, (r) => r.id);
+      for (const chunk of chunkArray(dedupedProductRows, 200)) {
         const { error } = await supabase
           .from('pos_products')
           .upsert(chunk, { onConflict: 'store_id,id' });
-        if (error) return jsonResponse({ error: error.message }, 500);
+        if (error) return jsonResponse({ error: formatSupabaseDbError(error.message) }, 500);
       }
 
       const sales = Array.isArray(body.sales) ? body.sales : [];
-      const saleRows = sales.map((s) => ({
-        store_id: storeId,
-        receipt_no: s.receiptNo,
-        date_iso: s.dateIso,
-        date_formatted: s.dateFormatted || '',
-        items: Array.isArray(s.items) ? s.items : [],
-        retail_subtotal: Number(s.retailSubtotal) || 0,
-        wholesale_savings: Number(s.wholesaleSavings) || 0,
-        senior_discount: Number(s.seniorDiscount) || 0,
-        grand_total: Number(s.grandTotal) || 0,
-        payment_method: s.paymentMethod || 'Cash',
-        tendered: Number(s.tendered) || 0,
-        change: Number(s.change) || 0,
-        ref_no: s.refNo || null,
-        split_details: s.splitDetails || null,
-        senior_id: s.seniorId || null,
-        senior_base:
-          s.seniorBase !== undefined && s.seniorBase !== null ? Number(s.seniorBase) : null,
-        senior_capped: typeof s.seniorCapped === 'boolean' ? s.seniorCapped : null,
-        voided: Boolean(s.voided),
-        voided_at: s.voidedAt || null,
-        void_reason: s.voidReason || null,
-        updated_at: s.voidedAt || s.dateIso || nowIso,
-      }));
+      const saleRows = dedupeByKey(
+        sales.map((s) => ({
+          store_id: storeId,
+          receipt_no: s.receiptNo,
+          date_iso: s.dateIso,
+          date_formatted: s.dateFormatted || '',
+          items: Array.isArray(s.items) ? s.items : [],
+          retail_subtotal: Number(s.retailSubtotal) || 0,
+          wholesale_savings: Number(s.wholesaleSavings) || 0,
+          senior_discount: Number(s.seniorDiscount) || 0,
+          grand_total: Number(s.grandTotal) || 0,
+          payment_method: s.paymentMethod || 'Cash',
+          tendered: Number(s.tendered) || 0,
+          change: Number(s.change) || 0,
+          ref_no: s.refNo || null,
+          split_details: s.splitDetails || null,
+          senior_id: s.seniorId || null,
+          senior_base:
+            s.seniorBase !== undefined && s.seniorBase !== null ? Number(s.seniorBase) : null,
+          senior_capped: typeof s.seniorCapped === 'boolean' ? s.seniorCapped : null,
+          voided: Boolean(s.voided),
+          voided_at: s.voidedAt || null,
+          void_reason: s.voidReason || null,
+          updated_at: s.voidedAt || s.dateIso || nowIso,
+        })),
+        (r) => r.receipt_no,
+      );
 
       for (const chunk of chunkArray(saleRows, 200)) {
         const { error } = await supabase
           .from('pos_sales')
           .upsert(chunk, { onConflict: 'store_id,receipt_no' });
-        if (error) return jsonResponse({ error: error.message }, 500);
+        if (error) return jsonResponse({ error: formatSupabaseDbError(error.message) }, 500);
       }
 
       const heldOrders = Array.isArray(body.heldOrders) ? body.heldOrders : [];
       if (heldOrders.length > 0) {
-        const heldRows = heldOrders.map((h) => ({
-          store_id: storeId,
-          id: h.id,
-          label: h.label || null,
-          time: h.time || '',
-          items: Array.isArray(h.items) ? h.items : [],
-          total: Number(h.total) || 0,
-          is_senior_pwd: Boolean(h.isSeniorPwd),
-          price_mode: h.priceMode === 'wholesale' ? 'wholesale' : 'retail',
-          updated_at: nowIso,
-        }));
+        const heldRows = dedupeByKey(
+          heldOrders.map((h) => ({
+            store_id: storeId,
+            id: h.id,
+            label: h.label || null,
+            time: h.time || '',
+            items: Array.isArray(h.items) ? h.items : [],
+            total: Number(h.total) || 0,
+            is_senior_pwd: Boolean(h.isSeniorPwd),
+            price_mode: h.priceMode === 'wholesale' ? 'wholesale' : 'retail',
+            updated_at: nowIso,
+          })),
+          (r) => r.id,
+        );
         const { error } = await supabase
           .from('pos_held_orders')
           .upsert(heldRows, { onConflict: 'store_id,id' });
-        if (error) return jsonResponse({ error: error.message }, 500);
+        if (error) return jsonResponse({ error: formatSupabaseDbError(error.message) }, 500);
       }
       const { data: existingHeld, error: existingHeldErr } = await supabase
         .from('pos_held_orders')
         .select('id')
         .eq('store_id', storeId);
-      if (existingHeldErr) return jsonResponse({ error: existingHeldErr.message }, 500);
+      if (existingHeldErr) return jsonResponse({ error: formatSupabaseDbError(existingHeldErr.message) }, 500);
 
       const activeHeldIds = new Set(heldOrders.map((h) => h.id));
       const staleHeldIds = (existingHeld || [])
@@ -816,27 +882,30 @@ export async function handleSyncApiRequest(
           .delete()
           .eq('store_id', storeId)
           .in('id', staleHeldIds);
-        if (delHeldErr) return jsonResponse({ error: delHeldErr.message }, 500);
+        if (delHeldErr) return jsonResponse({ error: formatSupabaseDbError(delHeldErr.message) }, 500);
       }
 
       const stockLog = Array.isArray(body.stockLog) ? body.stockLog.slice(0, 500) : [];
-      const logRows = stockLog.map((l) => ({
-        store_id: storeId,
-        id: l.id,
-        date_iso: l.dateIso,
-        product_id: l.productId,
-        product_name: l.productName,
-        delta: Number(l.delta) || 0,
-        prev_stock: Number(l.prevStock) || 0,
-        new_stock: Number(l.newStock) || 0,
-        reason: l.reason || 'Other',
-        note: l.note || null,
-      }));
+      const logRows = dedupeByKey(
+        stockLog.map((l) => ({
+          store_id: storeId,
+          id: l.id,
+          date_iso: l.dateIso,
+          product_id: l.productId,
+          product_name: l.productName,
+          delta: Number(l.delta) || 0,
+          prev_stock: Number(l.prevStock) || 0,
+          new_stock: Number(l.newStock) || 0,
+          reason: l.reason || 'Other',
+          note: l.note || null,
+        })),
+        (r) => r.id,
+      );
       for (const chunk of chunkArray(logRows, 200)) {
         const { error } = await supabase
           .from('pos_stock_logs')
           .upsert(chunk, { onConflict: 'store_id,id' });
-        if (error) return jsonResponse({ error: error.message }, 500);
+        if (error) return jsonResponse({ error: formatSupabaseDbError(error.message) }, 500);
       }
 
       return jsonResponse({ ok: true, syncedAt: nowIso });

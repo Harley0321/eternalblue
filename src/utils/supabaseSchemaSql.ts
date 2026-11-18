@@ -8,7 +8,7 @@ export const GITHUB_REPO_URL = `https://github.com/${GITHUB_REPO}`;
 export const CLOUDFLARE_ACCOUNT_ID = '30cccc3f125f4e676291be3956855ece';
 export const CLOUDFLARE_WORKER_NAME = 'eternalblue';
 export const CLOUDFLARE_DASHBOARD_URL = `https://dash.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/workers/services/view/${CLOUDFLARE_WORKER_NAME}/production/deployments`;
-export const CLOUDFLARE_VARIABLES_URL = `https://dash.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/workers/services/view/${CLOUDFLARE_WORKER_NAME}/settings/variables`;
+export const CLOUDFLARE_VARIABLES_URL = `https://dash.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/workers/services/view/${CLOUDFLARE_WORKER_NAME}/production/settings`;
 export const SUPABASE_MIGRATION_FILENAME = '20261118000001_omnimart_pos_schema.sql';
 
 export const SUPABASE_CONFIG_TOML = `# Supabase CLI & GitHub Integration configuration

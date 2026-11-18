@@ -498,3 +498,116 @@ test('sanitizeSettingsForSync and mergeSettingsFromCloud keep syncStoreId and sy
   assert.equal(merged.syncStoreId, 'tablet-a1b2c3d4');
   assert.equal(merged.syncEnabled, false);
 });
+
+test('handleSyncApiRequest flags anon/publishable keys on /api/sync/status before writes hit RLS', async () => {
+  const okFetch: typeof fetch = async () =>
+    new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  const b64url = (obj: unknown) =>
+    Buffer.from(JSON.stringify(obj), 'utf8').toString('base64url');
+  const anonJwt = `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url({ role: 'anon' })}.sig`;
+  const serviceJwt = `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url({ role: 'service_role' })}.sig`;
+
+  for (const key of ['sb_publishable_demo123', anonJwt]) {
+    const res = await handleSyncApiRequest(
+      new Request('https://eternalblue.workers.dev/api/sync/status'),
+      { SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co', SUPABASE_KEY: key },
+      { runtime: 'cloudflare-worker' },
+      okFetch,
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      configured: boolean;
+      schemaReady: boolean;
+      keyRole?: string;
+      error?: string;
+    };
+    assert.equal(body.configured, true);
+    assert.equal(body.schemaReady, false);
+    assert.equal(body.keyRole, 'anon');
+    assert.equal(Boolean(body.error?.includes('Row Level Security')), true);
+  }
+
+  for (const key of ['sb_secret_demo123', serviceJwt]) {
+    const res = await handleSyncApiRequest(
+      new Request('https://eternalblue.workers.dev/api/sync/status'),
+      { SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co', SUPABASE_SERVICE_ROLE_KEY: key },
+      { runtime: 'cloudflare-worker' },
+      okFetch,
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { configured: boolean; schemaReady: boolean; keyRole?: string };
+    assert.equal(body.configured, true);
+    assert.equal(body.schemaReady, true);
+    assert.equal(body.keyRole, 'service');
+  }
+});
+
+test('handleSyncApiRequest /api/sync/push deduplicates duplicate IDs to avoid Postgres 21000 ON CONFLICT errors', async () => {
+  const upsertedByTable = new Map<string, number>();
+  const mockFetch: typeof fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const match = url.match(/\/rest\/v1\/(pos_[a-z_]+)/);
+    const table = match?.[1] || 'unknown';
+    if (init?.method === 'POST' && init.body) {
+      const parsed = JSON.parse(String(init.body)) as unknown;
+      if (Array.isArray(parsed)) {
+        upsertedByTable.set(table, parsed.length);
+      }
+      return new Response(null, { status: 201 });
+    }
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const res = await handleSyncApiRequest(
+    new Request('https://eternalblue.workers.dev/api/sync/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        storeId: 'pc-dedup01',
+        products: [sampleProduct('p1', { stock: 5 }), sampleProduct('p1', { stock: 9 })],
+        sales: [sampleSale('OR-1'), sampleSale('OR-1')],
+        heldOrders: [
+          { id: 'H-1', time: '10:00', items: [], total: 10 },
+          { id: 'H-1', time: '10:01', items: [], total: 20 },
+        ],
+        stockLog: [
+          {
+            id: 'L-1',
+            dateIso: '2026-11-18T10:00:00.000Z',
+            productId: 'p1',
+            productName: 'Product p1',
+            delta: 1,
+            prevStock: 4,
+            newStock: 5,
+            reason: 'Restock',
+          },
+          {
+            id: 'L-1',
+            dateIso: '2026-11-18T10:00:00.000Z',
+            productId: 'p1',
+            productName: 'Product p1',
+            delta: 4,
+            prevStock: 5,
+            newStock: 9,
+            reason: 'Restock',
+          },
+        ],
+        settings: { storeName: 'Dedup Store' },
+      }),
+    }),
+    { SUPABASE_URL: 'https://xahsyugciihrrnchufwo.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_test' },
+    { runtime: 'cloudflare-worker' },
+    mockFetch,
+  );
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { ok: boolean };
+  assert.equal(body.ok, true);
+  assert.equal(upsertedByTable.get('pos_products'), 1);
+  assert.equal(upsertedByTable.get('pos_sales'), 1);
+  assert.equal(upsertedByTable.get('pos_held_orders'), 1);
+  assert.equal(upsertedByTable.get('pos_stock_logs'), 1);
+});

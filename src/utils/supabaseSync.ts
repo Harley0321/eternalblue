@@ -63,6 +63,7 @@ export interface GithubRemoteCheckResponse {
 export interface SyncStatusResponse {
   configured: boolean;
   schemaReady: boolean;
+  keyRole?: 'service' | 'anon' | 'unknown' | 'none';
   projectRef: string;
   projectUrl: string;
   dashboardUrl: string;
