@@ -6,7 +6,7 @@ import {
   GITHUB_BRANCH as DEFAULT_GITHUB_BRANCH,
   GITHUB_REPO as DEFAULT_GITHUB_REPO,
   SUPABASE_PROJECT_REF as DEFAULT_PROJECT_REF,
-} from './supabaseSchemaSql';
+} from './supabaseSchemaSql.ts';
 
 export interface SyncRuntimeEnv {
   SUPABASE_URL?: string;

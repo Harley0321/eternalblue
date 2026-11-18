@@ -4,7 +4,7 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { handleSyncApiRequest, type WorkspaceIntegrationOverrides } from './src/utils/syncApiHandler';
+import { handleSyncApiRequest, type WorkspaceIntegrationOverrides } from './src/utils/syncApiHandler.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -107,8 +107,28 @@ async function startServer() {
       server: {
         middlewareMode: true,
         hmr: disableHmr ? false : { server: httpServer },
-        ...(disableHmr ? { ws: false as const } : {}),
+        ws: disableHmr ? false : { server: httpServer },
       },
+      plugins: disableHmr
+        ? [
+            {
+              name: 'disable-hmr-client-ws',
+              enforce: 'post',
+              transform(code: string, id: string) {
+                if (!id.replace(/\\/g, '/').endsWith('vite/dist/client/client.mjs')) {
+                  return null;
+                }
+                return {
+                  code: code.replace(
+                    'const createWebSocketModuleRunnerTransport = (options) => {',
+                    'const createWebSocketModuleRunnerTransport = () => ({ async connect() {}, async disconnect() {}, async send() {} }); const _unusedCreateWebSocketModuleRunnerTransport = (options) => {',
+                  ),
+                  map: null,
+                };
+              },
+            },
+          ]
+        : [],
       appType: 'spa',
     });
     viteServer = vite;
