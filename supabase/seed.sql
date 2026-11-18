@@ -1,2 +1,0 @@
--- Seed placeholder for Supabase GitHub Branching / `supabase db reset`.
--- POS store catalog and transactions are seeded/synced directly per store_id.

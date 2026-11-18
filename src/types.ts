@@ -112,11 +112,6 @@ export interface StoreSettings {
   passkeyPubKeySpki?: string;
   passkeyLabel?: string;
   passkeyRegisteredAt?: string;
-  // Cloud Sync (Supabase — isolated per device by default)
-  syncEnabled?: boolean;
-  syncStoreId?: string;
-  syncStoreIdCustomized?: boolean;
-  lastSyncedAt?: string;
   [key: string]: unknown;
 }
 

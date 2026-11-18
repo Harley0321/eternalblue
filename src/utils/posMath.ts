@@ -20,8 +20,6 @@ export const STORAGE_KEYS = {
   STOCKLOG: 'omnimart_ph_stocklog_v1', // strictly additive log; never modifies existing keys
   CONFIG_HISTORY: 'omnimart_ph_config_history_v1', // strictly additive configuration revision history
   SECURITY_LOG: 'omnimart_ph_seclog_v1', // strictly additive tamper-evident hash-chained audit ledger
-  SYNC_TOMBSTONES: 'omnimart_ph_sync_tombstones_v1', // strictly additive cloud sync deletion tombstones
-  DEVICE_SYNC_ID: 'omnimart_ph_device_id_v1', // unique persistent device ID separating mobile, tablet, and PC data
 } as const;
 
 export const DEFAULT_SETTINGS: StoreSettings = {
@@ -42,58 +40,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   receiptWidth: '80mm',
   autoLockMinutes: 5,
   lockWholePos: false,
-  syncEnabled: false,
-  syncStoreId: '',
-  syncStoreIdCustomized: false,
-  lastSyncedAt: '',
 };
-
-export type DeviceFormFactor = 'mobile' | 'tablet' | 'pc';
-
-export function detectDeviceFormFactor(
-  userAgent = '',
-  maxTouchPoints = 0,
-  screenWidth = 1024,
-): DeviceFormFactor {
-  const ua = String(userAgent || '').toLowerCase();
-  if (/ipad|tablet|playbook|silk|(android(?!.*mobile))/i.test(ua)) {
-    return 'tablet';
-  }
-  // iPadOS desktop-mode Safari reports Macintosh + touch points
-  if (/macintosh/i.test(ua) && maxTouchPoints > 1) {
-    return 'tablet';
-  }
-  if (/mobi|iphone|ipod|android.*mobile|windows phone|blackberry/i.test(ua)) {
-    return 'mobile';
-  }
-  if (maxTouchPoints > 0 && screenWidth > 0 && screenWidth <= 767) {
-    return 'mobile';
-  }
-  if (maxTouchPoints > 0 && screenWidth >= 768 && screenWidth <= 1180) {
-    return 'tablet';
-  }
-  return 'pc';
-}
-
-export function generateDeviceSyncId(formFactor: DeviceFormFactor, randomHex?: string): string {
-  const cleaned = String(randomHex || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
-    .slice(0, 8);
-  const token =
-    cleaned ||
-    (() => {
-      if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.getRandomValues === 'function') {
-        const bytes = new Uint8Array(4);
-        globalThis.crypto.getRandomValues(bytes);
-        return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-      }
-      return Math.floor(Math.random() * 0xffffffff)
-        .toString(16)
-        .padStart(8, '0');
-    })();
-  return `${formFactor}-${token}`;
-}
 
 export const BASE_CATEGORIES = [
   'Frozen Meat',

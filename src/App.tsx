@@ -52,7 +52,6 @@ import {
   verifySecurityChain,
 } from './utils/cryptoVault';
 import {
-  getOrCreateDeviceSyncId,
   loadConfigHistoryFromStorage,
   loadHeldFromStorage,
   loadProductsFromStorage,
@@ -60,7 +59,6 @@ import {
   loadSecurityLogFromStorage,
   loadSettingsFromStorage,
   loadStockLogFromStorage,
-  loadSyncTombstonesFromStorage,
   saveConfigHistoryToStorage,
   saveHeldToStorage,
   saveProductsToStorage,
@@ -68,17 +66,7 @@ import {
   saveSecurityLogToStorage,
   saveSettingsToStorage,
   saveStockLogToStorage,
-  saveSyncTombstonesToStorage,
 } from './utils/storage';
-import {
-  fetchSyncStatus,
-  normalizeSyncStoreId,
-  pullStoreFromSupabase,
-  pushStoreToSupabase,
-  reconcileStoreData,
-  type SyncStatusResponse,
-} from './utils/supabaseSync';
-import { useOnlineStatus } from './hooks/useOnlineStatus';
 
 import { TopBar } from './components/TopBar';
 import { ToastContainer, type ToastItem } from './components/ToastContainer';
@@ -131,17 +119,6 @@ export default function App() {
     saveConfigHistoryToStorage([baseline]);
     return [baseline];
   });
-  const [syncTombstones, setSyncTombstones] = useState<Record<string, string>>(() =>
-    loadSyncTombstonesFromStorage(),
-  );
-  const [syncStatus, setSyncStatus] = useState<SyncStatusResponse | null>(null);
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [pendingCloudPush, setPendingCloudPush] = useState(false);
-  const isOnline = useOnlineStatus();
-  const suppressAutoSyncRef = useRef(false);
-  const syncBootstrappedRef = useRef(false);
-  const prevOnlineRef = useRef(isOnline);
 
   // Navigation & filter state
   const [activeTab, setActiveTab] = useState<TabName>('pos');
@@ -326,16 +303,6 @@ export default function App() {
           }
           return p;
         });
-        const nextIds = new Set(next.map((p) => p.id));
-        const removedIds = prev.filter((p) => !nextIds.has(p.id)).map((p) => p.id);
-        if (removedIds.length > 0) {
-          setSyncTombstones((prevT) => {
-            const updatedT = { ...prevT };
-            for (const rid of removedIds) updatedT[rid] = nowIso;
-            saveSyncTombstonesToStorage(updatedT);
-            return updatedT;
-          });
-        }
         const res = saveProductsToStorage(next);
         if (!res.ok) toast('Device storage nearly full! Export a JSON backup.', 'error');
         return next;
@@ -441,254 +408,6 @@ export default function App() {
       return next;
     });
   }, []);
-
-  // Keep latest state in a ref for async Supabase sync callbacks
-  const syncStateRef = useRef({
-    products,
-    syncTombstones,
-    sales,
-    heldOrders,
-    stockLog,
-    settings,
-    configHistory,
-  });
-  syncStateRef.current = {
-    products,
-    syncTombstones,
-    sales,
-    heldOrders,
-    stockLog,
-    settings,
-    configHistory,
-  };
-
-  const applyReconciledToState = useCallback(
-    (
-      nextProducts: Product[],
-      nextTombstones: Record<string, string>,
-      nextSales: SaleRecord[],
-      nextHeld: HeldOrder[],
-      nextLogs: StockLogEntry[],
-      nextConfigHistory: ConfigSnapshot[],
-      nextSettings: StoreSettings,
-      syncedAt: string,
-    ) => {
-      suppressAutoSyncRef.current = true;
-      setProducts(nextProducts);
-      saveProductsToStorage(nextProducts);
-      setSyncTombstones(nextTombstones);
-      saveSyncTombstonesToStorage(nextTombstones);
-      setSales(nextSales);
-      saveSalesToStorage(nextSales);
-      setHeldOrders(nextHeld);
-      saveHeldToStorage(nextHeld);
-      setStockLog(nextLogs);
-      saveStockLogToStorage(nextLogs);
-      setConfigHistory(nextConfigHistory);
-      saveConfigHistoryToStorage(nextConfigHistory);
-      const stampedSettings: StoreSettings = { ...nextSettings, lastSyncedAt: syncedAt };
-      setSettings(stampedSettings);
-      saveSettingsToStorage(stampedSettings);
-      window.setTimeout(() => {
-        suppressAutoSyncRef.current = false;
-      }, 200);
-    },
-    [],
-  );
-
-  const refreshSyncStatus = useCallback(async (): Promise<SyncStatusResponse | null> => {
-    try {
-      const status = await fetchSyncStatus();
-      setSyncStatus(status);
-      return status;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const handleSyncWithSupabase = useCallback(
-    async (mode: 'merge' | 'push' | 'pull' = 'merge', silent = false) => {
-      if (syncBusy) return;
-      setSyncBusy(true);
-      setSyncError(null);
-      try {
-        const status = await refreshSyncStatus();
-        if (!status) {
-          const reason = 'Unable to reach /api/sync/status. Check your connection or Worker deployment.';
-          setSyncError(reason);
-          if (!silent) toast(reason, 'warning');
-          return;
-        }
-        if (!status.configured || !status.schemaReady) {
-          const isWorker = status.cloudflareWorker?.runtime === 'cloudflare-worker';
-          const reason = !status.configured
-            ? isWorker
-              ? 'Supabase key not configured on Cloudflare Worker yet. Add SUPABASE_SERVICE_ROLE_KEY under Worker Settings → Variables and Secrets.'
-              : 'Supabase key not configured on server yet.'
-            : status.error || 'Supabase tables are not initialized yet.';
-          setSyncError(reason);
-          if (!silent) toast(reason, 'warning');
-          return;
-        }
-
-        const cur = syncStateRef.current;
-        const storeId = normalizeSyncStoreId(cur.settings.syncStoreId || getOrCreateDeviceSyncId());
-
-        if (mode === 'push') {
-          const { syncedAt } = await pushStoreToSupabase({
-            storeId,
-            products: cur.products,
-            deletedProducts: cur.syncTombstones,
-            sales: cur.sales,
-            heldOrders: cur.heldOrders,
-            stockLog: cur.stockLog,
-            settings: cur.settings,
-            configHistory: cur.configHistory,
-          });
-          suppressAutoSyncRef.current = true;
-          const stamped: StoreSettings = { ...cur.settings, lastSyncedAt: syncedAt, syncStoreId: storeId };
-          setSettings(stamped);
-          saveSettingsToStorage(stamped);
-          window.setTimeout(() => {
-            suppressAutoSyncRef.current = false;
-          }, 200);
-          setPendingCloudPush(false);
-          if (!silent) toast(`Pushed to Supabase (${storeId})`, 'success');
-          return;
-        }
-
-        const pulled = await pullStoreFromSupabase(storeId);
-        if (!pulled.found || !pulled.payload) {
-          if (mode === 'pull') {
-            if (!silent) toast(`No cloud data found yet for store "${storeId}"`, 'warning');
-            return;
-          }
-          // Merge on an empty cloud store seeds it from this device
-          const { syncedAt } = await pushStoreToSupabase({
-            storeId,
-            products: cur.products,
-            deletedProducts: cur.syncTombstones,
-            sales: cur.sales,
-            heldOrders: cur.heldOrders,
-            stockLog: cur.stockLog,
-            settings: cur.settings,
-            configHistory: cur.configHistory,
-          });
-          suppressAutoSyncRef.current = true;
-          const stamped: StoreSettings = { ...cur.settings, lastSyncedAt: syncedAt, syncStoreId: storeId };
-          setSettings(stamped);
-          saveSettingsToStorage(stamped);
-          window.setTimeout(() => {
-            suppressAutoSyncRef.current = false;
-          }, 200);
-          setPendingCloudPush(false);
-          if (!silent) toast(`Initialized Supabase cloud store "${storeId}"`, 'success');
-          return;
-        }
-
-        const reconciled = reconcileStoreData({
-          local: {
-            products: cur.products,
-            deletedProducts: cur.syncTombstones,
-            sales: cur.sales,
-            heldOrders: cur.heldOrders,
-            stockLog: cur.stockLog,
-            settings: cur.settings,
-            configHistory: cur.configHistory,
-          },
-          cloud: pulled.payload,
-          mode,
-        });
-
-        let finalSyncedAt = pulled.payload.updatedAt || new Date().toISOString();
-        if (mode === 'merge') {
-          const pushRes = await pushStoreToSupabase({
-            storeId,
-            products: reconciled.products,
-            deletedProducts: reconciled.deletedProducts,
-            sales: reconciled.sales,
-            heldOrders: reconciled.heldOrders,
-            stockLog: reconciled.stockLog,
-            settings: reconciled.settings,
-            configHistory: reconciled.configHistory,
-          });
-          finalSyncedAt = pushRes.syncedAt;
-        }
-
-        applyReconciledToState(
-          reconciled.products,
-          reconciled.deletedProducts,
-          reconciled.sales,
-          reconciled.heldOrders,
-          reconciled.stockLog,
-          reconciled.configHistory,
-          { ...reconciled.settings, syncStoreId: storeId },
-          finalSyncedAt,
-        );
-        setPendingCloudPush(false);
-        if (!silent) {
-          toast(
-            mode === 'pull'
-              ? `Pulled ${reconciled.stats.productsCount} SKUs & ${reconciled.stats.salesCount} sales from Supabase`
-              : `Synced with Supabase (${reconciled.stats.productsCount} SKUs · ${reconciled.stats.salesCount} sales)`,
-            'success',
-          );
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Supabase sync failed';
-        setSyncError(msg);
-        setPendingCloudPush(true);
-        if (!silent) toast(msg, 'error');
-      } finally {
-        setSyncBusy(false);
-      }
-    },
-    [applyReconciledToState, refreshSyncStatus, syncBusy, toast],
-  );
-
-  // Check Supabase status on mount & run initial silent merge ONLY if this device explicitly enabled sync
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const status = await refreshSyncStatus();
-      if (cancelled) return;
-      syncBootstrappedRef.current = true;
-      if (status?.configured && status.schemaReady && syncStateRef.current.settings.syncEnabled === true && isOnline) {
-        await handleSyncWithSupabase('merge', true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshSyncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-sync debounced push on local data mutations (strictly opt-in per device)
-  useEffect(() => {
-    if (!syncBootstrappedRef.current) return;
-    if (suppressAutoSyncRef.current) return;
-    if (settings.syncEnabled !== true) return;
-    if (!syncStatus?.configured || !syncStatus.schemaReady) return;
-    if (!isOnline) {
-      setPendingCloudPush(true);
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void handleSyncWithSupabase('push', true);
-    }, 2000);
-    return () => window.clearTimeout(timer);
-  }, [products, sales, heldOrders, stockLog, settings.storeName, settings.syncStoreId, settings.syncEnabled, isOnline, syncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Automatically reconcile when transitioning from offline -> online (only when this device opted in)
-  useEffect(() => {
-    const wasOnline = prevOnlineRef.current;
-    prevOnlineRef.current = isOnline;
-    if (!wasOnline && isOnline && syncStatus?.configured && syncStatus.schemaReady && settings.syncEnabled === true) {
-      void handleSyncWithSupabase('merge', true);
-    } else if (!wasOnline && isOnline && pendingCloudPush && settings.syncEnabled === true) {
-      void handleSyncWithSupabase('merge', true);
-    }
-  }, [isOnline, pendingCloudPush, settings.syncEnabled, syncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLockTerminal = useCallback(() => {
     if (!pinIsSet(settings)) return;
@@ -1561,7 +1280,7 @@ export default function App() {
       updateSales(() => payload.sales);
       updateHeld(() => payload.heldOrders);
       if (payload.settings) {
-        // Never overwrite current device Manager PIN, Passkey, or device-isolated sync config during restore
+        // Never overwrite current device Manager PIN or Passkeys during restore
         const mergedSettings: StoreSettings = {
           ...DEFAULT_SETTINGS,
           ...payload.settings,
@@ -1575,9 +1294,6 @@ export default function App() {
           passkeyPubKeySpki: settings.passkeyPubKeySpki,
           passkeyLabel: settings.passkeyLabel,
           passkeyRegisteredAt: settings.passkeyRegisteredAt,
-          syncStoreId: settings.syncStoreId || getOrCreateDeviceSyncId(),
-          syncStoreIdCustomized: settings.syncStoreIdCustomized ?? false,
-          syncEnabled: settings.syncEnabled === true,
         };
         updateSettings(mergedSettings);
       }
@@ -1654,9 +1370,6 @@ export default function App() {
       saveStockLogToStorage([]);
       updateSettings({
         ...DEFAULT_SETTINGS,
-        syncStoreId: getOrCreateDeviceSyncId(),
-        syncStoreIdCustomized: false,
-        syncEnabled: false,
       });
       setSettingsUnlocked(false);
       setTerminalLocked(false);
@@ -1919,12 +1632,6 @@ export default function App() {
               requirePin: true,
             })
           }
-          syncStatus={syncStatus}
-          syncBusy={syncBusy}
-          syncError={syncError}
-          isOnline={isOnline}
-          onSyncNow={(mode) => handleSyncWithSupabase(mode, false)}
-          onRefreshSyncStatus={refreshSyncStatus}
           onToast={toast}
         />
       )}
