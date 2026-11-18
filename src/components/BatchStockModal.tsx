@@ -19,6 +19,7 @@ interface BatchStockModalProps {
   open: boolean;
   products: Product[];
   initialMode?: 'delta' | 'set';
+  initialReason?: StockLogEntry['reason'];
   prefill?: BatchPrefillItem[];
   onClose: () => void;
   onApplyBatch: (adjustments: BatchStockAdjustmentInput[]) => void;
@@ -35,13 +36,14 @@ export const BatchStockModal: React.FC<BatchStockModalProps> = ({
   open,
   products,
   initialMode = 'delta',
+  initialReason,
   prefill,
   onClose,
   onApplyBatch,
 }) => {
   const [mode, setMode] = useState<'delta' | 'set'>(initialMode);
   const [reason, setReason] = useState<StockLogEntry['reason']>(
-    initialMode === 'set' ? 'Count Correction' : 'Restock',
+    initialReason || (initialMode === 'set' ? 'Count Correction' : 'Restock'),
   );
   const [note, setNote] = useState('');
   const [search, setSearch] = useState('');
@@ -51,7 +53,7 @@ export const BatchStockModal: React.FC<BatchStockModalProps> = ({
   useEffect(() => {
     if (!open) return;
     setMode(initialMode);
-    setReason(initialMode === 'set' ? 'Count Correction' : 'Restock');
+    setReason(initialReason || (initialMode === 'set' ? 'Count Correction' : 'Restock'));
     setSearch('');
 
     const initDrafts: Record<string, RowDraft> = {};

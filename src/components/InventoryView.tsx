@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Camera,
@@ -70,6 +70,7 @@ interface InventoryViewProps {
   onOpenStockLog: () => void;
   onOpenProductModal: (productId?: string) => void;
   onOpenStockAdjust: (productId: string) => void;
+  onPullExpiredBatch?: () => void;
   onAskDeleteProduct: (productId: string) => void;
   onToast: (msg: string, type?: 'success' | 'warning' | 'error') => void;
 }
@@ -96,6 +97,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onOpenStockLog,
   onOpenProductModal,
   onOpenStockAdjust,
+  onPullExpiredBatch,
   onAskDeleteProduct,
   onToast,
 }) => {
@@ -107,6 +109,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     onChangeStockFilter?.(resolved);
   };
   const [sortBy, setSortBy] = useState<StockSort>('default');
+  const [shownCount, setShownCount] = useState(60);
+
+  useEffect(() => {
+    setShownCount(60);
+  }, [searchQuery, stockFilter, selectedCategory, sortBy]);
 
   const kpis = useMemo(
     () => computeStockHealthSummary(products, sales, settings),
@@ -117,6 +124,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     () => computeProductVelocities(products, sales),
     [products, sales],
   );
+
+  const expiryMap = useMemo(() => {
+    const m = new Map<string, ReturnType<typeof expiryInfo>>();
+    for (const p of products) {
+      m.set(p.id, expiryInfo(p, expiryWarnDays));
+    }
+    return m;
+  }, [products, expiryWarnDays]);
 
   const coverWarnDays =
     (Number(settings.reorderLeadDays) || 3) + (Number(settings.reorderSafetyDays) || 2);
@@ -129,7 +144,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         p.name.toLowerCase().includes(q) ||
         p.barcode.toLowerCase().includes(q) ||
         p.category.toLowerCase().includes(q);
-      const st = expiryInfo(p, expiryWarnDays).status;
+      const st = expiryMap.get(p.id)?.status ?? 'none';
       const vel = velocity.byId.get(p.id);
       const cap = Number(p.capital) || 0;
       const isFastLow =
@@ -171,8 +186,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         return lineTotalPeso(b.retailPrice, b.stock) - lineTotalPeso(a.retailPrice, a.stock);
       }
       if (sortBy === 'expiry-asc') {
-        const da = expiryInfo(a, expiryWarnDays).days ?? 999999;
-        const db = expiryInfo(b, expiryWarnDays).days ?? 999999;
+        const da = expiryMap.get(a.id)?.days ?? 999999;
+        const db = expiryMap.get(b.id)?.days ?? 999999;
         return da - db;
       }
       if (sortBy === 'margin-asc') {
@@ -195,10 +210,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     selectedCategory,
     sortBy,
     lowStockThreshold,
-    expiryWarnDays,
+    expiryMap,
     velocity.byId,
     coverWarnDays,
   ]);
+
+  const visibleRows = filtered.slice(0, shownCount);
+  const hasActiveFilters =
+    stockFilter !== 'ALL' || selectedCategory !== 'All' || searchQuery.trim() !== '';
 
   const exportStockCsv = () => {
     const rows: (string | number)[][] = [
@@ -297,7 +316,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   };
 
   const renderExpiryCell = (p: Product) => {
-    const e = expiryInfo(p, expiryWarnDays);
+    const e = expiryMap.get(p.id) ?? expiryInfo(p, expiryWarnDays);
     if (e.status === 'none') return <span className="text-slate-300">—</span>;
     const lbl = expiryLabel(p, expiryWarnDays);
     const cls =
@@ -554,7 +573,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       {/* Expiry Alert Banner */}
       {(kpis.expiredCount > 0 || kpis.soonCount > 0) && (
         <div
-          className={`shrink-0 rounded-xl border px-3 py-2 text-xs font-bold flex flex-wrap items-center gap-x-3 gap-y-1 ${
+          className={`shrink-0 rounded-xl border px-3 py-2 text-xs font-bold flex flex-wrap items-center gap-x-3 gap-y-1.5 ${
             kpis.expiredCount
               ? 'border-rose-300 bg-rose-50 text-rose-700'
               : 'border-amber-300 bg-amber-50 text-amber-800'
@@ -570,7 +589,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               onClick={() => setStockFilter('EXPIRED')}
               className="underline cursor-pointer"
             >
-              {kpis.expiredCount} expired — pull from shelf
+              {kpis.expiredCount} expired — filter view
             </button>
           )}
           {kpis.soonCount > 0 && (
@@ -580,6 +599,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               className="underline cursor-pointer"
             >
               {kpis.soonCount} expiring within {expiryWarnDays} days
+            </button>
+          )}
+          {kpis.expiredCount > 0 && onPullExpiredBatch && (
+            <button
+              type="button"
+              onClick={onPullExpiredBatch}
+              data-testid="pull-expired-batch-btn"
+              className="ml-auto px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs cursor-pointer"
+            >
+              Pull Expired (Batch Audit)
             </button>
           )}
         </div>
@@ -595,14 +624,48 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         onOpenSheet={onOpenCategorySheet}
       />
 
+      {/* Active Filter Status Bar */}
+      {hasActiveFilters && (
+        <div
+          data-testid="inventory-active-filter-bar"
+          className="shrink-0 bg-slate-900 text-white rounded-xl px-3 py-1.5 text-xs flex flex-wrap items-center justify-between gap-2"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono-num font-bold text-emerald-400">
+              {filtered.length} matching item{filtered.length === 1 ? '' : 's'}
+            </span>
+            {stockFilter !== 'ALL' && (
+              <span className="text-slate-300">· Filter: {stockFilter.replace('_', ' ')}</span>
+            )}
+            {selectedCategory !== 'All' && (
+              <span className="text-slate-300">· Category: {selectedCategory}</span>
+            )}
+            {searchQuery.trim() && (
+              <span className="text-slate-300">· Query: &ldquo;{searchQuery.trim()}&rdquo;</span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setStockFilter('ALL');
+              onSelectCategory('All');
+              onSetSearchQuery('');
+            }}
+            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] cursor-pointer"
+          >
+            Reset Filters
+          </button>
+        </div>
+      )}
+
       {/* Mobile Card List */}
       <div className="md:hidden space-y-2 pb-6">
-        {filtered.length === 0 ? (
+        {visibleRows.length === 0 ? (
           <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-xs text-slate-400">
             No matching stock items.
           </div>
         ) : (
-          filtered.map((p) => (
+          visibleRows.map((p) => (
             <div
               key={p.id}
               className="bg-white p-3 rounded-2xl border border-slate-200 flex items-center justify-between gap-2"
@@ -665,6 +728,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </div>
           ))
         )}
+        {filtered.length > visibleRows.length && (
+          <button
+            type="button"
+            onClick={() => setShownCount((c) => c + 60)}
+            className="w-full py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+          >
+            Show more ({visibleRows.length} of {filtered.length})
+          </button>
+        )}
       </div>
 
       {/* Desktop Table */}
@@ -685,14 +757,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-xs">
-            {filtered.length === 0 ? (
+            {visibleRows.length === 0 ? (
               <tr>
                 <td colSpan={10} className="py-10 text-center text-xs text-slate-400">
                   No matching stock items.
                 </td>
               </tr>
             ) : (
-              filtered.map((p) => (
+              visibleRows.map((p) => (
                 <tr key={p.id} className="hover:bg-slate-50">
                   <td className="py-2.5 px-4 font-mono-num text-slate-500">{p.barcode}</td>
                   <td className="py-2.5 px-4">
@@ -754,6 +826,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   </td>
                 </tr>
               ))
+            )}
+            {filtered.length > visibleRows.length && (
+              <tr>
+                <td colSpan={10} className="p-3">
+                  <button
+                    type="button"
+                    onClick={() => setShownCount((c) => c + 60)}
+                    className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+                  >
+                    Show more ({visibleRows.length} of {filtered.length})
+                  </button>
+                </td>
+              </tr>
             )}
           </tbody>
         </table>

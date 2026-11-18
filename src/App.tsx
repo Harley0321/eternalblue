@@ -24,10 +24,12 @@ import {
   DAY_MS,
   DEFAULT_SETTINGS,
   diffConfigFields,
+  expiryInfo,
   extractGs1Gtin,
   findProductByBarcode,
   formatPeso,
   getLinePrice,
+  getTopFastMoverIds,
   inRange,
   linePricing,
   lineTotalPeso,
@@ -169,6 +171,7 @@ export default function App() {
   const [batchStockModal, setBatchStockModal] = useState<{
     open: boolean;
     mode: 'delta' | 'set';
+    reason?: StockLogEntry['reason'];
     prefill?: BatchPrefillItem[];
   }>({ open: false, mode: 'delta' });
   const [csvImportOpen, setCsvImportOpen] = useState(false);
@@ -178,6 +181,7 @@ export default function App() {
 
   const [voidTargetSale, setVoidTargetSale] = useState<SaleRecord | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [salesCashDrawerSignal, setSalesCashDrawerSignal] = useState(0);
   const [confirmState, setConfirmState] = useState<{
     open: boolean;
     type: 'delete-product' | 'clear-cart' | 'clear-sales' | 'factory-reset';
@@ -269,6 +273,7 @@ export default function App() {
   }, [logSecurityEvent, toast]);
 
   const productMap = useMemo(() => buildProductMap(products), [products]);
+  const fastMoverIds = useMemo(() => getTopFastMoverIds(products, sales, 12), [products, sales]);
 
   // Derived cart totals
   const cartTotals = useMemo(
@@ -465,7 +470,7 @@ export default function App() {
               wholesaleMinQty: product.wholesaleMinQty,
               qty: targetQty,
             },
-            products,
+            productMap,
           ) === null
             ? 'wholesale'
             : idx >= 0
@@ -494,12 +499,12 @@ export default function App() {
 
       if (warningMsg) toast(warningMsg, 'warning');
     },
-    [priceMode, products, toast],
+    [priceMode, productMap, toast],
   );
 
   const handleProductClick = useCallback(
     (productId: string) => {
-      const prod = products.find((p) => p.id === productId);
+      const prod = productMap.get(productId);
       if (!prod) return;
       if (prod.stock <= 0) {
         toast(`${prod.name} is out of stock`, 'error');
@@ -511,12 +516,12 @@ export default function App() {
         addQtyToCart(prod, 1);
       }
     },
-    [addQtyToCart, products, toast],
+    [addQtyToCart, productMap, toast],
   );
 
   const handleChangeCartQty = useCallback(
     (productId: string, delta: number) => {
-      const prod = products.find((p) => p.id === productId);
+      const prod = productMap.get(productId);
       let warn = '';
       setCart((prev) => {
         const idx = prev.findIndex((l) => l.productId === productId);
@@ -537,7 +542,7 @@ export default function App() {
       });
       if (warn) toast(warn, 'warning');
     },
-    [products, toast],
+    [productMap, toast],
   );
 
   const handleSetCartQty = useCallback(
@@ -547,7 +552,7 @@ export default function App() {
         setCart((prev) => prev.filter((l) => l.productId !== productId));
         return;
       }
-      const prod = products.find((p) => p.id === productId);
+      const prod = productMap.get(productId);
       const nextQty = prod?.unit === 'kg' ? Number(parsed.toFixed(3)) : Math.round(parsed);
       if (nextQty <= 0) {
         setCart((prev) => prev.filter((l) => l.productId !== productId));
@@ -564,7 +569,7 @@ export default function App() {
         prev.map((l) => (l.productId === productId ? { ...l, qty: nextQty } : l)),
       );
     },
-    [products, toast],
+    [productMap, toast],
   );
 
   const handleSetPriceMode = useCallback(
@@ -573,12 +578,12 @@ export default function App() {
       setCart((prev) =>
         prev.map((line) => {
           if (mode === 'retail') return { ...line, priceType: 'retail' };
-          const blk = wholesaleBlock(line, products);
+          const blk = wholesaleBlock(line, productMap);
           return blk === null ? { ...line, priceType: 'wholesale' } : line;
         }),
       );
     },
-    [products],
+    [productMap],
   );
 
   const handleSetLinePriceType = useCallback(
@@ -586,7 +591,7 @@ export default function App() {
       const line = cart.find((l) => l.productId === productId);
       if (!line) return;
       if (type === 'wholesale') {
-        const blk = wholesaleBlock(line, products);
+        const blk = wholesaleBlock(line, productMap);
         if (blk === 'none') {
           toast('No wholesale discount configured for this item', 'warning');
           return;
@@ -596,7 +601,7 @@ export default function App() {
           return;
         }
         if (blk === 'qty') {
-          const minQ = linePricing(line, products).minQty;
+          const minQ = linePricing(line, productMap).minQty;
           toast(`Need at least ${minQ} ${line.unit} for wholesale price`, 'warning');
           return;
         }
@@ -605,7 +610,27 @@ export default function App() {
         prev.map((l) => (l.productId === productId ? { ...l, priceType: type } : l)),
       );
     },
-    [cart, products, toast],
+    [cart, productMap, toast],
+  );
+
+  const handleUnlockWholesaleLine = useCallback(
+    (productId: string, minQty: number) => {
+      const prod = productMap.get(productId);
+      if (!prod) return;
+      if (prod.stock + 1e-6 < minQty) {
+        toast(`Only ${prod.stock} ${prod.unit} available (need ${minQty})`, 'warning');
+        return;
+      }
+      setCart((prev) =>
+        prev.map((l) =>
+          l.productId === productId
+            ? { ...l, qty: minQty, priceType: 'wholesale' }
+            : l,
+        ),
+      );
+      toast(`Wholesale applied for ${prod.name} (${minQty} ${prod.unit})`, 'success');
+    },
+    [productMap, toast],
   );
 
   const handleSearchEnter = useCallback(
@@ -663,10 +688,17 @@ export default function App() {
         }
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+      if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') || (e.altKey && e.key.toLowerCase() === 'l')) {
         if (pinIsSet(settings) && !terminalLocked) {
           e.preventDefault();
           handleLockTerminal();
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        if (!terminalLocked) {
+          e.preventDefault();
+          setAssistantOpen((o) => !o);
         }
         return;
       }
@@ -756,8 +788,8 @@ export default function App() {
     const receiptNo = nextReceiptNo(sales, now);
 
     const saleItems = cart.map((line) => {
-      const prod = products.find((p) => p.id === line.productId);
-      const unitPrice = getLinePrice(line, products);
+      const prod = productMap.get(line.productId);
+      const unitPrice = getLinePrice(line, productMap);
       const pType: PriceType = unitPrice < line.retailPrice ? 'wholesale' : 'retail';
       return {
         productId: line.productId,
@@ -1041,6 +1073,47 @@ export default function App() {
     }
     setBatchStockModal((b) => ({ ...b, open: false }));
     toast(`Batch saved: ${res.changedCount} SKU(s) updated cleanly`, 'success');
+  };
+
+  const handlePullExpiredBatch = () => {
+    const warnDays = Number(settings.expiryWarnDays) || 30;
+    const expiredWithStock = products.filter(
+      (p) => p.stock > 0 && expiryInfo(p, warnDays).status === 'expired',
+    );
+    if (expiredWithStock.length === 0) {
+      setInvStockFilter('EXPIRED');
+      toast('All expired items already show 0 stock on shelf', 'warning');
+      return;
+    }
+    setBatchStockModal({
+      open: true,
+      mode: 'set',
+      reason: 'Spoilage / Expired',
+      prefill: expiredWithStock.map((p) => ({
+        productId: p.id,
+        value: 0,
+        note: 'Pull expired stock from shelf',
+      })),
+    });
+  };
+
+  const handlePreviewTestReceipt = (draft: StoreSettings) => {
+    const paper = draft.receiptWidth === '58mm' ? '58mm' : '80mm';
+    setReceiptSale(null);
+    setReceiptReading({
+      title: 'TEST RECEIPT LAYOUT',
+      subtitle: `${paper} Thermal Width Preview · Non-Sales`,
+      settingsOverride: draft,
+      lines: [
+        { label: 'Store', value: draft.storeName.trim() || 'OmniMart PH', bold: true },
+        { label: 'Paper Width', value: paper },
+        { label: 'Phone', value: draft.storePhone.trim() || '—', dividerAfter: true },
+        { label: 'Sample Item A x2', value: formatPeso(50) },
+        { label: 'Sample Item B x1', value: formatPeso(125), dividerAfter: true },
+        { label: 'TOTAL SAMPLE', value: formatPeso(175), bold: true },
+        { label: 'Footer Note', value: draft.receiptFooter.trim() || 'Thank you!' },
+      ],
+    });
   };
 
   const handleApplyCsvImport = (rows: CsvImportRowPreview[], mode: 'merge' | 'new-only') => {
@@ -1334,6 +1407,33 @@ export default function App() {
       case 'open-sales':
         setActiveTab('sales');
         break;
+      case 'open-xread':
+        setActiveTab('sales');
+        handlePrintReading(false);
+        break;
+      case 'open-zread':
+        setActiveTab('sales');
+        handlePrintReading(true);
+        break;
+      case 'open-cash-drawer':
+        setSalesCashDrawerSignal((n) => n + 1);
+        setActiveTab('sales');
+        break;
+      case 'add-to-cart': {
+        const targetProd = productMap.get(action.productId);
+        if (targetProd) {
+          addQtyToCart(targetProd, action.qty || 1);
+          setActiveTab('pos');
+          toast(`Added ${action.qty || 1}× ${targetProd.name} to basket`, 'success');
+        }
+        break;
+      }
+      case 'find-product-stock':
+        setInvCategory('All');
+        setInvStockFilter('ALL');
+        setInvSearch(action.query);
+        setActiveTab('inventory');
+        break;
       case 'open-held':
         setActiveTab('pos');
         setHeldModalOpen(true);
@@ -1374,6 +1474,7 @@ export default function App() {
           heldCount={heldOrders.length}
           isSeniorPwd={isSeniorPwd}
           mobileCartOpen={mobileCartOpen}
+          fastMoverIds={fastMoverIds}
           onSetSearchQuery={setPosSearch}
           onSearchEnter={handleSearchEnter}
           onSetPriceMode={handleSetPriceMode}
@@ -1385,6 +1486,7 @@ export default function App() {
           onSetCartQty={handleSetCartQty}
           onRemoveCartLine={(pid) => setCart((prev) => prev.filter((l) => l.productId !== pid))}
           onSetLinePriceType={handleSetLinePriceType}
+          onUnlockWholesaleLine={handleUnlockWholesaleLine}
           onToggleSeniorPwd={setIsSeniorPwd}
           onHoldCart={() => setHoldModalOpen(true)}
           onOpenHeldModal={() => setHeldModalOpen(true)}
@@ -1429,11 +1531,12 @@ export default function App() {
             setProductModal({ open: true, editingId: pid || null, initialBarcode: '' })
           }
           onOpenStockAdjust={(pid) => {
-            const p = products.find((x) => x.id === pid) || null;
+            const p = productMap.get(pid) || null;
             setStockAdjustProduct(p);
           }}
+          onPullExpiredBatch={handlePullExpiredBatch}
           onAskDeleteProduct={(pid) => {
-            const p = products.find((x) => x.id === pid);
+            const p = productMap.get(pid);
             if (!p) return;
             setConfirmState({
               open: true,
@@ -1453,6 +1556,7 @@ export default function App() {
         <SalesView
           sales={sales}
           products={products}
+          openCashDrawerSignal={salesCashDrawerSignal}
           onReprintReceipt={(s) => {
             setReceiptReading(null);
             setReceiptSale(s);
@@ -1486,6 +1590,7 @@ export default function App() {
             toast('Settings locked', 'success');
           }}
           onLockTerminal={handleLockTerminal}
+          onPreviewTestReceipt={handlePreviewTestReceipt}
           onLogSecurityEvent={logSecurityEvent}
           onApplyRestore={handleApplyRestore}
           onAskClearSales={() =>
@@ -1548,6 +1653,7 @@ export default function App() {
         open={batchStockModal.open}
         products={products}
         initialMode={batchStockModal.mode}
+        initialReason={batchStockModal.reason}
         prefill={batchStockModal.prefill}
         onClose={() => setBatchStockModal((b) => ({ ...b, open: false }))}
         onApplyBatch={handleApplyBatchStock}
@@ -1587,7 +1693,7 @@ export default function App() {
           setBatchStockModal({ open: true, mode: 'delta', prefill });
         }}
         onQuickRestock={(pid) => {
-          const prod = products.find((p) => p.id === pid) || null;
+          const prod = productMap.get(pid) || null;
           setReorderOpen(false);
           setStockAdjustProduct(prod);
         }}
@@ -1607,7 +1713,7 @@ export default function App() {
         open={!!(receiptSale || receiptReading)}
         sale={receiptSale}
         reading={receiptReading}
-        settings={settings}
+        settings={receiptReading?.settingsOverride || settings}
         onClose={() => {
           setReceiptSale(null);
           setReceiptReading(null);

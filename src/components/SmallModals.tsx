@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Fingerprint, Lock, PauseCircle, RotateCcw, Scale, ShieldCheck, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Delete, Fingerprint, Lock, PauseCircle, RotateCcw, Scale, ShieldCheck, Trash2, X } from 'lucide-react';
 import type { HeldOrder, Product, SaleRecord, StoreSettings } from '../types';
 import { formatPeso, round2 } from '../utils/posMath';
-import { getPinSecurityMeta, isWeakPin, storePinInSettings, verifyPinWithSettings } from '../utils/pinSecurity';
+import { fmtWait, getPinSecurityMeta, isWeakPin, pinLockedFor, storePinInSettings, verifyPinWithSettings } from '../utils/pinSecurity';
 import { isPasskeySupported, verifyLocalPasskey } from '../utils/cryptoVault';
 
 /* -------------------------------------------------------------------------- */
@@ -347,6 +347,7 @@ export const PinModal: React.FC<PinModalProps> = ({
   const [allowWeak, setAllowWeak] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [lockRemainingSec, setLockRemainingSec] = useState(0);
 
   useEffect(() => {
     if (open) {
@@ -354,7 +355,16 @@ export const PinModal: React.FC<PinModalProps> = ({
       setConfirmPin('');
       setAllowWeak(false);
       setError('');
+      setLockRemainingSec(pinLockedFor());
     }
+  }, [open, mode]);
+
+  useEffect(() => {
+    if (!open || mode !== 'unlock') return;
+    const tid = window.setInterval(() => {
+      setLockRemainingSec(pinLockedFor());
+    }, 1000);
+    return () => window.clearInterval(tid);
   }, [open, mode]);
 
   if (!open) return null;
@@ -523,6 +533,55 @@ export const PinModal: React.FC<PinModalProps> = ({
                 </label>
               )}
             </>
+          )}
+
+          {mode === 'unlock' && (
+            <div data-testid="pin-keypad" className="grid grid-cols-3 gap-1.5 pt-1">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+                <button
+                  key={digit}
+                  type="button"
+                  disabled={busy}
+                  data-testid={`pin-key-${digit}`}
+                  onClick={() => setPin((prev) => (prev.length < 8 ? prev + digit : prev))}
+                  className="min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-[0.97] text-slate-900 font-mono-num font-extrabold text-base cursor-pointer disabled:opacity-45"
+                >
+                  {digit}
+                </button>
+              ))}
+              <button
+                type="button"
+                disabled={busy || pin.length === 0}
+                onClick={() => setPin('')}
+                className="min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs cursor-pointer disabled:opacity-45"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                data-testid="pin-key-0"
+                onClick={() => setPin((prev) => (prev.length < 8 ? prev + '0' : prev))}
+                className="min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-[0.97] text-slate-900 font-mono-num font-extrabold text-base cursor-pointer disabled:opacity-45"
+              >
+                0
+              </button>
+              <button
+                type="button"
+                disabled={busy || pin.length === 0}
+                aria-label="Backspace PIN"
+                onClick={() => setPin((prev) => prev.slice(0, -1))}
+                className="min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center cursor-pointer disabled:opacity-45"
+              >
+                <Delete className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {mode === 'unlock' && lockRemainingSec > 0 && (
+            <div className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+              PIN cooldown active: wait {fmtWait(lockRemainingSec)} before trying again.
+            </div>
           )}
 
           {hasPasskey && (

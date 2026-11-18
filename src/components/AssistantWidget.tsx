@@ -227,6 +227,7 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
     const items = isTl
       ? [
           { label: 'Briefing', query: 'Kamusta ang tindahan?' },
+          { label: 'Closing / EOD', query: 'Closing ngayon' },
           { label: 'Forecast', query: 'Kelan mauubos ang stock?' },
           { label: 'Margin Audit', query: 'Suriin ang tubo at presyo' },
           { label: 'Combos', query: 'Madalas magkasamang bilhin' },
@@ -236,6 +237,7 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
         ]
       : [
           { label: 'Briefing', query: 'Store briefing' },
+          { label: 'Closing / EOD', query: 'Closing report' },
           { label: 'Forecast', query: 'Stockout forecast' },
           { label: 'Margin Audit', query: 'Margin audit' },
           { label: 'Combos', query: 'Frequently bought together' },

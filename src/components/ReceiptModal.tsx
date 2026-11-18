@@ -6,6 +6,7 @@ import { formatPeso, formatQty } from '../utils/posMath';
 export interface ReadingReport {
   title: string;
   subtitle: string;
+  settingsOverride?: StoreSettings;
   lines: { label: string; value: string; bold?: boolean; dividerAfter?: boolean }[];
 }
 

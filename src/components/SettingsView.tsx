@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Archive,
@@ -10,6 +10,7 @@ import {
   History,
   KeyRound,
   Lock,
+  Printer,
   RefreshCw,
   RotateCcw,
   ShieldAlert,
@@ -52,7 +53,7 @@ import {
   type SecurityChainReport,
 } from '../utils/cryptoVault';
 import { formatPeso, safeJsonParse, validateBackupPayload } from '../utils/posMath';
-import { getUsedStorageBytes } from '../utils/storage';
+import { getStorageBreakdown, getUsedStorageBytes } from '../utils/storage';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { APP_VERSION, PRESERVED_DATA_KEYS, RELEASE_DATE, RELEASE_TAG } from '../version';
 
@@ -70,6 +71,7 @@ interface SettingsViewProps {
   onRollbackConfig: (snapshotId: string) => void;
   onLockSettings: () => void;
   onLockTerminal: () => void;
+  onPreviewTestReceipt?: (draft: StoreSettings) => void;
   onLogSecurityEvent: (
     event: SecurityEventType,
     summary: string,
@@ -103,6 +105,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onRollbackConfig,
   onLockSettings,
   onLockTerminal,
+  onPreviewTestReceipt,
   onLogSecurityEvent,
   onApplyRestore,
   onAskClearSales,
@@ -147,6 +150,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const [showLog, setShowLog] = useState(false);
   const [showSecLedger, setShowSecLedger] = useState(false);
+  const [showStorageDetails, setShowStorageDetails] = useState(false);
   const [chainReport, setChainReport] = useState<SecurityChainReport | null>(null);
   const [verifyingChain, setVerifyingChain] = useState(false);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
@@ -158,6 +162,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const usedBytes = getUsedStorageBytes();
   const usedKb = (usedBytes / 1024).toFixed(1);
   const quotaPct = Math.min(100, (usedBytes / (5 * 1024 * 1024)) * 100);
+  const storageBreakdown = useMemo(() => getStorageBreakdown(), [products.length, sales.length, heldOrders.length, stockLog.length, securityLog.length, showStorageDetails]);
+  const backupOverdue = useMemo(() => {
+    if (!settings.lastBackup) return true;
+    const t = Date.parse(settings.lastBackup);
+    return !Number.isFinite(t) || Date.now() - t > 7 * 86400 * 1000;
+  }, [settings.lastBackup]);
+
+  const hasUnsavedChanges = useMemo(
+    () =>
+      form.storeName !== settings.storeName ||
+      form.storeAddress !== settings.storeAddress ||
+      form.storeTin !== settings.storeTin ||
+      form.storePhone !== settings.storePhone ||
+      form.receiptFooter !== settings.receiptFooter ||
+      (form.receiptWidth === '58mm' ? '58mm' : '80mm') !==
+        (settings.receiptWidth === '58mm' ? '58mm' : '80mm') ||
+      Number(form.scDiscountCap) !== Number(settings.scDiscountCap) ||
+      Number(form.lowStockThreshold) !== Number(settings.lowStockThreshold) ||
+      Number(form.expiryWarnDays) !== Number(settings.expiryWarnDays) ||
+      Number(form.reorderLeadDays) !== Number(settings.reorderLeadDays) ||
+      Number(form.reorderSafetyDays) !== Number(settings.reorderSafetyDays) ||
+      Boolean(form.beep) !== Boolean(settings.beep) ||
+      Boolean(form.vibrate) !== Boolean(settings.vibrate),
+    [form, settings],
+  );
+
   const hasPin = pinIsSet(settings);
   const pinMeta = getPinSecurityMeta(settings);
   const weakBanner = pinNeedsChange(settings);
@@ -695,9 +725,53 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             onSubmit={handleSaveGeneral}
             className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-xs space-y-4"
           >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <h3 className="text-sm font-extrabold text-slate-900">Store Profile &amp; POS Preferences</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-extrabold text-slate-900">Store Profile &amp; POS Preferences</h3>
+                {hasUnsavedChanges && (
+                  <span
+                    data-testid="settings-unsaved-badge"
+                    className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px] font-extrabold"
+                  >
+                    Unsaved changes
+                  </span>
+                )}
+              </div>
               <span className="text-[11px] font-semibold text-slate-400">Receipt &amp; Stock</span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="font-bold text-slate-500 mr-1">Presets:</span>
+              <button
+                type="button"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    receiptWidth: '58mm',
+                    lowStockThreshold: 5,
+                    reorderLeadDays: 2,
+                    reorderSafetyDays: 1,
+                  }))
+                }
+                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold cursor-pointer"
+              >
+                Sari-Sari 58mm Defaults
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    receiptWidth: '80mm',
+                    lowStockThreshold: 12,
+                    reorderLeadDays: 3,
+                    reorderSafetyDays: 2,
+                  }))
+                }
+                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold cursor-pointer"
+              >
+                Supermarket 80mm Defaults
+              </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -754,14 +828,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Thermal Paper Width</label>
-                <select
-                  value={form.receiptWidth === '58mm' ? '58mm' : '80mm'}
-                  onChange={(e) => setForm({ ...form, receiptWidth: e.target.value as '80mm' | '58mm' })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white focus:border-emerald-600 focus:outline-none"
-                >
-                  <option value="80mm">80mm (Standard POS)</option>
-                  <option value="58mm">58mm (Compact / Bluetooth)</option>
-                </select>
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={form.receiptWidth === '58mm' ? '58mm' : '80mm'}
+                    onChange={(e) => setForm({ ...form, receiptWidth: e.target.value as '80mm' | '58mm' })}
+                    className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white focus:border-emerald-600 focus:outline-none"
+                  >
+                    <option value="80mm">80mm (Standard POS)</option>
+                    <option value="58mm">58mm (Compact / Bluetooth)</option>
+                  </select>
+                  {onPreviewTestReceipt && (
+                    <button
+                      type="button"
+                      data-testid="test-receipt-btn"
+                      onClick={() => onPreviewTestReceipt(form)}
+                      className="px-2.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                      title="Preview receipt layout without recording a sale"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Test</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -848,9 +936,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             <button
               type="submit"
-              className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold cursor-pointer"
+              className={`w-full py-2.5 rounded-lg text-white text-sm font-bold cursor-pointer transition ${
+                hasUnsavedChanges
+                  ? 'bg-amber-600 hover:bg-amber-700 ring-2 ring-amber-300'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
             >
-              Save Store Settings
+              {hasUnsavedChanges ? 'Save Store Settings (Unsaved)' : 'Save Store Settings'}
             </button>
           </form>
 
@@ -1018,11 +1110,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </span>
               </div>
 
-              <div className="text-xs text-slate-600">
-                Last backup:{' '}
-                <span className="font-semibold text-slate-800">
-                  {settings.lastBackup ? new Date(settings.lastBackup).toLocaleString('en-PH') : 'Never exported on this device'}
-                </span>
+              <div className="text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  Last backup:{' '}
+                  <span className="font-semibold text-slate-800">
+                    {settings.lastBackup ? new Date(settings.lastBackup).toLocaleString('en-PH') : 'Never exported on this device'}
+                  </span>
+                </div>
+                {backupOverdue && (
+                  <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[10px]">
+                    Backup recommended
+                  </span>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -1221,10 +1320,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               )}
 
-              {/* Storage meter */}
-              <div className="pt-1">
-                <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
-                  <span>Device Storage Used</span>
+              {/* Storage meter + Per-Key Breakdown */}
+              <div className="pt-1 space-y-2">
+                <div className="flex items-center justify-between text-[11px] text-slate-500">
+                  <button
+                    type="button"
+                    onClick={() => setShowStorageDetails((v) => !v)}
+                    className="font-semibold text-slate-600 hover:text-slate-900 underline cursor-pointer"
+                  >
+                    Device Storage Used ({showStorageDetails ? 'Hide breakdown' : 'Details'})
+                  </button>
                   <span className="font-mono-num font-semibold text-slate-700">{usedKb} KB / ~5 MB</span>
                 </div>
                 <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
@@ -1233,6 +1338,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     style={{ width: `${Math.max(2, quotaPct)}%` }}
                   />
                 </div>
+                {showStorageDetails && (
+                  <div
+                    data-testid="storage-breakdown-list"
+                    className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-1.5 text-[11px]"
+                  >
+                    {storageBreakdown.items.map((item) => (
+                      <div key={item.key} className="space-y-0.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-700">{item.label}</span>
+                          <span className="font-mono-num text-slate-600">
+                            {(item.bytes / 1024).toFixed(1)} KB ({item.pct}%)
+                          </span>
+                        </div>
+                        <div className="h-1 w-full bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-600 rounded-full"
+                            style={{ width: `${Math.max(2, item.pct)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

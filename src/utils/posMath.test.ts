@@ -1109,3 +1109,253 @@ test('upgraded Store AI handles executive briefing, forecast, bundles, categorie
   assert.equal(JSON.stringify(DEFAULT_SETTINGS), snapSettings);
 });
 
+test('Cash drawer reconciliation counts Cash + Split cash accurately and computes Over/Short/Balanced variance', async () => {
+  const { computeCashDrawerSummary } = await import('./posMath');
+  const today = new Date(2026, 10, 17, 0, 0, 0);
+  const tomorrow = new Date(2026, 10, 18, 0, 0, 0);
+
+  const sales: SaleRecord[] = [
+    {
+      receiptNo: 'OR-CASH-1',
+      dateIso: new Date(2026, 10, 17, 9, 0, 0).toISOString(),
+      dateFormatted: 'now',
+      items: [],
+      retailSubtotal: 450,
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: 450,
+      paymentMethod: 'Cash',
+      tendered: 500,
+      change: 50,
+    },
+    {
+      receiptNo: 'OR-SPLIT-2',
+      dateIso: new Date(2026, 10, 17, 10, 0, 0).toISOString(),
+      dateFormatted: 'now',
+      items: [],
+      retailSubtotal: 500,
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: 500,
+      paymentMethod: 'Split',
+      tendered: 500,
+      change: 0,
+      splitDetails: { cash: 150.25, digital: 349.75, digitalMethod: 'GCash' },
+    },
+    {
+      receiptNo: 'OR-GCASH-3',
+      dateIso: new Date(2026, 10, 17, 11, 0, 0).toISOString(),
+      dateFormatted: 'now',
+      items: [],
+      retailSubtotal: 900,
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: 900,
+      paymentMethod: 'GCash',
+      tendered: 900,
+      change: 0,
+    },
+    {
+      receiptNo: 'OR-VOID-4',
+      dateIso: new Date(2026, 10, 17, 12, 0, 0).toISOString(),
+      dateFormatted: 'now',
+      items: [],
+      retailSubtotal: 200,
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: 200,
+      paymentMethod: 'Cash',
+      tendered: 200,
+      change: 0,
+      voided: true,
+    },
+  ];
+
+  // Expected cash sales = 450 + 150.25 = 600.25; + opening float 1000 = 1600.25
+  const balanced = computeCashDrawerSummary(
+    sales,
+    today,
+    tomorrow,
+    { 1000: 1, 500: 1, 100: 1, 0.25: 1 },
+    1000,
+  );
+  assert.equal(balanced.cashOrders, 1);
+  assert.equal(balanced.splitCashOrders, 1);
+  assert.equal(balanced.expectedCashSales, 600.25);
+  assert.equal(balanced.expectedDrawerTotal, 1600.25);
+  assert.equal(balanced.countedTotal, 1600.25);
+  assert.equal(balanced.variance, 0);
+  assert.equal(balanced.status, 'balanced');
+
+  const short = computeCashDrawerSummary(sales, today, tomorrow, { 1000: 1, 500: 1 }, 1000);
+  assert.equal(short.variance, -100.25);
+  assert.equal(short.status, 'short');
+
+  const over = computeCashDrawerSummary(sales, today, tomorrow, { 1000: 2 }, 1000);
+  assert.equal(over.variance, 399.75);
+  assert.equal(over.status, 'over');
+});
+
+test('getTopFastMoverIds ranks top valid 30d revenue movers and excludes voided sales', async () => {
+  const { getTopFastMoverIds } = await import('./posMath');
+  const products = buildDefaultCatalog().slice(0, 4);
+  const now = Date.now();
+  const sales: SaleRecord[] = [
+    {
+      receiptNo: 'OR-FM-1',
+      dateIso: new Date(now - 3600_000).toISOString(),
+      dateFormatted: 'now',
+      items: [
+        {
+          productId: products[1].id,
+          name: products[1].name,
+          qty: 5,
+          unit: products[1].unit,
+          unitPrice: 200,
+          priceType: 'retail',
+          lineTotal: 1000,
+        },
+        {
+          productId: products[2].id,
+          name: products[2].name,
+          qty: 2,
+          unit: products[2].unit,
+          unitPrice: 50,
+          priceType: 'retail',
+          lineTotal: 100,
+        },
+      ],
+      retailSubtotal: 1100,
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: 1100,
+      paymentMethod: 'Cash',
+      tendered: 1100,
+      change: 0,
+    },
+    {
+      receiptNo: 'OR-FM-VOID',
+      dateIso: new Date(now - 1800_000).toISOString(),
+      dateFormatted: 'now',
+      items: [
+        {
+          productId: products[3].id,
+          name: products[3].name,
+          qty: 20,
+          unit: products[3].unit,
+          unitPrice: 500,
+          priceType: 'retail',
+          lineTotal: 10000,
+        },
+      ],
+      retailSubtotal: 10000,
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: 10000,
+      paymentMethod: 'Cash',
+      tendered: 10000,
+      change: 0,
+      voided: true,
+    },
+  ];
+
+  const top1 = getTopFastMoverIds(products, sales, 1, now);
+  assert.equal(top1.size, 1);
+  assert.equal(top1.has(products[1].id), true);
+  assert.equal(top1.has(products[3].id), false);
+});
+
+test('Store AI handles Closing/EOD report and safe POS/Stock quick actions without mutating inputs', () => {
+  const products = buildDefaultCatalog();
+  const now = new Date(2026, 10, 17, 20, 0, 0);
+  const milo = products.find((p) => p.name.includes('Milo'))!;
+  const canton = products.find((p) => p.name.includes('Pancit Canton'))!;
+
+  const sales: SaleRecord[] = [
+    {
+      receiptNo: 'OR-CLOSE-1',
+      dateIso: new Date(2026, 10, 17, 15, 0, 0).toISOString(),
+      dateFormatted: 'today',
+      items: [
+        {
+          productId: milo.id,
+          name: milo.name,
+          qty: 2,
+          unit: milo.unit,
+          unitPrice: milo.retailPrice,
+          priceType: 'retail',
+          lineTotal: round2(milo.retailPrice * 2),
+        },
+      ],
+      retailSubtotal: round2(milo.retailPrice * 2),
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: round2(milo.retailPrice * 2),
+      paymentMethod: 'Cash',
+      tendered: 500,
+      change: round2(500 - milo.retailPrice * 2),
+    },
+  ];
+
+  const cart: CartLine[] = [
+    {
+      productId: canton.id,
+      name: canton.name,
+      unit: canton.unit,
+      retailPrice: canton.retailPrice,
+      wholesalePrice: canton.wholesalePrice,
+      wholesaleMinQty: canton.wholesaleMinQty,
+      priceType: 'retail',
+      qty: Math.max(1, Math.ceil(canton.wholesaleMinQty * 0.6)),
+    },
+  ];
+
+  const snapP = JSON.stringify(products);
+  const snapS = JSON.stringify(sales);
+  const snapC = JSON.stringify(cart);
+
+  const bot = new OfflineAssistant();
+
+  const closeReply = bot.ask('Closing report', {
+    products,
+    sales,
+    heldOrders: [],
+    settings: DEFAULT_SETTINGS,
+    cart,
+    now,
+  });
+  assert.equal(closeReply.intent, 'closing');
+  assert.ok(closeReply.actions?.some((a) => a.type === 'open-cash-drawer'));
+  assert.ok(closeReply.actions?.some((a) => a.type === 'open-xread'));
+  assert.ok(closeReply.actions?.some((a) => a.type === 'open-zread'));
+
+  const prodReply = bot.ask('magkano ang Milo', {
+    products,
+    sales,
+    heldOrders: [],
+    settings: DEFAULT_SETTINGS,
+    cart,
+    now,
+  });
+  assert.equal(prodReply.intent, 'product');
+  assert.equal(prodReply.lang, 'tl');
+  assert.ok(prodReply.actions?.some((a) => a.type === 'add-to-cart' && a.productId === milo.id));
+  assert.ok(prodReply.actions?.some((a) => a.type === 'find-product-stock'));
+
+  const cartReply = bot.ask('Check cart', {
+    products,
+    sales,
+    heldOrders: [],
+    settings: DEFAULT_SETTINGS,
+    cart,
+    now,
+  });
+  assert.equal(cartReply.intent, 'cart');
+  assert.ok(cartReply.actions?.some((a) => a.type === 'add-to-cart' && a.productId === canton.id));
+
+  assert.equal(JSON.stringify(products), snapP);
+  assert.equal(JSON.stringify(sales), snapS);
+  assert.equal(JSON.stringify(cart), snapC);
+});
+
+

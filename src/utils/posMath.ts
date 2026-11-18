@@ -1435,5 +1435,84 @@ export function computeHourlySalesSeries(hours: Record<number, number>): HourlyS
   return out;
 }
 
+export const PH_DENOMINATIONS = [1000, 500, 200, 100, 50, 20, 10, 5, 1, 0.25] as const;
+
+export interface CashDrawerSummary {
+  openingFloat: number;
+  expectedCashSales: number;
+  expectedDrawerTotal: number;
+  countedTotal: number;
+  variance: number;
+  status: 'balanced' | 'over' | 'short';
+  cashOrders: number;
+  splitCashOrders: number;
+}
+
+export function computeCashDrawerSummary(
+  sales: SaleRecord[],
+  from: Date,
+  to: Date,
+  denominationCounts: Record<number | string, number>,
+  openingFloat = 0,
+): CashDrawerSummary {
+  let cashSalesCents = 0;
+  let cashOrders = 0;
+  let splitCashOrders = 0;
+
+  for (const s of sales) {
+    if (s.voided) continue;
+    if (!inRange(s, from, to)) continue;
+    if (s.paymentMethod === 'Cash') {
+      cashSalesCents += toCents(s.grandTotal);
+      cashOrders++;
+    } else if (s.paymentMethod === 'Split' && s.splitDetails) {
+      cashSalesCents += toCents(s.splitDetails.cash);
+      splitCashOrders++;
+    }
+  }
+
+  let countedCents = 0;
+  for (const denom of PH_DENOMINATIONS) {
+    const rawCount = Number(denominationCounts[denom] ?? denominationCounts[String(denom)] ?? 0);
+    const qty = Number.isFinite(rawCount) && rawCount > 0 ? Math.floor(rawCount) : 0;
+    countedCents += Math.round(toCents(denom) * qty);
+  }
+
+  const floatCents = Math.max(0, toCents(openingFloat));
+  const expectedDrawerCents = cashSalesCents + floatCents;
+  const varianceCents = countedCents - expectedDrawerCents;
+  const status: CashDrawerSummary['status'] =
+    varianceCents === 0 ? 'balanced' : varianceCents > 0 ? 'over' : 'short';
+
+  return {
+    openingFloat: fromCents(floatCents),
+    expectedCashSales: fromCents(cashSalesCents),
+    expectedDrawerTotal: fromCents(expectedDrawerCents),
+    countedTotal: fromCents(countedCents),
+    variance: fromCents(varianceCents),
+    status,
+    cashOrders,
+    splitCashOrders,
+  };
+}
+
+export function getTopFastMoverIds(
+  products: Product[],
+  sales: SaleRecord[],
+  limit = 12,
+  nowMs = Date.now(),
+): Set<string> {
+  const { byId, hasSalesInWindow } = computeProductVelocities(products, sales, nowMs);
+  if (!hasSalesInWindow || limit <= 0) return new Set();
+
+  const ranked = Array.from(byId.values())
+    .filter((v) => v.soldQty > 0)
+    .sort((a, b) => b.revenue30 - a.revenue30 || b.soldQty - a.soldQty)
+    .slice(0, limit);
+
+  return new Set(ranked.map((r) => r.productId));
+}
+
+
 
 

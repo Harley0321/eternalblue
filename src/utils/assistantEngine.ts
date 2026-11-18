@@ -10,6 +10,7 @@ import type {
 import { pinIsSet } from './pinSecurity';
 import {
   computeCartTotals,
+  computeCashDrawerSummary,
   computeLast7DaysNetSales,
   computeProductVelocities,
   computeProfitRanking,
@@ -69,7 +70,12 @@ export type AssistantAction =
   | { type: 'open-sales'; label: string }
   | { type: 'open-held'; label: string }
   | { type: 'open-settings'; label: string }
-  | { type: 'open-scanner'; label: string };
+  | { type: 'open-scanner'; label: string }
+  | { type: 'open-xread'; label: string }
+  | { type: 'open-zread'; label: string }
+  | { type: 'open-cash-drawer'; label: string }
+  | { type: 'add-to-cart'; label: string; productId: string; qty?: number }
+  | { type: 'find-product-stock'; label: string; query: string };
 
 export interface AssistantContext {
   products: Product[];
@@ -222,6 +228,10 @@ const CHIPMAP: Record<string, Record<AssistantLang, string[]>> = {
     en: ["Today's sales", 'Check cart', 'What should I restock?'],
     tl: ['Benta ngayon', 'Suriin ang cart', 'Ano ang dapat i-restock?'],
   },
+  closing: {
+    en: ['Store briefing', 'Compare today vs yesterday', 'Security health'],
+    tl: ['Kamusta ang tindahan?', 'Ikumpara ang ngayon at kahapon', 'Kalagayan ng seguridad'],
+  },
 };
 
 const TL_WORDS = new Set(
@@ -230,7 +240,7 @@ const TL_WORDS = new Set(
     'pinakamabenta pinaka pinakamalaking kita kinita kumita tubo paubos ubos maubos kulang wala naman lang kumusta kamusta musta salamat paki pakitingnan tingnan tignan sabihin ipakita ' +
     'gusto presyo natira puhunan hindi di mo ko namin natin kami sino saan kailan kelan bakit paano pwede puwede sige oo araw paso nakaraang nakaraan nakalipas mamimili suki bayad dagdag ' +
     'listahan dapat kailangan tulong magandang umaga tanghali hapon gabi ba pa na sa malapit nang imbentaryo paninda halaga ikumpara kumpara tingi hanap hanapin pila gaano karami lugi ' +
-    'kategorya kasabay magkasama resibo tindahan kalagayan bilhin suriin'
+    'kategorya kasabay magkasama resibo tindahan kalagayan bilhin suriin sarado kaha remittance'
   ).split(' '),
 );
 
@@ -238,7 +248,7 @@ const EN_WORDS = new Set(
   (
     'the what how show sales sale price stock today yesterday please my our items item week month best top low expiring expired restock reorder profit inventory ' +
     'sold many much are is any list tell give hello help thanks thank you voided busiest slow moving compare last days day this and about payment payments loss losing held parked ' +
-    'briefing health status forecast predict bundles combos category categories margin margins cart basket receipt security backup audit shift morning afternoon evening weekend'
+    'briefing health status forecast predict bundles combos category categories margin margins cart basket receipt security backup audit shift morning afternoon evening weekend closing eod drawer'
   ).split(' '),
 );
 
@@ -954,11 +964,79 @@ export class OfflineAssistant {
             opps.forEach((o) => lines.push(`- ${o}`));
           }
 
+          const actions: AssistantAction[] = [];
+          for (const line of cart) {
+            const prod = prodMap.get(line.productId);
+            const minQty = Number(prod?.wholesaleMinQty ?? line.wholesaleMinQty) || 0;
+            const whs = Number(prod?.wholesalePrice ?? line.wholesalePrice) || 0;
+            const ret = Number(prod?.retailPrice ?? line.retailPrice) || 0;
+            const cap = Number(prod?.capital) || 0;
+            const validWhs = whs > 0 && whs < ret && !(cap > 0 && whs < cap);
+            if (!validWhs || !(minQty > 1)) continue;
+            if (line.qty < minQty && line.qty >= minQty * 0.5 && prod && prod.stock >= minQty) {
+              const need = round2(minQty - line.qty);
+              actions.push({
+                type: 'add-to-cart',
+                label: T(`Add +${need} ${line.name.split(' ')[0]}`, `Idagdag +${need} ${line.name.split(' ')[0]}`),
+                productId: line.productId,
+                qty: need,
+              });
+              break;
+            }
+          }
+          if (ctx.heldOrders.length > 0) {
+            actions.push({
+              type: 'open-held',
+              label: T(`Parked (${ctx.heldOrders.length})`, `Naka-Hold (${ctx.heldOrders.length})`),
+            });
+          }
+
           return reply(intent, lines.join('\n'), {
             metrics: [
               { label: T('Cart Lines', 'Mga Item'), value: String(cart.length), tone: 'neutral' },
               { label: T('Net Total', 'Kabuuan'), value: P(totals.grandTotal), tone: 'emerald' },
               { label: T('SC/PWD Potential', 'SC/PWD 5%'), value: P(scTotals.seniorDiscount), tone: 'indigo' },
+            ],
+            ...(actions.length ? { actions } : {}),
+          });
+        }
+
+        case 'closing': {
+          const t = startOfDay(now);
+          const end = new Date(t.getTime() + DAY_MS);
+          const todayAll = ctx.sales.filter((s) => inRange(s, t, end));
+          const live = todayAll.filter((s) => !s.voided);
+          const voided = todayAll.filter((s) => s.voided);
+          const st = computeSalesStats(live, ctx.products);
+          const drawer = computeCashDrawerSummary(ctx.sales, t, end, {}, 0);
+          const digitalNet = round2(Math.max(0, st.net - drawer.expectedCashSales));
+          const pulse = computeStorePulse(ctx);
+
+          const lines = [
+            `**${T('End-of-Day Shift & Closing Summary', 'Buod ng Pagsasara / Shift Ngayon')}**`,
+            `- ${T('Net Sales Today:', 'Netong Benta Ngayon:')} **${P(st.net)}** (${orders(st.count)}${voided.length ? `, ${voided.length} voided` : ''})`,
+            `- ${T('Expected Cash in Drawer:', 'Inaasahang Cash sa Kaha:')} **${P(drawer.expectedCashSales)}** (${drawer.cashOrders} cash${drawer.splitCashOrders ? ` + ${drawer.splitCashOrders} split` : ''})`,
+            `- ${T('Digital / Card Tenders:', 'GCash / Card / Iba pa:')} **${P(digitalNet)}**`,
+            `- ${T('Discounts Given:', 'Ibinigay na Diskwento:')} ${P(st.wholesaleDisc + st.seniorDisc)} (Wholesale ${P(st.wholesaleDisc)}, SC/PWD ${P(st.seniorDisc)})`,
+            `- ${T('Est. Profit & Stock:', 'Tinatayang Tubo at Stock:')} **${P(st.profit)}** · ${pulse.urgentStockCount} ${T('urgent stock alert(s)', 'agarang stock alert')}`,
+          ];
+
+          return reply(intent, lines.join('\n'), {
+            metrics: [
+              { label: T('Expected Cash', 'Cash sa Kaha'), value: P(drawer.expectedCashSales), tone: 'emerald' },
+              { label: T('Digital / Card', 'GCash / Card'), value: P(digitalNet), tone: 'indigo' },
+              { label: T('Today Profit', 'Tubo Ngayon'), value: P(st.profit), hint: orders(st.count), tone: 'neutral' },
+              {
+                label: T('Backup Status', 'Backup'),
+                value: pulse.daysSinceBackup === null ? 'None' : `${pulse.daysSinceBackup}d ago`,
+                tone: pulse.daysSinceBackup !== null && pulse.daysSinceBackup <= 7 ? 'emerald' : 'amber',
+              },
+            ],
+            actions: [
+              { type: 'open-cash-drawer', label: T('Open Cash Count', 'Bilangin ang Cash') },
+              { type: 'open-xread', label: T('X-Read Report', 'X-Read Summary') },
+              { type: 'open-zread', label: T('Run Z-Read', 'Z-Read Closing') },
+              { type: 'open-settings', label: T('Backup Vault', 'Mag-Backup') },
             ],
           });
         }
@@ -1506,7 +1584,27 @@ export class OfflineAssistant {
               ? `\n\n${T(`...and ${totalMatched - ms.length} more match(es). Add more of the name to narrow it down.`, `...at ${totalMatched - ms.length} pang tugma. Dagdagan ang pangalan para mapaliit.`)}`
               : '';
           const near = fuzzy ? T('Closest match:\n', 'Pinakamalapit na tugma:\n') : '';
-          return reply(intent, near + body + more);
+
+          const topProd = ms[0];
+          const productActions: AssistantAction[] = [];
+          if (topProd) {
+            const topExp = expiryInfo(topProd, warnDays, now);
+            if (topProd.stock > 0 && topExp.status !== 'expired' && topProd.unit !== 'kg') {
+              productActions.push({
+                type: 'add-to-cart',
+                label: T(`Add 1 ${topProd.name.split(' ')[0]} to Cart`, `Ilagay 1 sa Cart`),
+                productId: topProd.id,
+                qty: 1,
+              });
+            }
+            productActions.push({
+              type: 'find-product-stock',
+              label: T('Inspect in Stock', 'Tingnan sa Stock'),
+              query: topProd.barcode || topProd.name,
+            });
+          }
+
+          return reply(intent, near + body + more, productActions.length ? { actions: productActions } : undefined);
         }
 
         default:
@@ -1521,6 +1619,9 @@ export class OfflineAssistant {
     // New high-signal intents prioritized carefully
     if (/\bOR[-\s]?\d{6}[-\s]?\d{1,5}\b/i.test(rawTrimmed) || /\b(receipt|resibo)\b/.test(q)) {
       return run('receipt', q);
+    }
+    if (/\b(closing|eod|end of day|x ?read|z ?read|cash count|cash drawer|reconcil\w*|remittance)\b|sarado na|pagsasara|bilang.*cash|cash sa kaha/.test(q)) {
+      return run('closing', q);
     }
     if (/\b(briefing|digest|health score|store health|overall health|executive summary)\b|kamusta ang tindahan|kumusta ang tindahan|kalagayan ng tindahan/.test(q)) {
       return run('briefing', q);

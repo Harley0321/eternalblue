@@ -206,3 +206,56 @@ export function getUsedStorageBytes(): number {
   return bytes;
 }
 
+export interface StorageBreakdownItem {
+  key: string;
+  label: string;
+  bytes: number;
+  pct: number;
+}
+
+const STORAGE_LABELS: Record<string, string> = {
+  [STORAGE_KEYS.PRODUCTS]: 'Products Catalog',
+  [STORAGE_KEYS.SALES]: 'Sales & Receipts',
+  [STORAGE_KEYS.HELD]: 'Parked Orders',
+  [STORAGE_KEYS.SETTINGS]: 'Store Settings',
+  [STORAGE_KEYS.STOCKLOG]: 'Stock Audit Log',
+  [STORAGE_KEYS.SECURITY_LOG]: 'Security Ledger',
+  [STORAGE_KEYS.CONFIG_HISTORY]: 'Config History',
+  [STORAGE_KEYS.SCANPREFS]: 'Scanner Prefs',
+  [STORAGE_KEYS.PINLOCK]: 'PIN Lockout State',
+};
+
+export function getStorageBreakdown(): { totalBytes: number; items: StorageBreakdownItem[] } {
+  const rawItems: { key: string; label: string; bytes: number }[] = [];
+  let totalBytes = 0;
+
+  try {
+    for (const k of Object.values(STORAGE_KEYS)) {
+      const v = localStorage.getItem(k);
+      const bytes = v ? v.length * 2 : 0;
+      totalBytes += bytes;
+      if (bytes > 0) {
+        rawItems.push({
+          key: k,
+          label: STORAGE_LABELS[k] || k,
+          bytes,
+        });
+      }
+    }
+  } catch {
+    // ignore storage access issues
+  }
+
+  rawItems.sort((a, b) => b.bytes - a.bytes);
+  const denom = totalBytes > 0 ? totalBytes : 1;
+
+  return {
+    totalBytes,
+    items: rawItems.map((it) => ({
+      ...it,
+      pct: Math.round((it.bytes / denom) * 100),
+    })),
+  };
+}
+
+

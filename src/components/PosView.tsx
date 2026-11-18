@@ -12,6 +12,7 @@ import {
   ShoppingCart,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react';
 import type { CartLine, CartTotals, PriceType, Product } from '../types';
 import {
@@ -40,6 +41,7 @@ interface PosViewProps {
   heldCount: number;
   isSeniorPwd: boolean;
   mobileCartOpen: boolean;
+  fastMoverIds?: Set<string>;
   onSetSearchQuery: (q: string) => void;
   onSearchEnter: (q: string) => void;
   onSetPriceMode: (mode: PriceType) => void;
@@ -51,6 +53,7 @@ interface PosViewProps {
   onSetCartQty: (productId: string, rawValue: string) => void;
   onRemoveCartLine: (productId: string) => void;
   onSetLinePriceType: (productId: string, type: PriceType) => void;
+  onUnlockWholesaleLine?: (productId: string, minQty: number) => void;
   onToggleSeniorPwd: (checked: boolean) => void;
   onHoldCart: () => void;
   onOpenHeldModal: () => void;
@@ -156,6 +159,7 @@ export const PosView: React.FC<PosViewProps> = ({
   heldCount,
   isSeniorPwd,
   mobileCartOpen,
+  fastMoverIds,
   onSetSearchQuery,
   onSearchEnter,
   onSetPriceMode,
@@ -167,6 +171,7 @@ export const PosView: React.FC<PosViewProps> = ({
   onSetCartQty,
   onRemoveCartLine,
   onSetLinePriceType,
+  onUnlockWholesaleLine,
   onToggleSeniorPwd,
   onHoldCart,
   onOpenHeldModal,
@@ -177,6 +182,7 @@ export const PosView: React.FC<PosViewProps> = ({
 }) => {
   const searchRef = useRef<HTMLInputElement>(null);
   const [inStockOnly, setInStockOnly] = useState(false);
+  const [fastMoversOnly, setFastMoversOnly] = useState(false);
 
   // Focus search with `/` or `Ctrl+K` / `Cmd+K` when not typing in another field
   useEffect(() => {
@@ -195,6 +201,7 @@ export const PosView: React.FC<PosViewProps> = ({
   }, []);
 
   const productMap = useMemo(() => buildProductMap(products), [products]);
+  const hasFastMovers = Boolean(fastMoverIds && fastMoverIds.size > 0);
 
   const cartQtyMap = useMemo(() => {
     const m = new Map<string, number>();
@@ -210,6 +217,9 @@ export const PosView: React.FC<PosViewProps> = ({
     const q = (multMatch ? multMatch[1] : raw).trim().toLowerCase();
 
     return products.filter((p) => {
+      if (fastMoversOnly && fastMoverIds && fastMoverIds.size > 0 && !fastMoverIds.has(p.id)) {
+        return false;
+      }
       if (inStockOnly) {
         if (p.stock <= 0 || expiryInfo(p, expiryWarnDays).status === 'expired') return false;
       }
@@ -222,7 +232,7 @@ export const PosView: React.FC<PosViewProps> = ({
         p.category.toLowerCase().includes(q)
       );
     });
-  }, [products, selectedCategory, searchQuery, inStockOnly, expiryWarnDays]);
+  }, [products, selectedCategory, searchQuery, inStockOnly, fastMoversOnly, fastMoverIds, expiryWarnDays]);
 
   return (
     <section className="h-full flex flex-col md:flex-row overflow-hidden relative">
@@ -241,6 +251,14 @@ export const PosView: React.FC<PosViewProps> = ({
                 if (e.key === 'Enter') {
                   e.preventDefault();
                   onSearchEnter(searchQuery);
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (searchQuery) {
+                    onSetSearchQuery('');
+                  } else {
+                    e.currentTarget.blur();
+                  }
                 }
               }}
               inputMode="search"
@@ -313,6 +331,22 @@ export const PosView: React.FC<PosViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {hasFastMovers && (
+              <button
+                type="button"
+                onClick={() => setFastMoversOnly((v) => !v)}
+                aria-pressed={fastMoversOnly}
+                data-testid="pos-fast-movers-btn"
+                className={`px-2.5 py-1.5 min-h-[34px] rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+                  fastMoversOnly
+                    ? 'bg-amber-600 text-white border-amber-600'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
+                }`}
+              >
+                <Zap className="w-3 h-3" />
+                <span>Fast Movers ({fastMoverIds!.size})</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setInStockOnly((v) => !v)}
@@ -347,13 +381,14 @@ export const PosView: React.FC<PosViewProps> = ({
           {filteredProducts.length === 0 ? (
             <div className="col-span-full py-12 text-center text-xs text-slate-500 space-y-2">
               <p>No matching products found.</p>
-              {(searchQuery || selectedCategory !== 'All' || inStockOnly) && (
+              {(searchQuery || selectedCategory !== 'All' || inStockOnly || fastMoversOnly) && (
                 <button
                   type="button"
                   onClick={() => {
                     onSetSearchQuery('');
                     onSelectCategory('All');
                     setInStockOnly(false);
+                    setFastMoversOnly(false);
                   }}
                   className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs cursor-pointer"
                 >
@@ -497,6 +532,9 @@ export const PosView: React.FC<PosViewProps> = ({
               const prod = productMap.get(item.productId);
               const stk = Number(prod?.stock) || 0;
               const need = Number((pr.minQty - item.qty).toFixed(3));
+              const savedPeso = isW
+                ? Math.max(0, Number(((pr.retail - pr.wholesale) * item.qty).toFixed(2)))
+                : 0;
 
               return (
                 <div
@@ -510,7 +548,7 @@ export const PosView: React.FC<PosViewProps> = ({
                         {formatPeso(activePrice)}/{item.unit}
                         {isW && (
                           <span className="ml-1.5 text-indigo-700 font-bold text-[10px]">
-                            · Wholesale
+                            · Wholesale{savedPeso > 0 ? ` (Save ${formatPeso(savedPeso)})` : ''}
                           </span>
                         )}
                         {isSeniorPwd && scEligibleLine(item, productMap) && (
@@ -616,8 +654,31 @@ export const PosView: React.FC<PosViewProps> = ({
                         </div>
                       )}
                       {!wantsW && (
-                        <div className="text-[11px] font-semibold text-slate-600 mt-1">
-                          Wholesale {formatPeso(pr.wholesale)} at {pr.minQty}+ {item.unit}
+                        <div className="text-[11px] font-semibold text-slate-600 mt-1 flex flex-wrap items-center gap-1.5">
+                          <span>
+                            Wholesale {formatPeso(pr.wholesale)} at {pr.minQty}+ {item.unit}
+                          </span>
+                          {block === null && (
+                            <button
+                              type="button"
+                              onClick={() => onSetLinePriceType(item.productId, 'wholesale')}
+                              className="px-2 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-extrabold cursor-pointer"
+                            >
+                              Apply Wholesale
+                            </button>
+                          )}
+                          {block === 'qty' &&
+                            item.qty >= pr.minQty * 0.5 &&
+                            pr.minQty <= stk &&
+                            onUnlockWholesaleLine && (
+                              <button
+                                type="button"
+                                onClick={() => onUnlockWholesaleLine(item.productId, pr.minQty)}
+                                className="px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-extrabold cursor-pointer"
+                              >
+                                +{need} for Wholesale
+                              </button>
+                            )}
                         </div>
                       )}
                     </div>
