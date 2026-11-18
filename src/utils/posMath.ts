@@ -20,6 +20,7 @@ export const STORAGE_KEYS = {
   STOCKLOG: 'omnimart_ph_stocklog_v1', // strictly additive log; never modifies existing keys
   CONFIG_HISTORY: 'omnimart_ph_config_history_v1', // strictly additive configuration revision history
   SECURITY_LOG: 'omnimart_ph_seclog_v1', // strictly additive tamper-evident hash-chained audit ledger
+  SYNC_TOMBSTONES: 'omnimart_ph_sync_tombstones_v1', // strictly additive cloud sync deletion tombstones
 } as const;
 
 export const DEFAULT_SETTINGS: StoreSettings = {
@@ -40,6 +41,9 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   receiptWidth: '80mm',
   autoLockMinutes: 5,
   lockWholePos: false,
+  syncEnabled: true,
+  syncStoreId: 'main-store',
+  lastSyncedAt: '',
 };
 
 export const BASE_CATEGORIES = [

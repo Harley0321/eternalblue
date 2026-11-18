@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CartLine,
   ConfigSnapshot,
@@ -59,6 +59,7 @@ import {
   loadSecurityLogFromStorage,
   loadSettingsFromStorage,
   loadStockLogFromStorage,
+  loadSyncTombstonesFromStorage,
   saveConfigHistoryToStorage,
   saveHeldToStorage,
   saveProductsToStorage,
@@ -66,7 +67,17 @@ import {
   saveSecurityLogToStorage,
   saveSettingsToStorage,
   saveStockLogToStorage,
+  saveSyncTombstonesToStorage,
 } from './utils/storage';
+import {
+  fetchSyncStatus,
+  normalizeSyncStoreId,
+  pullStoreFromSupabase,
+  pushStoreToSupabase,
+  reconcileStoreData,
+  type SyncStatusResponse,
+} from './utils/supabaseSync';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 
 import { TopBar } from './components/TopBar';
 import { ToastContainer, type ToastItem } from './components/ToastContainer';
@@ -119,6 +130,17 @@ export default function App() {
     saveConfigHistoryToStorage([baseline]);
     return [baseline];
   });
+  const [syncTombstones, setSyncTombstones] = useState<Record<string, string>>(() =>
+    loadSyncTombstonesFromStorage(),
+  );
+  const [syncStatus, setSyncStatus] = useState<SyncStatusResponse | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [pendingCloudPush, setPendingCloudPush] = useState(false);
+  const isOnline = useOnlineStatus();
+  const suppressAutoSyncRef = useRef(false);
+  const syncBootstrappedRef = useRef(false);
+  const prevOnlineRef = useRef(isOnline);
 
   // Navigation & filter state
   const [activeTab, setActiveTab] = useState<TabName>('pos');
@@ -289,8 +311,30 @@ export default function App() {
   // Persistence wrappers
   const updateProducts = useCallback(
     (updater: (prev: Product[]) => Product[]) => {
+      const nowIso = new Date().toISOString();
       setProducts((prev) => {
-        const next = updater(prev);
+        const nextRaw = updater(prev);
+        const prevMap = new Map(prev.map((p) => [p.id, p]));
+        const next = nextRaw.map((p) => {
+          const old = prevMap.get(p.id);
+          if (!old) {
+            return p.updatedAt ? p : { ...p, updatedAt: nowIso };
+          }
+          if (old !== p && p.updatedAt === old.updatedAt) {
+            return { ...p, updatedAt: nowIso };
+          }
+          return p;
+        });
+        const nextIds = new Set(next.map((p) => p.id));
+        const removedIds = prev.filter((p) => !nextIds.has(p.id)).map((p) => p.id);
+        if (removedIds.length > 0) {
+          setSyncTombstones((prevT) => {
+            const updatedT = { ...prevT };
+            for (const rid of removedIds) updatedT[rid] = nowIso;
+            saveSyncTombstonesToStorage(updatedT);
+            return updatedT;
+          });
+        }
         const res = saveProductsToStorage(next);
         if (!res.ok) toast('Device storage nearly full! Export a JSON backup.', 'error');
         return next;
@@ -396,6 +440,245 @@ export default function App() {
       return next;
     });
   }, []);
+
+  // Keep latest state in a ref for async Supabase sync callbacks
+  const syncStateRef = useRef({
+    products,
+    syncTombstones,
+    sales,
+    heldOrders,
+    stockLog,
+    settings,
+    configHistory,
+  });
+  syncStateRef.current = {
+    products,
+    syncTombstones,
+    sales,
+    heldOrders,
+    stockLog,
+    settings,
+    configHistory,
+  };
+
+  const applyReconciledToState = useCallback(
+    (
+      nextProducts: Product[],
+      nextTombstones: Record<string, string>,
+      nextSales: SaleRecord[],
+      nextHeld: HeldOrder[],
+      nextLogs: StockLogEntry[],
+      nextConfigHistory: ConfigSnapshot[],
+      nextSettings: StoreSettings,
+      syncedAt: string,
+    ) => {
+      suppressAutoSyncRef.current = true;
+      setProducts(nextProducts);
+      saveProductsToStorage(nextProducts);
+      setSyncTombstones(nextTombstones);
+      saveSyncTombstonesToStorage(nextTombstones);
+      setSales(nextSales);
+      saveSalesToStorage(nextSales);
+      setHeldOrders(nextHeld);
+      saveHeldToStorage(nextHeld);
+      setStockLog(nextLogs);
+      saveStockLogToStorage(nextLogs);
+      setConfigHistory(nextConfigHistory);
+      saveConfigHistoryToStorage(nextConfigHistory);
+      const stampedSettings: StoreSettings = { ...nextSettings, lastSyncedAt: syncedAt };
+      setSettings(stampedSettings);
+      saveSettingsToStorage(stampedSettings);
+      window.setTimeout(() => {
+        suppressAutoSyncRef.current = false;
+      }, 200);
+    },
+    [],
+  );
+
+  const refreshSyncStatus = useCallback(async (): Promise<SyncStatusResponse | null> => {
+    try {
+      const status = await fetchSyncStatus();
+      setSyncStatus(status);
+      return status;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const handleSyncWithSupabase = useCallback(
+    async (mode: 'merge' | 'push' | 'pull' = 'merge', silent = false) => {
+      if (syncBusy) return;
+      setSyncBusy(true);
+      setSyncError(null);
+      try {
+        const status = await refreshSyncStatus();
+        if (!status?.configured || !status.schemaReady) {
+          const reason = !status?.configured
+            ? 'Supabase key not configured on server yet.'
+            : status.error || 'Supabase tables are not initialized yet.';
+          setSyncError(reason);
+          if (!silent) toast(reason, 'warning');
+          return;
+        }
+
+        const cur = syncStateRef.current;
+        const storeId = normalizeSyncStoreId(cur.settings.syncStoreId);
+
+        if (mode === 'push') {
+          const { syncedAt } = await pushStoreToSupabase({
+            storeId,
+            products: cur.products,
+            deletedProducts: cur.syncTombstones,
+            sales: cur.sales,
+            heldOrders: cur.heldOrders,
+            stockLog: cur.stockLog,
+            settings: cur.settings,
+            configHistory: cur.configHistory,
+          });
+          suppressAutoSyncRef.current = true;
+          const stamped: StoreSettings = { ...cur.settings, lastSyncedAt: syncedAt, syncStoreId: storeId };
+          setSettings(stamped);
+          saveSettingsToStorage(stamped);
+          window.setTimeout(() => {
+            suppressAutoSyncRef.current = false;
+          }, 200);
+          setPendingCloudPush(false);
+          if (!silent) toast(`Pushed to Supabase (${storeId})`, 'success');
+          return;
+        }
+
+        const pulled = await pullStoreFromSupabase(storeId);
+        if (!pulled.found || !pulled.payload) {
+          if (mode === 'pull') {
+            if (!silent) toast(`No cloud data found yet for store "${storeId}"`, 'warning');
+            return;
+          }
+          // Merge on an empty cloud store seeds it from this device
+          const { syncedAt } = await pushStoreToSupabase({
+            storeId,
+            products: cur.products,
+            deletedProducts: cur.syncTombstones,
+            sales: cur.sales,
+            heldOrders: cur.heldOrders,
+            stockLog: cur.stockLog,
+            settings: cur.settings,
+            configHistory: cur.configHistory,
+          });
+          suppressAutoSyncRef.current = true;
+          const stamped: StoreSettings = { ...cur.settings, lastSyncedAt: syncedAt, syncStoreId: storeId };
+          setSettings(stamped);
+          saveSettingsToStorage(stamped);
+          window.setTimeout(() => {
+            suppressAutoSyncRef.current = false;
+          }, 200);
+          setPendingCloudPush(false);
+          if (!silent) toast(`Initialized Supabase cloud store "${storeId}"`, 'success');
+          return;
+        }
+
+        const reconciled = reconcileStoreData({
+          local: {
+            products: cur.products,
+            deletedProducts: cur.syncTombstones,
+            sales: cur.sales,
+            heldOrders: cur.heldOrders,
+            stockLog: cur.stockLog,
+            settings: cur.settings,
+            configHistory: cur.configHistory,
+          },
+          cloud: pulled.payload,
+          mode,
+        });
+
+        let finalSyncedAt = pulled.payload.updatedAt || new Date().toISOString();
+        if (mode === 'merge') {
+          const pushRes = await pushStoreToSupabase({
+            storeId,
+            products: reconciled.products,
+            deletedProducts: reconciled.deletedProducts,
+            sales: reconciled.sales,
+            heldOrders: reconciled.heldOrders,
+            stockLog: reconciled.stockLog,
+            settings: reconciled.settings,
+            configHistory: reconciled.configHistory,
+          });
+          finalSyncedAt = pushRes.syncedAt;
+        }
+
+        applyReconciledToState(
+          reconciled.products,
+          reconciled.deletedProducts,
+          reconciled.sales,
+          reconciled.heldOrders,
+          reconciled.stockLog,
+          reconciled.configHistory,
+          reconciled.settings,
+          finalSyncedAt,
+        );
+        setPendingCloudPush(false);
+        if (!silent) {
+          toast(
+            mode === 'pull'
+              ? `Pulled ${reconciled.stats.productsCount} SKUs & ${reconciled.stats.salesCount} sales from Supabase`
+              : `Synced with Supabase (${reconciled.stats.productsCount} SKUs · ${reconciled.stats.salesCount} sales)`,
+            'success',
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Supabase sync failed';
+        setSyncError(msg);
+        setPendingCloudPush(true);
+        if (!silent) toast(msg, 'error');
+      } finally {
+        setSyncBusy(false);
+      }
+    },
+    [applyReconciledToState, refreshSyncStatus, syncBusy, toast],
+  );
+
+  // Check Supabase status on mount & run initial silent merge if ready
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const status = await refreshSyncStatus();
+      if (cancelled) return;
+      syncBootstrappedRef.current = true;
+      if (status?.configured && status.schemaReady && syncStateRef.current.settings.syncEnabled !== false && isOnline) {
+        await handleSyncWithSupabase('merge', true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshSyncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-sync debounced push on local data mutations
+  useEffect(() => {
+    if (!syncBootstrappedRef.current) return;
+    if (suppressAutoSyncRef.current) return;
+    if (settings.syncEnabled === false) return;
+    if (!syncStatus?.configured || !syncStatus.schemaReady) return;
+    if (!isOnline) {
+      setPendingCloudPush(true);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void handleSyncWithSupabase('push', true);
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [products, sales, heldOrders, stockLog, settings.storeName, settings.syncStoreId, settings.syncEnabled, isOnline, syncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Automatically reconcile when transitioning from offline -> online
+  useEffect(() => {
+    const wasOnline = prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (!wasOnline && isOnline && syncStatus?.configured && syncStatus.schemaReady && settings.syncEnabled !== false) {
+      void handleSyncWithSupabase('merge', true);
+    } else if (!wasOnline && isOnline && pendingCloudPush) {
+      void handleSyncWithSupabase('merge', true);
+    }
+  }, [isOnline, pendingCloudPush, settings.syncEnabled, syncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLockTerminal = useCallback(() => {
     if (!pinIsSet(settings)) return;
@@ -997,12 +1280,15 @@ export default function App() {
   );
 
   const handleSaveProduct = (data: Omit<Product, 'id'>, editId?: string) => {
+    const nowIso = new Date().toISOString();
     if (editId) {
-      updateProducts((prev) => prev.map((p) => (p.id === editId ? { ...p, ...data } : p)));
+      updateProducts((prev) =>
+        prev.map((p) => (p.id === editId ? { ...p, ...data, updatedAt: nowIso } : p)),
+      );
       toast(`Updated ${data.name}`, 'success');
     } else {
       const id = 'SKU-' + Date.now().toString(36).toUpperCase();
-      updateProducts((prev) => [{ id, ...data }, ...prev]);
+      updateProducts((prev) => [{ id, ...data, updatedAt: nowIso }, ...prev]);
       toast(`Added ${data.name}`, 'success');
     }
     setProductModal({ open: false, editingId: null, initialBarcode: '' });
@@ -1615,6 +1901,12 @@ export default function App() {
               requirePin: true,
             })
           }
+          syncStatus={syncStatus}
+          syncBusy={syncBusy}
+          syncError={syncError}
+          isOnline={isOnline}
+          onSyncNow={(mode) => handleSyncWithSupabase(mode, false)}
+          onRefreshSyncStatus={refreshSyncStatus}
           onToast={toast}
         />
       )}

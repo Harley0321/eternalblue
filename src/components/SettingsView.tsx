@@ -3,7 +3,13 @@ import {
   AlertTriangle,
   Archive,
   CheckCircle2,
+  Cloud,
+  CloudDownload,
+  CloudUpload,
+  Copy,
+  Database,
   Download,
+  ExternalLink,
   FileKey2,
   Fingerprint,
   GitBranch,
@@ -54,6 +60,22 @@ import {
 } from '../utils/cryptoVault';
 import { formatPeso, safeJsonParse, validateBackupPayload } from '../utils/posMath';
 import { getStorageBreakdown, getUsedStorageBytes } from '../utils/storage';
+import {
+  GITHUB_REPO,
+  GITHUB_REPO_URL,
+  SUPABASE_DASHBOARD_URL,
+  SUPABASE_INTEGRATIONS_URL,
+  SUPABASE_PROJECT_REF,
+  SUPABASE_PROJECT_URL,
+  SUPABASE_SCHEMA_SQL,
+} from '../utils/supabaseSchemaSql';
+import {
+  buildGithubIntegrationBundleFiles,
+  fetchGithubIntegrationCheck,
+  normalizeSyncStoreId,
+  type GithubRemoteCheckResponse,
+  type SyncStatusResponse,
+} from '../utils/supabaseSync';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { APP_VERSION, PRESERVED_DATA_KEYS, RELEASE_DATE, RELEASE_TAG } from '../version';
 
@@ -88,6 +110,12 @@ interface SettingsViewProps {
   ) => void;
   onAskClearSales: () => void;
   onAskFactoryReset: () => void;
+  syncStatus?: SyncStatusResponse | null;
+  syncBusy?: boolean;
+  syncError?: string | null;
+  isOnline?: boolean;
+  onSyncNow?: (mode: 'merge' | 'push' | 'pull') => void;
+  onRefreshSyncStatus?: () => Promise<SyncStatusResponse | null>;
   onToast: (msg: string, type?: 'success' | 'warning' | 'error') => void;
 }
 
@@ -110,10 +138,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onApplyRestore,
   onAskClearSales,
   onAskFactoryReset,
+  syncStatus,
+  syncBusy = false,
+  syncError = null,
+  isOnline = true,
+  onSyncNow,
+  onRefreshSyncStatus,
   onToast,
 }) => {
   const [form, setForm] = useState<StoreSettings>(() => ({ ...settings }));
   const [checkpointLabel, setCheckpointLabel] = useState('');
+  const [syncStoreIdInput, setSyncStoreIdInput] = useState(() =>
+    normalizeSyncStoreId(settings.syncStoreId),
+  );
+  const [showSchemaSql, setShowSchemaSql] = useState(false);
+  const [showGithubGuide, setShowGithubGuide] = useState(false);
+  const [githubCheck, setGithubCheck] = useState<GithubRemoteCheckResponse | null>(null);
+  const [githubCheckBusy, setGithubCheckBusy] = useState(false);
+  const [bundleBusy, setBundleBusy] = useState(false);
+
+  useEffect(() => {
+    setSyncStoreIdInput(normalizeSyncStoreId(settings.syncStoreId));
+  }, [settings.syncStoreId]);
 
   useEffect(() => {
     setForm({ ...settings });
@@ -552,7 +598,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div>
             <h2 className="text-base sm:text-lg font-extrabold text-slate-900">Store &amp; System Settings</h2>
             <p className="text-xs text-slate-500">
-              All data, keys, and encrypted vaults remain local on this device with zero external database exposure.
+              PIN hashes, passkeys, and encrypted vaults stay local on this device; store records sync with Supabase when enabled.
             </p>
           </div>
           {hasPin && (
@@ -1359,6 +1405,432 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Supabase Cloud Sync */}
+            <div
+              data-testid="supabase-sync-card"
+              className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-xs space-y-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <Cloud className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900">Supabase Cloud Sync</h3>
+                    <p className="text-[11px] text-slate-500 font-mono-num">
+                      {syncStatus?.projectRef || SUPABASE_PROJECT_REF}.supabase.co
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href={syncStatus?.dashboardUrl || SUPABASE_DASHBOARD_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md"
+                >
+                  <span>Project Dashboard</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              <div className="text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  Last synced:{' '}
+                  <span className="font-semibold text-slate-800">
+                    {settings.lastSyncedAt
+                      ? new Date(settings.lastSyncedAt).toLocaleString('en-PH')
+                      : 'Not synced yet'}
+                  </span>
+                </div>
+                <span className="text-[11px] font-semibold text-slate-500">
+                  {!isOnline
+                    ? 'Device offline — queued locally'
+                    : syncStatus?.configured && syncStatus?.schemaReady
+                      ? 'Ready to sync'
+                      : syncStatus?.configured
+                        ? 'Schema setup needed'
+                        : 'Server key pending'}
+                </span>
+              </div>
+
+              {syncError && (
+                <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                  {syncError}
+                </div>
+              )}
+
+              {syncStatus && (!syncStatus.configured || !syncStatus.schemaReady) && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2 text-xs text-slate-700">
+                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <Database className="w-3.5 h-3.5 text-emerald-600" />
+                    Connect {syncStatus.projectUrl || SUPABASE_PROJECT_URL}
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-600">
+                    <li>
+                      Run the SQL schema below in your Supabase{' '}
+                      <span className="font-semibold text-slate-800">SQL Editor</span> to create the POS tables.
+                    </li>
+                    <li>
+                      Add <span className="font-mono-num font-semibold text-slate-800">SUPABASE_SERVICE_ROLE_KEY</span>{' '}
+                      (from Supabase Project Settings → API) to your server environment variables and restart.
+                    </li>
+                  </ol>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end text-xs">
+                <div>
+                  <label htmlFor="sync-store-id-input" className="block font-semibold text-slate-700 mb-1">
+                    Store Sync ID
+                  </label>
+                  <div className="flex gap-1.5">
+                    <input
+                      id="sync-store-id-input"
+                      type="text"
+                      value={syncStoreIdInput}
+                      onChange={(e) => setSyncStoreIdInput(e.target.value)}
+                      placeholder="main-store"
+                      className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-slate-300 text-xs font-mono-num focus:border-emerald-600 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const normalized = normalizeSyncStoreId(syncStoreIdInput);
+                        setSyncStoreIdInput(normalized);
+                        onSaveSettings({ ...settings, syncStoreId: normalized });
+                        onToast(`Store Sync ID set to "${normalized}"`, 'success');
+                      }}
+                      className="px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer shrink-0"
+                    >
+                      Save ID
+                    </button>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700 py-2">
+                  <input
+                    type="checkbox"
+                    checked={settings.syncEnabled !== false}
+                    onChange={(e) => {
+                      onSaveSettings({ ...settings, syncEnabled: e.target.checked });
+                      onToast(
+                        e.target.checked ? 'Auto-sync with Supabase enabled' : 'Auto-sync paused (manual sync only)',
+                        'success',
+                      );
+                    }}
+                    className="w-4 h-4 accent-emerald-600"
+                  />
+                  <span>Auto-sync changes while online</span>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  data-testid="sync-now-btn"
+                  disabled={syncBusy || !isOnline}
+                  onClick={() => onSyncNow?.('merge')}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold whitespace-nowrap cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${syncBusy ? 'animate-spin' : ''}`} />
+                  <span>{syncBusy ? 'Syncing…' : 'Sync Now'}</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="sync-push-btn"
+                  disabled={syncBusy || !isOnline}
+                  onClick={() => onSyncNow?.('push')}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold whitespace-nowrap cursor-pointer disabled:opacity-50"
+                >
+                  <CloudUpload className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                  <span>Push to Cloud</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="sync-pull-btn"
+                  disabled={syncBusy || !isOnline}
+                  onClick={() => onSyncNow?.('pull')}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-bold whitespace-nowrap cursor-pointer disabled:opacity-50"
+                >
+                  <CloudDownload className="w-3.5 h-3.5 shrink-0" />
+                  <span>Pull to Device</span>
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    data-testid="toggle-sql-btn"
+                    onClick={() => setShowSchemaSql((v) => !v)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer"
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    {showSchemaSql ? 'Hide SQL Schema' : 'View SQL Schema'}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="copy-sql-btn"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(SUPABASE_SCHEMA_SQL);
+                        onToast('Supabase SQL schema copied to clipboard', 'success');
+                      } catch {
+                        setShowSchemaSql(true);
+                        onToast('Select and copy the SQL schema below', 'warning');
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Copy SQL Schema
+                  </button>
+                </div>
+                {onRefreshSyncStatus && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const s = await onRefreshSyncStatus();
+                      if (s?.configured && s?.schemaReady) {
+                        onToast('Supabase connection & schema verified', 'success');
+                      } else if (s?.configured) {
+                        onToast(s.error || 'Supabase key found, waiting for SQL tables', 'warning');
+                      } else {
+                        onToast('Server key SUPABASE_SERVICE_ROLE_KEY not set yet', 'warning');
+                      }
+                    }}
+                    className="text-[11px] font-semibold text-slate-600 hover:text-slate-900 underline cursor-pointer"
+                  >
+                    Recheck Connection
+                  </button>
+                )}
+              </div>
+
+              {showSchemaSql && (
+                <pre
+                  data-testid="supabase-schema-sql"
+                  className="max-h-52 overflow-auto rounded-lg bg-slate-900 text-emerald-300 p-3 text-[11px] font-mono-num leading-relaxed select-text"
+                >
+                  {SUPABASE_SCHEMA_SQL}
+                </pre>
+              )}
+
+              {/* GitHub Repository <-> Supabase Integration */}
+              <div
+                data-testid="github-supabase-integration"
+                className="border-t border-slate-100 pt-3 space-y-2.5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <GitBranch className="w-4 h-4 text-slate-700 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-extrabold text-slate-900">
+                        GitHub Repository Integration
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono-num truncate">
+                        {syncStatus?.githubIntegration?.repo || GITHUB_REPO} (
+                        {syncStatus?.githubIntegration?.branch || 'main'}) ↔{' '}
+                        {syncStatus?.projectRef || SUPABASE_PROJECT_REF}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <a
+                      href={syncStatus?.githubIntegration?.repoUrl || GITHUB_REPO_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-700 hover:text-slate-900 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md"
+                    >
+                      <span>GitHub Repo</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <a
+                      href={syncStatus?.githubIntegration?.integrationsUrl || SUPABASE_INTEGRATIONS_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md"
+                    >
+                      <span>Supabase Integrations</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
+                    <div className="text-slate-500 font-medium">supabase/config.toml</div>
+                    <div className="font-bold text-slate-800 mt-0.5">
+                      {syncStatus?.githubIntegration?.hasConfigToml ? 'Configured locally' : 'Included in repo'}
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
+                    <div className="text-slate-500 font-medium">supabase/migrations</div>
+                    <div className="font-bold text-slate-800 mt-0.5 font-mono-num">
+                      {syncStatus?.githubIntegration?.migrations?.length
+                        ? `${syncStatus.githubIntegration.migrations.length} migration SQL`
+                        : '1 migration SQL'}
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
+                    <div className="text-slate-500 font-medium">GitHub Action</div>
+                    <div className="font-bold text-slate-800 mt-0.5">
+                      {syncStatus?.githubIntegration?.hasWorkflow ? 'supabase-sync.yml ready' : 'Workflow included'}
+                    </div>
+                  </div>
+                </div>
+
+                {githubCheck && (
+                  <div
+                    data-testid="github-check-result"
+                    className={`rounded-lg border p-2.5 text-[11px] space-y-1 ${
+                      githubCheck.reachable &&
+                      githubCheck.hasRemoteConfigToml &&
+                      githubCheck.remoteMigrations.length > 0
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                        : 'bg-amber-50 border-amber-200 text-amber-950'
+                    }`}
+                  >
+                    <div className="font-bold flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        {githubCheck.reachable
+                          ? githubCheck.hasRemoteConfigToml && githubCheck.remoteMigrations.length > 0
+                            ? `GitHub (${githubCheck.repo}) has Supabase integration files synced`
+                            : `GitHub (${githubCheck.repo}) reachable — push supabase/ & .github/ commits to finish linking`
+                          : githubCheck.error || `Unable to verify ${githubCheck.repo}`}
+                      </span>
+                      {githubCheck.latestCommitSha && (
+                        <span className="font-mono-num text-[10px] opacity-80">
+                          HEAD {githubCheck.latestCommitSha}
+                        </span>
+                      )}
+                    </div>
+                    {githubCheck.reachable && (
+                      <div className="text-[11px] opacity-90">
+                        Remote config.toml: {githubCheck.hasRemoteConfigToml ? 'Yes' : 'Not pushed yet'} · Migrations:{' '}
+                        {githubCheck.remoteMigrations.length} · Workflow:{' '}
+                        {githubCheck.hasRemoteWorkflow ? 'Yes' : 'Not pushed yet'}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    data-testid="check-github-repo-btn"
+                    disabled={githubCheckBusy || !isOnline}
+                    onClick={async () => {
+                      setGithubCheckBusy(true);
+                      try {
+                        const res = await fetchGithubIntegrationCheck();
+                        setGithubCheck(res);
+                        if (res.reachable && res.hasRemoteConfigToml && res.remoteMigrations.length > 0) {
+                          onToast('GitHub repo has Supabase config & migrations synced', 'success');
+                        } else if (res.reachable) {
+                          onToast('GitHub reachable — push workspace Supabase files to main', 'warning');
+                        } else {
+                          onToast(res.error || 'Could not verify GitHub repository', 'warning');
+                        }
+                      } catch (err) {
+                        onToast(
+                          err instanceof Error ? err.message : 'GitHub check failed',
+                          'error',
+                        );
+                      } finally {
+                        setGithubCheckBusy(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${githubCheckBusy ? 'animate-spin' : ''}`} />
+                    {githubCheckBusy ? 'Checking GitHub…' : 'Check GitHub Repo'}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="download-github-bundle-btn"
+                    disabled={bundleBusy}
+                    onClick={async () => {
+                      setBundleBusy(true);
+                      try {
+                        const zip = new JSZip();
+                        for (const f of buildGithubIntegrationBundleFiles()) {
+                          zip.file(f.path, f.content);
+                        }
+                        const blob = await zip.generateAsync({ type: 'blob' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `omnimart-supabase-github-sync-${SUPABASE_PROJECT_REF}.zip`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        onToast('Downloaded Supabase + GitHub sync kit (.zip)', 'success');
+                      } catch {
+                        onToast('Failed to build sync kit archive', 'error');
+                      } finally {
+                        setBundleBusy(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    <Archive className="w-3.5 h-3.5" />
+                    {bundleBusy ? 'Preparing ZIP…' : 'Download Sync Kit ZIP'}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="toggle-github-guide-btn"
+                    onClick={() => setShowGithubGuide((v) => !v)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer"
+                  >
+                    <GitBranch className="w-3.5 h-3.5" />
+                    {showGithubGuide ? 'Hide Link Guide' : 'How to Link'}
+                  </button>
+                </div>
+
+                {showGithubGuide && (
+                  <div
+                    data-testid="github-integration-guide"
+                    className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2 text-[11px] text-slate-700"
+                  >
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>
+                        Commit and push <span className="font-mono-num font-semibold">supabase/</span> and{' '}
+                        <span className="font-mono-num font-semibold">.github/workflows/supabase-sync.yml</span> to{' '}
+                        <span className="font-mono-num font-semibold">{GITHUB_REPO}</span> (<span className="font-mono-num">main</span>).
+                      </li>
+                      <li>
+                        Open <span className="font-semibold text-slate-900">Supabase Integrations</span> above, connect{' '}
+                        <span className="font-mono-num font-semibold">{GITHUB_REPO}</span>, and enable automatic branching / migration deploys.
+                      </li>
+                      <li>
+                        Optional CI push: set <span className="font-mono-num font-semibold">SUPABASE_ACCESS_TOKEN</span> and{' '}
+                        <span className="font-mono-num font-semibold">SUPABASE_DB_PASSWORD</span> in GitHub Repository Secrets, or run locally:
+                      </li>
+                    </ol>
+                    <div className="flex items-center justify-between gap-2 bg-slate-900 text-emerald-300 rounded-lg px-2.5 py-2 font-mono-num text-[11px]">
+                      <span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap select-text">
+                        supabase link --project-ref {SUPABASE_PROJECT_REF} && supabase db push
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const cmd = `supabase link --project-ref ${SUPABASE_PROJECT_REF} && supabase db push`;
+                          try {
+                            await navigator.clipboard.writeText(cmd);
+                            onToast('Supabase CLI link command copied', 'success');
+                          } catch {
+                            onToast('Select and copy the command manually', 'warning');
+                          }
+                        }}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-bold shrink-0 cursor-pointer"
+                      >
+                        Copy CLI
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

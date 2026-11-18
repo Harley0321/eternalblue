@@ -18,6 +18,7 @@ export interface Product {
   scEligible?: boolean;
   icon?: string;
   iconColor?: string;
+  updatedAt?: string;
 }
 
 export interface CartLine {
@@ -111,6 +112,10 @@ export interface StoreSettings {
   passkeyPubKeySpki?: string;
   passkeyLabel?: string;
   passkeyRegisteredAt?: string;
+  // Cloud Sync (Supabase)
+  syncEnabled?: boolean;
+  syncStoreId?: string;
+  lastSyncedAt?: string;
   [key: string]: unknown;
 }
 

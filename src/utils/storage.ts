@@ -223,7 +223,38 @@ const STORAGE_LABELS: Record<string, string> = {
   [STORAGE_KEYS.CONFIG_HISTORY]: 'Config History',
   [STORAGE_KEYS.SCANPREFS]: 'Scanner Prefs',
   [STORAGE_KEYS.PINLOCK]: 'PIN Lockout State',
+  [STORAGE_KEYS.SYNC_TOMBSTONES]: 'Cloud Sync Tombstones',
 };
+
+export function loadSyncTombstonesFromStorage(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SYNC_TOMBSTONES);
+    if (raw) {
+      const parsed = safeJsonParse<unknown>(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const out: Record<string, string> = {};
+        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+          if (typeof v === 'string' && v) out[k] = v;
+        }
+        return out;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+export function saveSyncTombstonesToStorage(tombstones: Record<string, string>): void {
+  try {
+    const entries = Object.entries(tombstones)
+      .sort((a, b) => b[1].localeCompare(a[1]))
+      .slice(0, 500);
+    localStorage.setItem(STORAGE_KEYS.SYNC_TOMBSTONES, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // ignore
+  }
+}
 
 export function getStorageBreakdown(): { totalBytes: number; items: StorageBreakdownItem[] } {
   const rawItems: { key: string; label: string; bytes: number }[] = [];
