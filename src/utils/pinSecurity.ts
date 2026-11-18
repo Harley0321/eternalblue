@@ -85,27 +85,42 @@ export function safeEqual(a: string, b: string): boolean {
   return d === 0;
 }
 
+export const MIN_PIN_LENGTH = 4;
+export const MAX_PIN_LENGTH = 15;
+
+export function isValidPinOrPassword(pin: string): boolean {
+  return /^\S{4,15}$/.test(String(pin || ''));
+}
+
 export function isWeakPin(pin: string): boolean {
-  if (!/^\d{4,8}$/.test(pin)) return true;
-  if (/^(\d)\1+$/.test(pin)) return true;
-  const asc = '01234567890123456789';
-  const desc = '98765432109876543210';
-  if (asc.includes(pin) || desc.includes(pin)) return true;
-  if (/^(19|20)\d{2}$/.test(pin)) return true;
-  return [
-    '1212',
-    '2580',
-    '1004',
-    '2000',
-    '2001',
-    '1122',
-    '6969',
-    '121212',
-    '112233',
-    '258025',
-    '0852',
-    '1379',
-  ].includes(pin);
+  const clean = String(pin || '');
+  if (!isValidPinOrPassword(clean)) return true;
+  if (/^(.)\1+$/.test(clean)) return true;
+  if (/^\d+$/.test(clean)) {
+    const asc = '01234567890123456789';
+    const desc = '98765432109876543210';
+    if (asc.includes(clean) || desc.includes(clean)) return true;
+    if (/^(19|20)\d{2}$/.test(clean)) return true;
+    return [
+      '1212',
+      '2580',
+      '1004',
+      '2000',
+      '2001',
+      '1122',
+      '6969',
+      '121212',
+      '112233',
+      '258025',
+      '0852',
+      '1379',
+    ].includes(clean);
+  }
+  const lower = clean.toLowerCase();
+  if (/^(password|passw0rd|qwerty|admin|omnimart|letmein|welcome|iloveyou)\d*$/.test(lower)) {
+    return true;
+  }
+  return clean.length < 6 && /^[a-z]+$/i.test(clean);
 }
 
 export function pinIsSet(settings: StoreSettings): boolean {

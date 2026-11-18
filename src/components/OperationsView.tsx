@@ -1302,11 +1302,11 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                     {cashiers.find((c) => c.id === shiftCashierId)?.pin && (
                       <input
                         type="password"
-                        inputMode="numeric"
-                        placeholder="PIN"
+                        maxLength={15}
+                        placeholder="PIN / Pass"
                         value={shiftPin}
-                        onChange={(e) => setShiftPin(e.target.value)}
-                        className="w-16 px-2 py-2 rounded-xl border border-slate-300 bg-white text-xs font-mono-num"
+                        onChange={(e) => setShiftPin(e.target.value.slice(0, 15))}
+                        className="w-24 px-2 py-2 rounded-xl border border-slate-300 bg-white text-xs font-mono-num"
                       />
                     )}
                     <button
@@ -1360,11 +1360,11 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                     <div className="flex gap-1">
                       <input
                         type="password"
-                        inputMode="numeric"
-                        placeholder="PIN"
+                        maxLength={15}
+                        placeholder="PIN (max 15)"
                         value={newCashierPin}
-                        onChange={(e) => setNewCashierPin(e.target.value)}
-                        className="w-16 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono-num"
+                        onChange={(e) => setNewCashierPin(e.target.value.slice(0, 15))}
+                        className="w-24 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono-num"
                       />
                       <button
                         type="submit"

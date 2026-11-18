@@ -34,7 +34,9 @@ import type {
 } from '../types';
 import {
   getPinSecurityMeta,
+  isValidPinOrPassword,
   isWeakPin,
+  MAX_PIN_LENGTH,
   PIN_SETTING_KEYS,
   pinIsSet,
   pinNeedsChange,
@@ -282,8 +284,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleUpdatePin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!/^\d{4,8}$/.test(newPin)) {
-      onToast('New PIN must be 4 to 8 digits', 'error');
+    if (!isValidPinOrPassword(newPin)) {
+      onToast('New PIN / Password must be 4 to 15 characters (no spaces)', 'error');
       return;
     }
     if (newPin !== confirmPin) {
@@ -583,7 +585,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div>
               <div className="font-bold">Weak Manager PIN detected</div>
               <div className="text-amber-800 mt-0.5">
-                Please change your Manager PIN below to a stronger 4–8 digit code to protect voids, settings, and reset controls.
+                Please change your Manager PIN / Password below to a stronger 4–15 character code to protect voids, settings, and reset controls.
               </div>
             </div>
           </div>
@@ -965,38 +967,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
                   {hasPin && (
                     <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Current PIN</label>
+                      <label className="block font-semibold text-slate-700 mb-1">Current PIN / Password</label>
                       <input
                         type="password"
-                        inputMode="numeric"
-                        maxLength={8}
+                        maxLength={MAX_PIN_LENGTH}
                         value={curPin}
-                        onChange={(e) => setCurPin(e.target.value.replace(/\D/g, ''))}
+                        onChange={(e) => setCurPin(e.target.value.replace(/\s+/g, '').slice(0, MAX_PIN_LENGTH))}
                         placeholder="••••"
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-mono-num"
                       />
                     </div>
                   )}
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">New PIN (4–8 digits)</label>
+                    <label className="block font-semibold text-slate-700 mb-1">New PIN / Password (4–15 chars)</label>
                     <input
                       type="password"
-                      inputMode="numeric"
-                      maxLength={8}
+                      maxLength={MAX_PIN_LENGTH}
                       value={newPin}
-                      onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                      onChange={(e) => setNewPin(e.target.value.replace(/\s+/g, '').slice(0, MAX_PIN_LENGTH))}
                       placeholder="••••"
                       className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-mono-num"
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Confirm PIN</label>
+                    <label className="block font-semibold text-slate-700 mb-1">Confirm PIN / Password</label>
                     <input
                       type="password"
-                      inputMode="numeric"
-                      maxLength={8}
+                      maxLength={MAX_PIN_LENGTH}
                       value={confirmPin}
-                      onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                      onChange={(e) => setConfirmPin(e.target.value.replace(/\s+/g, '').slice(0, MAX_PIN_LENGTH))}
                       placeholder="••••"
                       className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-mono-num"
                     />

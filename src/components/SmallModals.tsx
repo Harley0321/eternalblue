@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Delete, Fingerprint, Lock, PauseCircle, RotateCcw, Scale, ShieldCheck, Trash2, X } from 'lucide-react';
 import type { HeldOrder, Product, SaleRecord, StoreSettings } from '../types';
 import { formatPeso, round2 } from '../utils/posMath';
-import { fmtWait, getPinSecurityMeta, isWeakPin, pinLockedFor, storePinInSettings, verifyPinWithSettings } from '../utils/pinSecurity';
+import { fmtWait, getPinSecurityMeta, isValidPinOrPassword, isWeakPin, MAX_PIN_LENGTH, pinLockedFor, storePinInSettings, verifyPinWithSettings } from '../utils/pinSecurity';
 import { isPasskeySupported, verifyLocalPasskey } from '../utils/cryptoVault';
 import { ProductIconBadge } from './ProductIconBadge';
 import { StoreEmblem } from './StoreEmblem';
@@ -406,8 +406,8 @@ export const PinModal: React.FC<PinModalProps> = ({
     setBusy(true);
     try {
       if (mode === 'setup') {
-        if (!/^\d{4,8}$/.test(pin)) {
-          setError('PIN must be 4 to 8 digits.');
+        if (!isValidPinOrPassword(pin)) {
+          setError('PIN / Password must be 4 to 15 characters (no spaces).');
           return;
         }
         if (pin !== confirmPin) {
@@ -508,33 +508,35 @@ export const PinModal: React.FC<PinModalProps> = ({
 
           <div>
             <label className="block font-bold text-slate-700 mb-1">
-              {mode === 'setup' ? 'New PIN (4–8 digits)' : 'Manager PIN'}
+              {mode === 'setup' ? 'New PIN / Password (4–15 chars)' : 'Manager PIN / Password'}
             </label>
             <input
               data-testid="pin-modal-input"
               type="password"
-              inputMode="numeric"
-              maxLength={8}
+              maxLength={MAX_PIN_LENGTH}
               autoFocus
               value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+              onChange={(e) => setPin(e.target.value.replace(/\s+/g, '').slice(0, MAX_PIN_LENGTH))}
               placeholder="••••"
-              className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-center text-lg tracking-[0.35em] font-mono-num focus:border-emerald-600 focus:outline-none"
+              className={`w-full px-3 py-2.5 rounded-xl border border-slate-300 text-center font-mono-num focus:border-emerald-600 focus:outline-none ${
+                pin.length > 10 ? 'text-sm tracking-[0.15em]' : 'text-lg tracking-[0.3em]'
+              }`}
             />
           </div>
 
           {mode === 'setup' && (
             <>
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Confirm PIN</label>
+                <label className="block font-bold text-slate-700 mb-1">Confirm PIN / Password</label>
                 <input
                   type="password"
-                  inputMode="numeric"
-                  maxLength={8}
+                  maxLength={MAX_PIN_LENGTH}
                   value={confirmPin}
-                  onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                  onChange={(e) => setConfirmPin(e.target.value.replace(/\s+/g, '').slice(0, MAX_PIN_LENGTH))}
                   placeholder="••••"
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-center text-lg tracking-[0.35em] font-mono-num focus:border-emerald-600 focus:outline-none"
+                  className={`w-full px-3 py-2.5 rounded-xl border border-slate-300 text-center font-mono-num focus:border-emerald-600 focus:outline-none ${
+                    confirmPin.length > 10 ? 'text-sm tracking-[0.15em]' : 'text-lg tracking-[0.3em]'
+                  }`}
                 />
               </div>
               {pin.length >= 4 && isWeakPin(pin) && (
@@ -545,7 +547,7 @@ export const PinModal: React.FC<PinModalProps> = ({
                     onChange={(e) => setAllowWeak(e.target.checked)}
                     className="mt-0.5 accent-amber-600"
                   />
-                  <span>Weak PIN warning. Check to confirm anyway.</span>
+                  <span>Weak PIN / Password warning. Check to confirm anyway.</span>
                 </label>
               )}
             </>
@@ -559,7 +561,7 @@ export const PinModal: React.FC<PinModalProps> = ({
                   type="button"
                   disabled={busy}
                   data-testid={`pin-key-${digit}`}
-                  onClick={() => setPin((prev) => (prev.length < 8 ? prev + digit : prev))}
+                  onClick={() => setPin((prev) => (prev.length < MAX_PIN_LENGTH ? prev + digit : prev))}
                   className="min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-[0.97] text-slate-900 font-mono-num font-extrabold text-base cursor-pointer disabled:opacity-45"
                 >
                   {digit}
@@ -577,7 +579,7 @@ export const PinModal: React.FC<PinModalProps> = ({
                 type="button"
                 disabled={busy}
                 data-testid="pin-key-0"
-                onClick={() => setPin((prev) => (prev.length < 8 ? prev + '0' : prev))}
+                onClick={() => setPin((prev) => (prev.length < MAX_PIN_LENGTH ? prev + '0' : prev))}
                 className="min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-[0.97] text-slate-900 font-mono-num font-extrabold text-base cursor-pointer disabled:opacity-45"
               >
                 0
@@ -737,16 +739,17 @@ export const VoidSaleModal: React.FC<VoidSaleModalProps> = ({
 
           {hasPin && (
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Manager PIN</label>
+              <label className="block font-bold text-slate-700 mb-1">Manager PIN / Password</label>
               <input
                 type="password"
-                inputMode="numeric"
-                maxLength={8}
+                maxLength={MAX_PIN_LENGTH}
                 autoFocus
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setPin(e.target.value.replace(/\s+/g, '').slice(0, MAX_PIN_LENGTH))}
                 placeholder="••••"
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 text-center text-base tracking-[0.35em] font-mono-num"
+                className={`w-full px-3 py-2 rounded-xl border border-slate-300 text-center font-mono-num ${
+                  pin.length > 10 ? 'text-sm tracking-[0.15em]' : 'text-base tracking-[0.3em]'
+                }`}
               />
             </div>
           )}
@@ -861,16 +864,17 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           <p>{message}</p>
           {hasPin && (
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Enter Manager PIN to confirm</label>
+              <label className="block font-bold text-slate-700 mb-1">Enter Manager PIN / Password to confirm</label>
               <input
                 type="password"
-                inputMode="numeric"
-                maxLength={8}
+                maxLength={MAX_PIN_LENGTH}
                 autoFocus
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setPin(e.target.value.replace(/\s+/g, '').slice(0, MAX_PIN_LENGTH))}
                 placeholder="••••"
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 text-center text-base tracking-[0.35em] font-mono-num"
+                className={`w-full px-3 py-2 rounded-xl border border-slate-300 text-center font-mono-num ${
+                  pin.length > 10 ? 'text-sm tracking-[0.15em]' : 'text-base tracking-[0.3em]'
+                }`}
               />
             </div>
           )}

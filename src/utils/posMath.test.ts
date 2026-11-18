@@ -217,10 +217,21 @@ test('barcode validation, GS1 GTIN extraction, and expiry status work accurately
   assert.equal(expiryInfo({ expiry: '2027-05-01' }, 30, today).status, 'ok');
 });
 
-test('security helpers: weak PIN detection, safeEqual, CSV escaping, backup validation', () => {
+test('security helpers: weak PIN detection, safeEqual, CSV escaping, backup validation', async () => {
+  const { isValidPinOrPassword, MAX_PIN_LENGTH } = await import('./pinSecurity');
+  assert.equal(MAX_PIN_LENGTH, 15);
+  assert.equal(isValidPinOrPassword('4829'), true);
+  assert.equal(isValidPinOrPassword('482917365019283'), true);
+  assert.equal(isValidPinOrPassword('OmniMart2026!PH'), true);
+  assert.equal(isValidPinOrPassword('1234567890123456'), false);
+  assert.equal(isValidPinOrPassword('123'), false);
   assert.equal(isWeakPin('1234'), true);
   assert.equal(isWeakPin('0000'), true);
+  assert.equal(isWeakPin('123456789012345'), true);
+  assert.equal(isWeakPin('password123'), true);
   assert.equal(isWeakPin('4829'), false);
+  assert.equal(isWeakPin('482917365019283'), false);
+  assert.equal(isWeakPin('OmniMart2026!PH'), false);
   assert.equal(safeEqual('4829', '4829'), true);
   assert.equal(safeEqual('4829', '4820'), false);
   assert.equal(escapeCsvCell('=CMD()'), '"\'=CMD()"');
@@ -747,6 +758,13 @@ test('PBKDF2-SHA512 310k PIN hashing, legacy SHA-256/plaintext auto-upgrade, and
     const badRes = await verifyPinWithSettings('000000', s512);
     assert.equal(badRes.ok, false);
     assert.match(badRes.error || '', /4 tries left/);
+
+    // 2b. 15-character alphanumeric password hashes and verifies cleanly with PBKDF2-SHA512
+    const sLong = await storePinInSettings({ ...DEFAULT_SETTINGS }, 'OmniMart2026!PH', false);
+    const longOk = await verifyPinWithSettings('OmniMart2026!PH', sLong);
+    assert.equal(longOk.ok, true);
+    const longBad = await verifyPinWithSettings('OmniMart2026!PX', sLong);
+    assert.equal(longBad.ok, false);
 
     // 3. Legacy PBKDF2-SHA256 150k auto-upgrades transparently to PBKDF2-SHA512 310k
     const legacySalt = bytesToB64(new Uint8Array(16).fill(7));
