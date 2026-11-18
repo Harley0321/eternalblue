@@ -106,6 +106,9 @@ const STRIPPED_CREDENTIAL_KEYS = new Set([
   'passkeyPubKeySpki',
   'passkeyLabel',
   'passkeyRegisteredAt',
+  'syncStoreId',
+  'syncStoreIdCustomized',
+  'syncEnabled',
   'lastSyncedAt',
   'lastBackup',
 ]);

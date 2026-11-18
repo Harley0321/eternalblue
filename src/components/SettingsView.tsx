@@ -59,7 +59,7 @@ import {
   type SecurityChainReport,
 } from '../utils/cryptoVault';
 import { formatPeso, safeJsonParse, validateBackupPayload } from '../utils/posMath';
-import { getStorageBreakdown, getUsedStorageBytes } from '../utils/storage';
+import { getOrCreateDeviceSyncId, getStorageBreakdown, getUsedStorageBytes } from '../utils/storage';
 import {
   CLOUDFLARE_DASHBOARD_URL,
   CLOUDFLARE_VARIABLES_URL,
@@ -152,7 +152,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [form, setForm] = useState<StoreSettings>(() => ({ ...settings }));
   const [checkpointLabel, setCheckpointLabel] = useState('');
   const [syncStoreIdInput, setSyncStoreIdInput] = useState(() =>
-    normalizeSyncStoreId(settings.syncStoreId),
+    normalizeSyncStoreId(settings.syncStoreId || getOrCreateDeviceSyncId()),
   );
   const [showSchemaSql, setShowSchemaSql] = useState(false);
   const [showGithubGuide, setShowGithubGuide] = useState(false);
@@ -161,7 +161,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [bundleBusy, setBundleBusy] = useState(false);
 
   useEffect(() => {
-    setSyncStoreIdInput(normalizeSyncStoreId(settings.syncStoreId));
+    setSyncStoreIdInput(normalizeSyncStoreId(settings.syncStoreId || getOrCreateDeviceSyncId()));
   }, [settings.syncStoreId]);
 
   useEffect(() => {
@@ -1449,13 +1449,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </span>
                 </div>
                 <span className="text-[11px] font-semibold text-slate-500">
-                  {!isOnline
-                    ? 'Device offline — queued locally'
-                    : syncStatus?.configured && syncStatus?.schemaReady
-                      ? 'Ready to sync'
-                      : syncStatus?.configured
-                        ? 'Schema setup needed'
-                        : 'Server key pending'}
+                  {settings.syncEnabled !== true
+                    ? 'Device isolated (auto-sync off)'
+                    : !isOnline
+                      ? 'Device offline — queued locally'
+                      : syncStatus?.configured && syncStatus?.schemaReady
+                        ? 'This device synced'
+                        : syncStatus?.configured
+                          ? 'Schema setup needed'
+                          : 'Server key pending'}
                 </span>
               </div>
 
@@ -1506,7 +1508,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end text-xs">
                 <div>
                   <label htmlFor="sync-store-id-input" className="block font-semibold text-slate-700 mb-1">
-                    Store Sync ID
+                    Device Sync ID <span className="font-normal text-slate-500">(separated per device)</span>
                   </label>
                   <div className="flex gap-1.5">
                     <input
@@ -1514,16 +1516,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       type="text"
                       value={syncStoreIdInput}
                       onChange={(e) => setSyncStoreIdInput(e.target.value)}
-                      placeholder="main-store"
+                      placeholder="pc-xxxxxxxx"
                       className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-slate-300 text-xs font-mono-num focus:border-emerald-600 focus:outline-none"
                     />
                     <button
                       type="button"
                       onClick={() => {
-                        const normalized = normalizeSyncStoreId(syncStoreIdInput);
+                        const normalized = normalizeSyncStoreId(syncStoreIdInput || getOrCreateDeviceSyncId());
                         setSyncStoreIdInput(normalized);
-                        onSaveSettings({ ...settings, syncStoreId: normalized });
-                        onToast(`Store Sync ID set to "${normalized}"`, 'success');
+                        onSaveSettings({ ...settings, syncStoreId: normalized, syncStoreIdCustomized: true });
+                        onToast(`Device Sync ID set to "${normalized}"`, 'success');
                       }}
                       className="px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer shrink-0"
                     >
@@ -1535,17 +1537,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700 py-2">
                   <input
                     type="checkbox"
-                    checked={settings.syncEnabled !== false}
+                    checked={settings.syncEnabled === true}
                     onChange={(e) => {
                       onSaveSettings({ ...settings, syncEnabled: e.target.checked });
                       onToast(
-                        e.target.checked ? 'Auto-sync with Supabase enabled' : 'Auto-sync paused (manual sync only)',
+                        e.target.checked
+                          ? 'Auto-sync enabled for this device only'
+                          : 'Device isolated — auto-sync disabled',
                         'success',
                       );
                     }}
                     className="w-4 h-4 accent-emerald-600"
                   />
-                  <span>Auto-sync changes while online</span>
+                  <span>Auto-sync this device only (isolated ID)</span>
                 </label>
               </div>
 

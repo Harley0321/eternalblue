@@ -52,6 +52,7 @@ import {
   verifySecurityChain,
 } from './utils/cryptoVault';
 import {
+  getOrCreateDeviceSyncId,
   loadConfigHistoryFromStorage,
   loadHeldFromStorage,
   loadProductsFromStorage,
@@ -525,7 +526,7 @@ export default function App() {
         }
 
         const cur = syncStateRef.current;
-        const storeId = normalizeSyncStoreId(cur.settings.syncStoreId);
+        const storeId = normalizeSyncStoreId(cur.settings.syncStoreId || getOrCreateDeviceSyncId());
 
         if (mode === 'push') {
           const { syncedAt } = await pushStoreToSupabase({
@@ -639,14 +640,14 @@ export default function App() {
     [applyReconciledToState, refreshSyncStatus, syncBusy, toast],
   );
 
-  // Check Supabase status on mount & run initial silent merge if ready
+  // Check Supabase status on mount & run initial silent merge ONLY if this device explicitly enabled sync
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const status = await refreshSyncStatus();
       if (cancelled) return;
       syncBootstrappedRef.current = true;
-      if (status?.configured && status.schemaReady && syncStateRef.current.settings.syncEnabled !== false && isOnline) {
+      if (status?.configured && status.schemaReady && syncStateRef.current.settings.syncEnabled === true && isOnline) {
         await handleSyncWithSupabase('merge', true);
       }
     })();
@@ -655,11 +656,11 @@ export default function App() {
     };
   }, [refreshSyncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-sync debounced push on local data mutations
+  // Auto-sync debounced push on local data mutations (strictly opt-in per device)
   useEffect(() => {
     if (!syncBootstrappedRef.current) return;
     if (suppressAutoSyncRef.current) return;
-    if (settings.syncEnabled === false) return;
+    if (settings.syncEnabled !== true) return;
     if (!syncStatus?.configured || !syncStatus.schemaReady) return;
     if (!isOnline) {
       setPendingCloudPush(true);
@@ -672,13 +673,13 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [products, sales, heldOrders, stockLog, settings.storeName, settings.syncStoreId, settings.syncEnabled, isOnline, syncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Automatically reconcile when transitioning from offline -> online
+  // Automatically reconcile when transitioning from offline -> online (only when this device opted in)
   useEffect(() => {
     const wasOnline = prevOnlineRef.current;
     prevOnlineRef.current = isOnline;
-    if (!wasOnline && isOnline && syncStatus?.configured && syncStatus.schemaReady && settings.syncEnabled !== false) {
+    if (!wasOnline && isOnline && syncStatus?.configured && syncStatus.schemaReady && settings.syncEnabled === true) {
       void handleSyncWithSupabase('merge', true);
-    } else if (!wasOnline && isOnline && pendingCloudPush) {
+    } else if (!wasOnline && isOnline && pendingCloudPush && settings.syncEnabled === true) {
       void handleSyncWithSupabase('merge', true);
     }
   }, [isOnline, pendingCloudPush, settings.syncEnabled, syncStatus]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1554,7 +1555,7 @@ export default function App() {
       updateSales(() => payload.sales);
       updateHeld(() => payload.heldOrders);
       if (payload.settings) {
-        // Never overwrite current device Manager PIN or FIDO2 Passkey during restore
+        // Never overwrite current device Manager PIN, Passkey, or device-isolated sync config during restore
         const mergedSettings: StoreSettings = {
           ...DEFAULT_SETTINGS,
           ...payload.settings,
@@ -1568,6 +1569,9 @@ export default function App() {
           passkeyPubKeySpki: settings.passkeyPubKeySpki,
           passkeyLabel: settings.passkeyLabel,
           passkeyRegisteredAt: settings.passkeyRegisteredAt,
+          syncStoreId: settings.syncStoreId || getOrCreateDeviceSyncId(),
+          syncStoreIdCustomized: settings.syncStoreIdCustomized ?? false,
+          syncEnabled: settings.syncEnabled === true,
         };
         updateSettings(mergedSettings);
       }
@@ -1642,7 +1646,12 @@ export default function App() {
       setCart([]);
       setStockLog([]);
       saveStockLogToStorage([]);
-      updateSettings({ ...DEFAULT_SETTINGS });
+      updateSettings({
+        ...DEFAULT_SETTINGS,
+        syncStoreId: getOrCreateDeviceSyncId(),
+        syncStoreIdCustomized: false,
+        syncEnabled: false,
+      });
       setSettingsUnlocked(false);
       setTerminalLocked(false);
       setActiveTab('pos');

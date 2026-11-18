@@ -472,3 +472,29 @@ test('handleSyncApiRequest accepts SUPABASE_SECRET_KEY and SUPABASE_KEY aliases'
     assert.equal(body.schemaReady, true);
   }
 });
+
+test('sanitizeSettingsForSync and mergeSettingsFromCloud keep syncStoreId and syncEnabled strictly per-device', () => {
+  const local: StoreSettings = {
+    ...DEFAULT_SETTINGS,
+    syncStoreId: 'tablet-a1b2c3d4',
+    syncStoreIdCustomized: true,
+    syncEnabled: false,
+  };
+
+  const sanitized = sanitizeSettingsForSync(local);
+  assert.equal('syncStoreId' in sanitized, false);
+  assert.equal('syncStoreIdCustomized' in sanitized, false);
+  assert.equal('syncEnabled' in sanitized, false);
+
+  const merged = mergeSettingsFromCloud(
+    local,
+    {
+      storeName: 'Remote Name',
+      syncStoreId: 'pc-99999999',
+      syncEnabled: true,
+    },
+    'pull',
+  );
+  assert.equal(merged.syncStoreId, 'tablet-a1b2c3d4');
+  assert.equal(merged.syncEnabled, false);
+});

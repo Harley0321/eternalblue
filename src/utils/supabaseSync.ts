@@ -115,6 +115,9 @@ export interface ReconcileResult {
 
 const LOCAL_ONLY_SETTINGS_KEYS = new Set<string>([
   ...PIN_SETTING_KEYS,
+  'syncStoreId',
+  'syncStoreIdCustomized',
+  'syncEnabled',
   'lastSyncedAt',
   'lastBackup',
 ]);
@@ -166,13 +169,10 @@ export function mergeSettingsFromCloud(
   return {
     ...base,
     ...preservedLocal,
-    syncStoreId: normalizeSyncStoreId(localSettings.syncStoreId || (cleanCloud.syncStoreId as string | undefined)),
-    syncEnabled:
-      typeof localSettings.syncEnabled === 'boolean'
-        ? localSettings.syncEnabled
-        : typeof cleanCloud.syncEnabled === 'boolean'
-          ? cleanCloud.syncEnabled
-          : true,
+    syncStoreId: localSettings.syncStoreId
+      ? normalizeSyncStoreId(localSettings.syncStoreId)
+      : normalizeSyncStoreId(cleanCloud.syncStoreId as string | undefined),
+    syncEnabled: typeof localSettings.syncEnabled === 'boolean' ? localSettings.syncEnabled : false,
   } as StoreSettings;
 }
 

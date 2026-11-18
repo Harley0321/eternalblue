@@ -7,12 +7,14 @@ import {
   computeReorderList,
   computeSalesStats,
   DEFAULT_SETTINGS,
+  detectDeviceFormFactor,
   eanCheckOk,
   escapeCsvCell,
   expiryInfo,
   extractGs1Gtin,
   findProductByBarcode,
   fromCents,
+  generateDeviceSyncId,
   getLinePrice,
   isStrongRead,
   lineCents,
@@ -1358,4 +1360,33 @@ test('Store AI handles Closing/EOD report and safe POS/Stock quick actions witho
   assert.equal(JSON.stringify(cart), snapC);
 });
 
+test('device isolation defaults disable cross-device sync and separate mobile, tablet, and PC IDs', () => {
+  assert.equal(DEFAULT_SETTINGS.syncEnabled, false);
+  assert.equal(DEFAULT_SETTINGS.syncStoreId, '');
 
+  assert.equal(
+    detectDeviceFormFactor('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148', 5, 390),
+    'mobile',
+  );
+  assert.equal(
+    detectDeviceFormFactor('Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)', 5, 820),
+    'tablet',
+  );
+  assert.equal(
+    detectDeviceFormFactor('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5, 1024),
+    'tablet',
+  );
+  assert.equal(
+    detectDeviceFormFactor('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0', 0, 1920),
+    'pc',
+  );
+
+  const mId = generateDeviceSyncId('mobile');
+  const tId = generateDeviceSyncId('tablet');
+  const pId = generateDeviceSyncId('pc');
+  assert.match(mId, /^mobile-[a-z0-9]{8}$/);
+  assert.match(tId, /^tablet-[a-z0-9]{8}$/);
+  assert.match(pId, /^pc-[a-z0-9]{8}$/);
+  assert.notEqual(mId, tId);
+  assert.notEqual(tId, pId);
+});
