@@ -93,13 +93,72 @@ export interface StoreSettings {
   lastBackup: string;
   scDiscountCap: number;
   receiptWidth?: '80mm' | '58mm';
-  // PIN fields (legacy adminPin or salted PBKDF2 fields)
+  // PIN & Hardware Security fields (legacy adminPin, PBKDF2-SHA256, or PBKDF2-SHA512)
   adminPin?: string;
   adminPinHash?: string;
   adminPinSalt?: string;
   adminPinIter?: number;
+  adminPinAlgo?: 'PBKDF2-SHA256' | 'PBKDF2-SHA512';
   adminPinWeak?: boolean;
+  autoLockMinutes?: number;
+  lockWholePos?: boolean;
+  // Local WebAuthn / FIDO2 Passkey credential (ECDSA P-256 SPKI verified client-side)
+  passkeyCredId?: string;
+  passkeyPubKeySpki?: string;
+  passkeyLabel?: string;
+  passkeyRegisteredAt?: string;
   [key: string]: unknown;
+}
+
+export type SecuritySeverity = 'info' | 'warning' | 'critical';
+
+export type SecurityEventType =
+  | 'PIN_SET'
+  | 'PIN_UPGRADED'
+  | 'PIN_FAIL'
+  | 'PIN_LOCKOUT'
+  | 'SETTINGS_UNLOCK'
+  | 'SETTINGS_LOCK'
+  | 'POS_LOCK'
+  | 'POS_UNLOCK'
+  | 'PASSKEY_ENROLLED'
+  | 'PASSKEY_UNLOCK'
+  | 'PASSKEY_REMOVED'
+  | 'SALE_VOIDED'
+  | 'BACKUP_EXPORTED'
+  | 'BACKUP_ENCRYPTED_EXPORTED'
+  | 'BACKUP_RESTORED'
+  | 'DATA_CLEARED'
+  | 'FACTORY_RESET'
+  | 'TAMPER_ALERT';
+
+export interface SecurityLogEntry {
+  id: string;
+  seq: number;
+  timestamp: string;
+  event: SecurityEventType;
+  severity: SecuritySeverity;
+  summary: string;
+  prevHash: string;
+  entryHash: string;
+  hmacSig?: string;
+}
+
+export interface EncryptedVaultEnvelope {
+  app: 'omnimart-ph-pos';
+  format: 'omnimart-aes256gcm-v2';
+  kdf: 'PBKDF2-SHA512+HKDF-SHA256';
+  iterations: number;
+  salt: string;
+  hkdfSalt: string;
+  iv: string;
+  ciphertext: string;
+  exportedAt: string;
+  summary: {
+    products: number;
+    sales: number;
+    heldOrders: number;
+  };
 }
 
 export interface StockLogEntry {

@@ -19,6 +19,7 @@ export const STORAGE_KEYS = {
   SCANPREFS: 'omnimart_ph_scanprefs_v1',
   STOCKLOG: 'omnimart_ph_stocklog_v1', // strictly additive log; never modifies existing keys
   CONFIG_HISTORY: 'omnimart_ph_config_history_v1', // strictly additive configuration revision history
+  SECURITY_LOG: 'omnimart_ph_seclog_v1', // strictly additive tamper-evident hash-chained audit ledger
 } as const;
 
 export const DEFAULT_SETTINGS: StoreSettings = {
@@ -37,6 +38,8 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   lastBackup: '',
   scDiscountCap: 125,
   receiptWidth: '80mm',
+  autoLockMinutes: 5,
+  lockWholePos: false,
 };
 
 export const BASE_CATEGORIES = [
@@ -891,6 +894,15 @@ export function buildDefaultCatalog(): Product[] {
     wholesaleMinQty: row[6],
     stock: row[7],
   }));
+}
+
+export function safeJsonParse<T = unknown>(raw: string): T {
+  return JSON.parse(raw, (key, value) => {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      return undefined;
+    }
+    return value;
+  }) as T;
 }
 
 export function validateBackupPayload(data: unknown): { ok: true; data: { products: Product[]; sales: SaleRecord[]; heldOrders: HeldOrder[]; settings?: Partial<StoreSettings>; exportedAt?: string } } | { ok: false; error: string } {

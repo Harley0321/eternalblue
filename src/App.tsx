@@ -8,6 +8,9 @@ import type {
   Product,
   SaleRecord,
   ScannerMode,
+  SecurityEventType,
+  SecurityLogEntry,
+  SecuritySeverity,
   StockLogEntry,
   StoreSettings,
   TabName,
@@ -42,16 +45,23 @@ import { warmUpScannerEngine } from './utils/scannerEngine';
 import { APP_VERSION } from './version';
 import { pinIsSet } from './utils/pinSecurity';
 import {
+  createSecurityLogEntry,
+  ensureDeviceHmacKey,
+  verifySecurityChain,
+} from './utils/cryptoVault';
+import {
   loadConfigHistoryFromStorage,
   loadHeldFromStorage,
   loadProductsFromStorage,
   loadSalesFromStorage,
+  loadSecurityLogFromStorage,
   loadSettingsFromStorage,
   loadStockLogFromStorage,
   saveConfigHistoryToStorage,
   saveHeldToStorage,
   saveProductsToStorage,
   saveSalesToStorage,
+  saveSecurityLogToStorage,
   saveSettingsToStorage,
   saveStockLogToStorage,
 } from './utils/storage';
@@ -120,8 +130,15 @@ export default function App() {
   const [isSeniorPwd, setIsSeniorPwd] = useState(false);
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
 
-  // Settings lock session
+  // Security & Lock session
+  const [securityLog, setSecurityLog] = useState<SecurityLogEntry[]>(() => loadSecurityLogFromStorage());
+  const securityLogRef = useRef<SecurityLogEntry[]>(securityLog);
+  securityLogRef.current = securityLog;
+  const secQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [deviceKeyReady, setDeviceKeyReady] = useState(false);
+
   const [settingsUnlocked, setSettingsUnlocked] = useState(false);
+  const [terminalLocked, setTerminalLocked] = useState(false);
   const [pinModal, setPinModal] = useState<{
     open: boolean;
     mode: 'unlock' | 'setup';
@@ -205,6 +222,49 @@ export default function App() {
     }, 1200);
     return () => window.clearTimeout(tid);
   }, []);
+
+  const logSecurityEvent = useCallback(
+    (event: SecurityEventType, summary: string, severity: SecuritySeverity = 'info'): Promise<void> => {
+      const task = secQueueRef.current.then(async () => {
+        const entry = await createSecurityLogEntry(securityLogRef.current, {
+          event,
+          severity,
+          summary,
+        });
+        const next = [entry, ...securityLogRef.current].slice(0, 250);
+        securityLogRef.current = next;
+        setSecurityLog(next);
+        saveSecurityLogToStorage(next);
+      });
+      secQueueRef.current = task.catch(() => {});
+      return task;
+    },
+    [],
+  );
+
+  // Initialize non-extractable IndexedDB HMAC device keystore & verify stored security chain on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const key = await ensureDeviceHmacKey();
+      if (!cancelled) setDeviceKeyReady(Boolean(key));
+      const existing = securityLogRef.current;
+      if (existing.length > 0) {
+        const report = await verifySecurityChain(existing);
+        if (!cancelled && !report.valid) {
+          toast('Security ledger integrity alert detected in Settings', 'warning');
+          await logSecurityEvent(
+            'TAMPER_ALERT',
+            `Hash/HMAC mismatch detected on startup (seq ${[...report.brokenSeqs, ...report.hmacMismatches].join(', ')})`,
+            'critical',
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [logSecurityEvent, toast]);
 
   const productMap = useMemo(() => buildProductMap(products), [products]);
 
@@ -330,21 +390,43 @@ export default function App() {
     });
   }, []);
 
-  // Settings 5-minute inactivity auto-lock
-  const lastSettingsActivityRef = useRef(Date.now());
+  const handleLockTerminal = useCallback(() => {
+    if (!pinIsSet(settings)) return;
+    setSettingsUnlocked(false);
+    setActiveTab((prev) => (prev === 'settings' ? 'pos' : prev));
+    setTerminalLocked(true);
+    setPinModal((p) => ({ ...p, open: false }));
+    void logSecurityEvent('POS_LOCK', 'Terminal locked manually by operator', 'info');
+    toast('Terminal locked', 'success');
+  }, [logSecurityEvent, settings, toast]);
+
+  // Configurable inactivity auto-lock (Settings-only or Whole-POS)
+  const lastActivityRef = useRef(Date.now());
   useEffect(() => {
-    if (activeTab !== 'settings' || !settingsUnlocked || !pinIsSet(settings)) return;
-    lastSettingsActivityRef.current = Date.now();
+    const mins = Number(settings.autoLockMinutes ?? 5);
+    if (!pinIsSet(settings) || mins <= 0 || terminalLocked) return;
+    const monitorWholePos = Boolean(settings.lockWholePos);
+    if (!monitorWholePos && (activeTab !== 'settings' || !settingsUnlocked)) return;
+
+    lastActivityRef.current = Date.now();
     const bump = () => {
-      lastSettingsActivityRef.current = Date.now();
+      lastActivityRef.current = Date.now();
     };
     window.addEventListener('pointerdown', bump);
     window.addEventListener('keydown', bump);
     const id = setInterval(() => {
-      if (Date.now() - lastSettingsActivityRef.current > 5 * 60 * 1000) {
-        setSettingsUnlocked(false);
-        setActiveTab('pos');
-        toast('Settings locked after 5 minutes of inactivity', 'warning');
+      if (Date.now() - lastActivityRef.current > mins * 60 * 1000) {
+        if (monitorWholePos) {
+          setSettingsUnlocked(false);
+          setTerminalLocked(true);
+          void logSecurityEvent('POS_LOCK', `Terminal auto-locked after ${mins} min idle`, 'info');
+          toast(`Terminal auto-locked (${mins}m idle)`, 'warning');
+        } else {
+          setSettingsUnlocked(false);
+          setActiveTab('pos');
+          void logSecurityEvent('SETTINGS_LOCK', `Settings auto-locked after ${mins} min idle`, 'info');
+          toast(`Settings locked after ${mins}m of inactivity`, 'warning');
+        }
       }
     }, 15000);
     return () => {
@@ -352,7 +434,7 @@ export default function App() {
       window.removeEventListener('pointerdown', bump);
       window.removeEventListener('keydown', bump);
     };
-  }, [activeTab, settingsUnlocked, settings, toast]);
+  }, [activeTab, settingsUnlocked, settings, terminalLocked, logSecurityEvent, toast]);
 
   // Cart manipulation
   const addQtyToCart = useCallback(
@@ -579,6 +661,13 @@ export default function App() {
         }
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+        if (pinIsSet(settings) && !terminalLocked) {
+          e.preventDefault();
+          handleLockTerminal();
+        }
+        return;
+      }
       if (e.key === 'F9') {
         if (activeTab === 'pos') {
           e.preventDefault();
@@ -587,6 +676,7 @@ export default function App() {
         return;
       }
       if (e.key === 'Escape') {
+        if (terminalLocked) return;
         setCheckoutOpen(false);
         setReceiptSale(null);
         setReceiptReading(null);
@@ -645,7 +735,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTab, cart.length, products, addQtyToCart, handleSetPriceMode, priceMode, toast]);
+  }, [activeTab, cart.length, products, addQtyToCart, handleSetPriceMode, priceMode, settings, terminalLocked, handleLockTerminal, toast]);
 
   // Complete sale
   const handleCompleteSale = (payload: {
@@ -1077,6 +1167,11 @@ export default function App() {
       ),
     );
 
+    void logSecurityEvent(
+      'SALE_VOIDED',
+      `Voided receipt ${receiptNo} (${formatPeso(target.grandTotal)}) — ${reason}`,
+      'warning',
+    );
     setVoidTargetSale(null);
     toast(`Receipt ${receiptNo} voided and stock restored`, 'warning');
   };
@@ -1095,7 +1190,7 @@ export default function App() {
       updateSales(() => payload.sales);
       updateHeld(() => payload.heldOrders);
       if (payload.settings) {
-        // Never overwrite current device Manager PIN during restore
+        // Never overwrite current device Manager PIN or FIDO2 Passkey during restore
         const mergedSettings: StoreSettings = {
           ...DEFAULT_SETTINGS,
           ...payload.settings,
@@ -1103,11 +1198,21 @@ export default function App() {
           adminPinHash: settings.adminPinHash,
           adminPinSalt: settings.adminPinSalt,
           adminPinIter: settings.adminPinIter,
+          adminPinAlgo: settings.adminPinAlgo,
           adminPinWeak: settings.adminPinWeak,
+          passkeyCredId: settings.passkeyCredId,
+          passkeyPubKeySpki: settings.passkeyPubKeySpki,
+          passkeyLabel: settings.passkeyLabel,
+          passkeyRegisteredAt: settings.passkeyRegisteredAt,
         };
         updateSettings(mergedSettings);
       }
-      toast('Backup restored (device PIN preserved)', 'success');
+      void logSecurityEvent(
+        'BACKUP_RESTORED',
+        `Replaced device store from backup (${payload.products.length} SKUs, ${payload.sales.length} sales); credentials preserved`,
+        'warning',
+      );
+      toast('Backup restored (device PIN & Passkeys preserved)', 'success');
       return;
     }
 
@@ -1136,11 +1241,19 @@ export default function App() {
       return [...prev, ...payload.heldOrders.filter((h) => !ids.has(h.id))];
     });
 
+    void logSecurityEvent(
+      'BACKUP_RESTORED',
+      `Merged backup (+${addedProds} products, +${addedSales} sales)`,
+      'info',
+    );
     toast(`Merged +${addedProds} products and +${addedSales} receipts safely`, 'success');
   };
 
   const handleConfirmAction = (upgradedSettings?: StoreSettings) => {
-    if (upgradedSettings) updateSettings(upgradedSettings);
+    if (upgradedSettings) {
+      updateSettings(upgradedSettings);
+      void logSecurityEvent('PIN_UPGRADED', 'Auto-upgraded Manager PIN to PBKDF2-SHA512 (310k)', 'info');
+    }
     if (!confirmState) return;
     const { type, productId } = confirmState;
 
@@ -1155,6 +1268,7 @@ export default function App() {
       toast('Basket cleared', 'warning');
     } else if (type === 'clear-sales') {
       updateSales(() => []);
+      void logSecurityEvent('DATA_CLEARED', `Cleared all sales history (${sales.length} receipts removed)`, 'critical');
       toast('Sales history cleared', 'warning');
     } else if (type === 'factory-reset') {
       const freshCatalog = buildDefaultCatalog();
@@ -1166,7 +1280,9 @@ export default function App() {
       saveStockLogToStorage([]);
       updateSettings({ ...DEFAULT_SETTINGS });
       setSettingsUnlocked(false);
+      setTerminalLocked(false);
       setActiveTab('pos');
+      void logSecurityEvent('FACTORY_RESET', 'Factory reset executed on POS device', 'critical');
       toast('App reset to factory defaults', 'warning');
     }
     setConfirmState(null);
@@ -1180,9 +1296,11 @@ export default function App() {
         storeName={settings.storeName}
         activeTab={activeTab}
         lowStockCount={lowStockCount}
+        hasPin={pinIsSet(settings)}
         onSelectTab={handleSelectTab}
         onOpenSettings={openSettingsTab}
         onOpenAssistant={() => setAssistantOpen(true)}
+        onLockTerminal={handleLockTerminal}
       />
 
       {activeTab === 'pos' && (
@@ -1288,7 +1406,7 @@ export default function App() {
         />
       )}
 
-      {activeTab === 'settings' && (
+      {activeTab === 'settings' && (!pinIsSet(settings) || settingsUnlocked) && (
         <SettingsView
           settings={settings}
           products={products}
@@ -1296,14 +1414,19 @@ export default function App() {
           heldOrders={heldOrders}
           stockLog={stockLog}
           configHistory={configHistory}
+          securityLog={securityLog}
+          deviceKeyReady={deviceKeyReady}
           onSaveSettings={updateSettings}
           onCreateConfigCheckpoint={handleCreateConfigCheckpoint}
           onRollbackConfig={handleRollbackConfig}
           onLockSettings={() => {
             setSettingsUnlocked(false);
             setActiveTab('pos');
+            void logSecurityEvent('SETTINGS_LOCK', 'Manager locked Store Settings manually', 'info');
             toast('Settings locked', 'success');
           }}
+          onLockTerminal={handleLockTerminal}
+          onLogSecurityEvent={logSecurityEvent}
           onApplyRestore={handleApplyRestore}
           onAskClearSales={() =>
             setConfirmState({
@@ -1514,11 +1637,59 @@ export default function App() {
         mode={pinModal.mode}
         settings={settings}
         onClose={() => setPinModal((p) => ({ ...p, open: false }))}
-        onSuccess={(updated) => {
+        onPinFail={(lockedOutNow, ctx) => {
+          void logSecurityEvent(
+            lockedOutNow ? 'PIN_LOCKOUT' : 'PIN_FAIL',
+            `${lockedOutNow ? 'Exponential lockout triggered' : 'Failed PIN attempt'} during ${ctx || 'Settings unlock'}`,
+            lockedOutNow ? 'critical' : 'warning',
+          );
+        }}
+        onSuccess={(updated, meta) => {
           if (updated) updateSettings(updated);
+          if (pinModal.mode === 'setup') {
+            void logSecurityEvent('PIN_SET', 'Created initial PBKDF2-SHA512 (310k) Manager PIN', 'info');
+          } else {
+            if (meta?.upgradedAlgo) {
+              void logSecurityEvent('PIN_UPGRADED', 'Legacy PIN transparently upgraded to PBKDF2-SHA512 (310k)', 'info');
+            }
+            void logSecurityEvent(
+              meta?.viaPasskey ? 'PASSKEY_UNLOCK' : 'SETTINGS_UNLOCK',
+              meta?.viaPasskey ? 'Settings unlocked via FIDO2 Passkey' : 'Settings unlocked via Manager PIN',
+              'info',
+            );
+          }
           setPinModal((p) => ({ ...p, open: false }));
           setSettingsUnlocked(true);
           setActiveTab('settings');
+        }}
+      />
+
+      <PinModal
+        open={terminalLocked}
+        mode="unlock"
+        persistent
+        title="POS Terminal Locked"
+        subtitle="Screen locked. Verify with Manager PIN or registered Passkey to continue."
+        settings={settings}
+        onClose={() => {}}
+        onPinFail={(lockedOutNow, ctx) => {
+          void logSecurityEvent(
+            lockedOutNow ? 'PIN_LOCKOUT' : 'PIN_FAIL',
+            `${lockedOutNow ? 'Lockout triggered' : 'Failed PIN attempt'} at ${ctx || 'Terminal lockscreen'}`,
+            lockedOutNow ? 'critical' : 'warning',
+          );
+        }}
+        onSuccess={(updated, meta) => {
+          if (updated) updateSettings(updated);
+          if (meta?.upgradedAlgo) {
+            void logSecurityEvent('PIN_UPGRADED', 'Legacy PIN transparently upgraded to PBKDF2-SHA512 (310k)', 'info');
+          }
+          void logSecurityEvent(
+            meta?.viaPasskey ? 'PASSKEY_UNLOCK' : 'POS_UNLOCK',
+            meta?.viaPasskey ? 'Terminal unlocked via FIDO2 Passkey' : 'Terminal unlocked via Manager PIN',
+            'info',
+          );
+          setTerminalLocked(false);
         }}
       />
 
@@ -1526,6 +1697,13 @@ export default function App() {
         sale={voidTargetSale}
         settings={settings}
         onClose={() => setVoidTargetSale(null)}
+        onPinFail={(lockedOutNow, ctx) => {
+          void logSecurityEvent(
+            lockedOutNow ? 'PIN_LOCKOUT' : 'PIN_FAIL',
+            `${lockedOutNow ? 'Lockout triggered' : 'Failed PIN attempt'} on ${ctx || 'Sale void'}`,
+            lockedOutNow ? 'critical' : 'warning',
+          );
+        }}
         onConfirmVoid={handleConfirmVoid}
       />
 
@@ -1538,6 +1716,13 @@ export default function App() {
         requirePin={confirmState?.requirePin}
         settings={settings}
         onClose={() => setConfirmState(null)}
+        onPinFail={(lockedOutNow, ctx) => {
+          void logSecurityEvent(
+            lockedOutNow ? 'PIN_LOCKOUT' : 'PIN_FAIL',
+            `${lockedOutNow ? 'Lockout triggered' : 'Failed PIN attempt'} on ${ctx || 'Protected action'}`,
+            lockedOutNow ? 'critical' : 'warning',
+          );
+        }}
         onConfirm={handleConfirmAction}
       />
 

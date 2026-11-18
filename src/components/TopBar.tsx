@@ -1,23 +1,27 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, Boxes, ChartLine, Settings, ShoppingBasket, Store } from 'lucide-react';
+import { Bot, Boxes, ChartLine, Lock, Settings, ShoppingBasket, Store } from 'lucide-react';
 import type { TabName } from '../types';
 
 interface TopBarProps {
   storeName: string;
   activeTab: TabName;
   lowStockCount: number;
+  hasPin?: boolean;
   onSelectTab: (tab: TabName) => void;
   onOpenSettings: () => void;
   onOpenAssistant: () => void;
+  onLockTerminal?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
   storeName,
   activeTab,
   lowStockCount,
+  hasPin,
   onSelectTab,
   onOpenSettings,
   onOpenAssistant,
+  onLockTerminal,
 }) => {
   const [clock, setClock] = useState(() =>
     new Date().toLocaleTimeString('en-PH', { hour12: true }),
@@ -116,7 +120,21 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
       </nav>
 
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        {hasPin && onLockTerminal && (
+          <button
+            type="button"
+            onClick={onLockTerminal}
+            aria-label="Lock terminal"
+            data-testid="lock-terminal-btn"
+            title="Lock Terminal (Ctrl+L)"
+            className="h-9 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+          >
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden lg:inline">Lock</span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={onOpenAssistant}

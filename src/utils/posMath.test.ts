@@ -701,7 +701,224 @@ test('cashier multiplier parser, product Map lookup, and hourly sales series wor
   assert.equal(hourly.find((h) => h.hr === 11)?.sales, 1200);
 });
 
+test('PBKDF2-SHA512 310k PIN hashing, legacy SHA-256/plaintext auto-upgrade, and safeJsonParse defense', async () => {
+  const { safeJsonParse } = await import('./posMath');
+  const {
+    bytesToB64,
+    derivePinHash,
+    getPinSecurityMeta,
+    PIN_ALGO_LATEST,
+    PIN_ITER_LATEST,
+    PIN_ITER_LEGACY,
+    storePinInSettings,
+    verifyPinWithSettings,
+  } = await import('./pinSecurity');
 
+  // Lightweight localStorage polyfill for Node unit test environment
+  const mem = new Map<string, string>();
+  const origLs = (globalThis as Record<string, unknown>).localStorage;
+  (globalThis as Record<string, unknown>).localStorage = {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => mem.set(k, String(v)),
+    removeItem: (k: string) => mem.delete(k),
+  };
 
+  try {
+    // 1. Prototype pollution defense
+    const poisoned = '{"ok":1,"__proto__":{"polluted":true},"constructor":{"bad":1},"nested":{"a":2}}';
+    const parsed = safeJsonParse<Record<string, unknown>>(poisoned);
+    assert.equal(parsed.ok, 1);
+    assert.equal(({} as Record<string, unknown>).polluted, undefined);
+    assert.equal(Object.prototype.hasOwnProperty.call(parsed, '__proto__'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(parsed, 'constructor'), false);
 
+    // 2. Fresh PIN uses PBKDF2-SHA512 @ 310,000 iterations and strips plaintext
+    const s512 = await storePinInSettings({ ...DEFAULT_SETTINGS }, '482917', false);
+    assert.equal(s512.adminPin, undefined);
+    assert.equal(s512.adminPinAlgo, PIN_ALGO_LATEST);
+    assert.equal(s512.adminPinIter, PIN_ITER_LATEST);
+    const metaLatest = getPinSecurityMeta(s512);
+    assert.equal(metaLatest.isLatestAlgo, true);
+
+    const okRes = await verifyPinWithSettings('482917', s512);
+    assert.equal(okRes.ok, true);
+    assert.equal(okRes.upgradedSettings, undefined);
+
+    const badRes = await verifyPinWithSettings('000000', s512);
+    assert.equal(badRes.ok, false);
+    assert.match(badRes.error || '', /4 tries left/);
+
+    // 3. Legacy PBKDF2-SHA256 150k auto-upgrades transparently to PBKDF2-SHA512 310k
+    const legacySalt = bytesToB64(new Uint8Array(16).fill(7));
+    const legacyHash = await derivePinHash('5931', legacySalt, PIN_ITER_LEGACY, 'PBKDF2-SHA256');
+    const sLegacy256 = {
+      ...DEFAULT_SETTINGS,
+      adminPinHash: legacyHash,
+      adminPinSalt: legacySalt,
+      adminPinIter: PIN_ITER_LEGACY,
+    };
+    assert.equal(getPinSecurityMeta(sLegacy256).algo, 'PBKDF2-SHA256');
+    const upg1 = await verifyPinWithSettings('5931', sLegacy256);
+    assert.equal(upg1.ok, true);
+    assert.equal(upg1.upgradedAlgo, true);
+    assert.equal(upg1.upgradedSettings?.adminPinAlgo, PIN_ALGO_LATEST);
+    assert.equal(upg1.upgradedSettings?.adminPinIter, PIN_ITER_LATEST);
+
+    // 4. Legacy plaintext adminPin auto-upgrades transparently
+    const sPlain = { ...DEFAULT_SETTINGS, adminPin: '7410' };
+    const upg2 = await verifyPinWithSettings('7410', sPlain);
+    assert.equal(upg2.ok, true);
+    assert.equal(upg2.upgradedAlgo, true);
+    assert.equal(upg2.upgradedSettings?.adminPin, undefined);
+    assert.equal(upg2.upgradedSettings?.adminPinAlgo, PIN_ALGO_LATEST);
+  } finally {
+    (globalThis as Record<string, unknown>).localStorage = origLs;
+  }
+});
+
+test('AES-256-GCM encrypted backup vault, SHA-256 hash-chained audit ledger, and FIDO2 P-256 verification', async () => {
+  const {
+    createSecurityLogEntry,
+    decryptBackupPayload,
+    encryptBackupPayload,
+    evaluatePassphraseStrength,
+    isEncryptedVaultEnvelope,
+    verifySecurityChain,
+    verifyWebAuthnAssertionSignature,
+  } = await import('./cryptoVault');
+  const { bytesToB64 } = await import('./pinSecurity');
+
+  // 1. Passphrase strength checks
+  assert.equal(evaluatePassphraseStrength('1234').ok, false);
+  assert.equal(evaluatePassphraseStrength('password123').ok, false);
+  assert.equal(evaluatePassphraseStrength('OmniMart#2026!Pos').score >= 3, true);
+
+  // 2. Encrypt + Decrypt round-trip + tamper rejection (using 100k test KDF rounds for fast unit test)
+  const catalog = buildDefaultCatalog();
+  const payload = {
+    app: 'omnimart-ph-pos' as const,
+    version: 1,
+    exportedAt: '2026-11-17T12:00:00.000Z',
+    products: catalog.slice(0, 3),
+    sales: [],
+    heldOrders: [],
+    settings: { storeName: 'Vault Tested Store' },
+  };
+
+  const envelope = await encryptBackupPayload(payload, 'SariSari#Vault2026!', 100000);
+  assert.equal(isEncryptedVaultEnvelope(envelope), true);
+  assert.equal(envelope.summary.products, 3);
+
+  const decrypted = await decryptBackupPayload(envelope, 'SariSari#Vault2026!');
+  assert.equal(decrypted.products.length, 3);
+  assert.equal(decrypted.products[0].name, catalog[0].name);
+  assert.equal(decrypted.settings?.storeName, 'Vault Tested Store');
+
+  await assert.rejects(() => decryptBackupPayload(envelope, 'WrongPassphrase!'), /Decryption failed/);
+
+  // Tampering AAD (exportedAt) must fail GCM tag verification
+  await assert.rejects(
+    () => decryptBackupPayload({ ...envelope, exportedAt: '2026-11-18T12:00:00.000Z' }, 'SariSari#Vault2026!'),
+    /Decryption failed/,
+  );
+
+  // 3. SHA-256 hash-chained Security Audit Ledger + tamper detection
+  const e1 = await createSecurityLogEntry([], {
+    event: 'PIN_SET',
+    severity: 'info',
+    summary: 'Initial PIN set',
+    timestamp: '2026-11-17T12:00:00.000Z',
+    signWithHardware: false,
+  });
+  const e2 = await createSecurityLogEntry([e1], {
+    event: 'SALE_VOIDED',
+    severity: 'warning',
+    summary: 'Voided OR-261117-0001',
+    timestamp: '2026-11-17T12:05:00.000Z',
+    signWithHardware: false,
+  });
+  const e3 = await createSecurityLogEntry([e2, e1], {
+    event: 'BACKUP_ENCRYPTED_EXPORTED',
+    severity: 'info',
+    summary: 'Exported AES-256-GCM vault',
+    timestamp: '2026-11-17T12:10:00.000Z',
+    signWithHardware: false,
+  });
+
+  const okChain = await verifySecurityChain([e3, e2, e1]);
+  assert.equal(okChain.valid, true);
+  assert.equal(okChain.verifiedCount, 3);
+
+  // Simulate attacker mutating summary text in localStorage
+  const tampered = [e3, { ...e2, summary: 'Mutated summary' }, e1];
+  const badChain = await verifySecurityChain(tampered);
+  assert.equal(badChain.valid, false);
+  assert.ok(badChain.brokenSeqs.includes(2));
+
+  // 4. WebAuthn / FIDO2 ES256 P-256 client-side signature check with DER -> P1363 conversion
+  const kp = await globalThis.crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify'],
+  );
+  const spkiB64 = bytesToB64(
+    new Uint8Array(await globalThis.crypto.subtle.exportKey('spki', kp.publicKey)),
+  );
+  const challenge = new Uint8Array(32).fill(42);
+  const challengeB64Url = bytesToB64(challenge).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const clientDataJSON = new TextEncoder().encode(
+    JSON.stringify({
+      type: 'webauthn.get',
+      challenge: challengeB64Url,
+      origin: 'http://localhost:3000',
+    }),
+  );
+  const authenticatorData = new Uint8Array(37);
+  authenticatorData[32] = 0x05; // UP | UV
+
+  const clientHash = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', clientDataJSON));
+  const signedBuf = new Uint8Array(authenticatorData.length + clientHash.length);
+  signedBuf.set(authenticatorData, 0);
+  signedBuf.set(clientHash, authenticatorData.length);
+
+  // WebCrypto produces P1363 64-byte (r || s); encode it as ASN.1 DER to test real authenticator DER output
+  const rawSig = new Uint8Array(
+    await globalThis.crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      kp.privateKey,
+      signedBuf,
+    ),
+  );
+  const encodeAsn1Int = (bytes: Uint8Array): number[] => {
+    let i = 0;
+    while (i < bytes.length - 1 && bytes[i] === 0) i++;
+    const trimmed = Array.from(bytes.slice(i));
+    if (trimmed[0] >= 0x80) trimmed.unshift(0);
+    return [0x02, trimmed.length, ...trimmed];
+  };
+  const rAsn = encodeAsn1Int(rawSig.slice(0, 32));
+  const sAsn = encodeAsn1Int(rawSig.slice(32, 64));
+  const derSig = new Uint8Array([0x30, rAsn.length + sAsn.length, ...rAsn, ...sAsn]);
+
+  const fidoOk = await verifyWebAuthnAssertionSignature({
+    spkiB64,
+    authenticatorData,
+    clientDataJSON,
+    derSignature: derSig,
+    expectedChallenge: challenge,
+    expectedOrigin: 'http://localhost:3000',
+  });
+  assert.equal(fidoOk, true);
+
+  // Replay with wrong challenge must fail
+  const fidoReplay = await verifyWebAuthnAssertionSignature({
+    spkiB64,
+    authenticatorData,
+    clientDataJSON,
+    derSignature: derSig,
+    expectedChallenge: new Uint8Array(32).fill(99),
+    expectedOrigin: 'http://localhost:3000',
+  });
+  assert.equal(fidoReplay, false);
+});
 

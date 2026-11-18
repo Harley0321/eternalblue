@@ -1,5 +1,13 @@
-import type { ConfigSnapshot, HeldOrder, Product, SaleRecord, StockLogEntry, StoreSettings } from '../types';
-import { buildDefaultCatalog, DEFAULT_SETTINGS, STORAGE_KEYS } from './posMath';
+import type {
+  ConfigSnapshot,
+  HeldOrder,
+  Product,
+  SaleRecord,
+  SecurityLogEntry,
+  StockLogEntry,
+  StoreSettings,
+} from '../types';
+import { buildDefaultCatalog, DEFAULT_SETTINGS, safeJsonParse, STORAGE_KEYS } from './posMath';
 
 export interface SaveResult {
   ok: boolean;
@@ -10,7 +18,7 @@ export function loadProductsFromStorage(): { products: Product[]; seeded: boolea
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
     if (raw !== null) {
-      const parsed = JSON.parse(raw);
+      const parsed = safeJsonParse<unknown>(raw);
       if (Array.isArray(parsed)) {
         return { products: parsed as Product[], seeded: false };
       }
@@ -36,7 +44,7 @@ export function loadSalesFromStorage(): SaleRecord[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.SALES);
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const parsed = safeJsonParse<unknown>(raw);
       if (Array.isArray(parsed)) return parsed as SaleRecord[];
     }
   } catch {
@@ -58,7 +66,7 @@ export function loadHeldFromStorage(): HeldOrder[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.HELD);
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const parsed = safeJsonParse<unknown>(raw);
       if (Array.isArray(parsed)) return parsed as HeldOrder[];
     }
   } catch {
@@ -80,9 +88,9 @@ export function loadSettingsFromStorage(): StoreSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const parsed = safeJsonParse<unknown>(raw);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return { ...DEFAULT_SETTINGS, ...parsed };
+        return { ...DEFAULT_SETTINGS, ...(parsed as Partial<StoreSettings>) };
       }
     }
   } catch {
@@ -104,7 +112,7 @@ export function loadScanPrefs(): { continuous: boolean } {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.SCANPREFS);
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const parsed = safeJsonParse<{ continuous?: boolean }>(raw);
       if (typeof parsed?.continuous === 'boolean') return { continuous: parsed.continuous };
     }
   } catch {
@@ -125,7 +133,7 @@ export function loadStockLogFromStorage(): StockLogEntry[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.STOCKLOG);
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const parsed = safeJsonParse<unknown>(raw);
       if (Array.isArray(parsed)) return parsed as StockLogEntry[];
     }
   } catch {
@@ -147,7 +155,7 @@ export function loadConfigHistoryFromStorage(): ConfigSnapshot[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.CONFIG_HISTORY);
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const parsed = safeJsonParse<unknown>(raw);
       if (Array.isArray(parsed)) return parsed as ConfigSnapshot[];
     }
   } catch {
@@ -159,6 +167,27 @@ export function loadConfigHistoryFromStorage(): ConfigSnapshot[] {
 export function saveConfigHistoryToStorage(history: ConfigSnapshot[]): void {
   try {
     localStorage.setItem(STORAGE_KEYS.CONFIG_HISTORY, JSON.stringify(history.slice(0, 30)));
+  } catch {
+    // ignore
+  }
+}
+
+export function loadSecurityLogFromStorage(): SecurityLogEntry[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SECURITY_LOG);
+    if (raw) {
+      const parsed = safeJsonParse<unknown>(raw);
+      if (Array.isArray(parsed)) return parsed as SecurityLogEntry[];
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+export function saveSecurityLogToStorage(entries: SecurityLogEntry[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SECURITY_LOG, JSON.stringify(entries.slice(0, 250)));
   } catch {
     // ignore
   }

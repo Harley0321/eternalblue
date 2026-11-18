@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Lock, PauseCircle, RotateCcw, Scale, ShieldCheck, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Fingerprint, Lock, PauseCircle, RotateCcw, Scale, ShieldCheck, Trash2, X } from 'lucide-react';
 import type { HeldOrder, Product, SaleRecord, StoreSettings } from '../types';
 import { formatPeso, round2 } from '../utils/posMath';
-import { isWeakPin, storePinInSettings, verifyPinWithSettings } from '../utils/pinSecurity';
+import { getPinSecurityMeta, isWeakPin, storePinInSettings, verifyPinWithSettings } from '../utils/pinSecurity';
+import { isPasskeySupported, verifyLocalPasskey } from '../utils/cryptoVault';
 
 /* -------------------------------------------------------------------------- */
 /* 1. WeightModal                                                             */
@@ -316,26 +317,30 @@ export const HeldOrdersModal: React.FC<HeldOrdersModalProps> = ({
 };
 
 /* -------------------------------------------------------------------------- */
-/* 4. PinModal (Set first-time PIN or Verify PIN to unlock)                   */
+/* 4. PinModal (Set first-time PIN, Verify PIN, or Lockscreen Mode)           */
 /* -------------------------------------------------------------------------- */
 interface PinModalProps {
   open: boolean;
   mode: 'unlock' | 'setup';
+  persistent?: boolean;
   title?: string;
   subtitle?: string;
   settings: StoreSettings;
   onClose: () => void;
-  onSuccess: (updatedSettings?: StoreSettings) => void;
+  onSuccess: (updatedSettings?: StoreSettings, meta?: { viaPasskey?: boolean; upgradedAlgo?: boolean }) => void;
+  onPinFail?: (lockedOutNow?: boolean, context?: string) => void;
 }
 
 export const PinModal: React.FC<PinModalProps> = ({
   open,
   mode,
+  persistent = false,
   title,
   subtitle,
   settings,
   onClose,
   onSuccess,
+  onPinFail,
 }) => {
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -354,6 +359,32 @@ export const PinModal: React.FC<PinModalProps> = ({
 
   if (!open) return null;
 
+  const pinMeta = getPinSecurityMeta(settings);
+  const hasPasskey =
+    mode === 'unlock' &&
+    Boolean(settings.passkeyCredId && settings.passkeyPubKeySpki) &&
+    isPasskeySupported();
+
+  const handlePasskeyUnlock = async () => {
+    if (!settings.passkeyCredId || !settings.passkeyPubKeySpki) return;
+    setError('');
+    setBusy(true);
+    try {
+      const ok = await verifyLocalPasskey(settings.passkeyCredId, settings.passkeyPubKeySpki);
+      if (!ok) {
+        setError('Biometric / Passkey verification did not pass.');
+        onPinFail?.(false, 'Passkey verification failed');
+        return;
+      }
+      onSuccess(undefined, { viaPasskey: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Passkey prompt cancelled or unavailable.';
+      setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -370,7 +401,7 @@ export const PinModal: React.FC<PinModalProps> = ({
         }
         const weak = isWeakPin(pin);
         if (weak && !allowWeak) {
-          setError('PIN is weak (repeated or sequential). Choose a stronger PIN or check the confirmation box.');
+          setError('PIN is weak (repeated, year, or sequential). Choose a stronger PIN or check the confirmation box.');
           return;
         }
         const next = await storePinInSettings(settings, pin, weak);
@@ -381,9 +412,10 @@ export const PinModal: React.FC<PinModalProps> = ({
       const res = await verifyPinWithSettings(pin, settings);
       if (!res.ok) {
         setError(res.error || 'Incorrect PIN.');
+        onPinFail?.(res.lockedOutNow, persistent ? 'Terminal lockscreen' : 'Settings unlock');
         return;
       }
-      onSuccess(res.upgradedSettings);
+      onSuccess(res.upgradedSettings, { upgradedAlgo: res.upgradedAlgo });
     } finally {
       setBusy(false);
     }
@@ -391,10 +423,15 @@ export const PinModal: React.FC<PinModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${
+        persistent ? 'bg-slate-950/95 backdrop-blur-md' : 'bg-slate-900/55'
+      }`}
+      onClick={() => {
+        if (!persistent) onClose();
+      }}
     >
       <form
+        data-testid={persistent ? 'terminal-lock-modal' : 'pin-modal'}
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-xs bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden"
@@ -406,21 +443,41 @@ export const PinModal: React.FC<PinModalProps> = ({
             ) : (
               <Lock className="w-4 h-4 text-slate-700" />
             )}
-            <h3 className="text-sm font-extrabold text-slate-900">
-              {title || (mode === 'setup' ? 'Create Manager PIN' : 'Enter Manager PIN')}
-            </h3>
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-900 leading-tight">
+                {title || (mode === 'setup' ? 'Create Manager PIN' : persistent ? 'POS Terminal Locked' : 'Enter Manager PIN')}
+              </h3>
+              <div className="text-[10px] font-semibold text-emerald-700 font-mono-num">
+                {mode === 'setup'
+                  ? 'PBKDF2-SHA512 · 310,000 rounds'
+                  : pinMeta.isLatestAlgo
+                    ? 'PBKDF2-SHA512 · 310k'
+                    : pinMeta.hasPin
+                      ? `${pinMeta.algo} · Auto-Upgrades`
+                      : 'Security Setup'}
+              </div>
+            </div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close PIN modal" className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer">
-            <X className="w-4 h-4" />
-          </button>
+          {!persistent && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close PIN modal"
+              className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         <div className="p-4 space-y-3 text-xs">
           <p className="text-slate-600">
             {subtitle ||
               (mode === 'setup'
-                ? 'Protect Store Settings, Voids, and Data Reset with a 4–8 digit Manager PIN.'
-                : 'Enter your Manager PIN to continue.')}
+                ? 'Protect Store Settings, Voids, and Data Reset with a PBKDF2-SHA512 encrypted Manager PIN.'
+                : persistent
+                  ? 'Enter your Manager PIN or verify with Passkey to resume register operations.'
+                  : 'Enter your Manager PIN to continue.')}
           </p>
 
           <div>
@@ -428,6 +485,7 @@ export const PinModal: React.FC<PinModalProps> = ({
               {mode === 'setup' ? 'New PIN (4–8 digits)' : 'Manager PIN'}
             </label>
             <input
+              data-testid="pin-modal-input"
               type="password"
               inputMode="numeric"
               maxLength={8}
@@ -467,13 +525,27 @@ export const PinModal: React.FC<PinModalProps> = ({
             </>
           )}
 
+          {hasPasskey && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handlePasskeyUnlock}
+              className="w-full py-2.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              <Fingerprint className="w-4 h-4 text-indigo-600" />
+              Unlock with Biometric / Passkey
+            </button>
+          )}
+
           {error && <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-2">{error}</div>}
         </div>
 
         <div className="px-4 py-3 border-t border-slate-200 flex gap-2">
-          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 cursor-pointer">
-            Cancel
-          </button>
+          {!persistent && (
+            <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 cursor-pointer">
+              Cancel
+            </button>
+          )}
           <button
             type="submit"
             disabled={busy}
@@ -495,6 +567,7 @@ interface VoidSaleModalProps {
   settings: StoreSettings;
   onClose: () => void;
   onConfirmVoid: (receiptNo: string, reason: string, upgradedSettings?: StoreSettings) => void;
+  onPinFail?: (lockedOutNow?: boolean, context?: string) => void;
 }
 
 export const VoidSaleModal: React.FC<VoidSaleModalProps> = ({
@@ -502,6 +575,7 @@ export const VoidSaleModal: React.FC<VoidSaleModalProps> = ({
   settings,
   onClose,
   onConfirmVoid,
+  onPinFail,
 }) => {
   const [reason, setReason] = useState('Customer returned / wrong item');
   const [pin, setPin] = useState('');
@@ -530,6 +604,7 @@ export const VoidSaleModal: React.FC<VoidSaleModalProps> = ({
         const res = await verifyPinWithSettings(pin, settings);
         if (!res.ok) {
           setError(res.error || 'Incorrect Manager PIN');
+          onPinFail?.(res.lockedOutNow, `Void ${sale.receiptNo}`);
           return;
         }
         upgraded = res.upgradedSettings;
@@ -634,6 +709,7 @@ interface ConfirmModalProps {
   settings?: StoreSettings;
   onClose: () => void;
   onConfirm: (upgradedSettings?: StoreSettings) => void;
+  onPinFail?: (lockedOutNow?: boolean, context?: string) => void;
 }
 
 export const ConfirmModal: React.FC<ConfirmModalProps> = ({
@@ -646,6 +722,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   settings,
   onClose,
   onConfirm,
+  onPinFail,
 }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -671,6 +748,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
         const res = await verifyPinWithSettings(pin, settings);
         if (!res.ok) {
           setError(res.error || 'Incorrect Manager PIN');
+          onPinFail?.(res.lockedOutNow, title);
           return;
         }
         onConfirm(res.upgradedSettings);
