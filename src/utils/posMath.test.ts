@@ -922,3 +922,190 @@ test('AES-256-GCM encrypted backup vault, SHA-256 hash-chained audit ledger, and
   assert.equal(fidoReplay, false);
 });
 
+test('upgraded Store AI handles executive briefing, forecast, bundles, categories, margins, cart check, dayparts, receipt lookup & stays strictly read-only', async () => {
+  const { computeStorePulse } = await import('./assistantEngine');
+
+  const now = new Date(2026, 10, 17, 15, 0, 0);
+  const catalog = buildDefaultCatalog();
+  // Enrich copy for test scenario (products[0]=Hotdog, products[8]=Canton, products[13]=Coke)
+  const products: Product[] = catalog.map((p, idx) => {
+    if (idx === 0) return { ...p, capital: 150, stock: 4, expiry: '2026-11-10' }; // expired & low & fast-selling
+    if (idx === 8) return { ...p, capital: 11, stock: 50 }; // Canton ret 15, whs 13.5 @ 12+
+    if (idx === 13) return { ...p, capital: 50, stock: 24 }; // Coke
+    if (idx === 1) return { ...p, capital: 200, retailPrice: 175, stock: 10 }; // priced below capital (loss)
+    return { ...p, capital: round2(p.retailPrice * 0.8) };
+  });
+
+  const morning = new Date(2026, 10, 17, 9, 15, 0); // 9 AM
+  const evening = new Date(2026, 10, 16, 19, 30, 0); // yesterday 7:30 PM
+
+  const sales: SaleRecord[] = [
+    {
+      receiptNo: 'OR-261117-0001',
+      dateIso: morning.toISOString(),
+      dateFormatted: 'Nov 17, 9:15 AM',
+      items: [
+        {
+          productId: products[0].id,
+          category: products[0].category,
+          name: products[0].name,
+          qty: 6,
+          unit: products[0].unit,
+          unitPrice: 195,
+          priceType: 'retail',
+          lineTotal: 1170,
+        },
+        {
+          productId: products[8].id,
+          category: products[8].category,
+          name: products[8].name,
+          qty: 4,
+          unit: products[8].unit,
+          unitPrice: 15,
+          priceType: 'retail',
+          lineTotal: 60,
+        },
+      ],
+      retailSubtotal: 1230,
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: 1230,
+      paymentMethod: 'GCash',
+      tendered: 1230,
+      change: 0,
+    },
+    {
+      receiptNo: 'OR-261116-0002',
+      dateIso: evening.toISOString(),
+      dateFormatted: 'Nov 16, 7:30 PM',
+      items: [
+        {
+          productId: products[0].id,
+          category: products[0].category,
+          name: products[0].name,
+          qty: 4,
+          unit: products[0].unit,
+          unitPrice: 195,
+          priceType: 'retail',
+          lineTotal: 780,
+        },
+        {
+          productId: products[8].id,
+          category: products[8].category,
+          name: products[8].name,
+          qty: 2,
+          unit: products[8].unit,
+          unitPrice: 15,
+          priceType: 'retail',
+          lineTotal: 30,
+        },
+      ],
+      retailSubtotal: 810,
+      wholesaleSavings: 0,
+      seniorDiscount: 0,
+      grandTotal: 810,
+      paymentMethod: 'Cash',
+      tendered: 1000,
+      change: 190,
+    },
+  ];
+
+  // Active cart: 8 pcs of Canton (min wholesale is 12 -> 8 >= 6 (50%) -> triggers near-wholesale alert!)
+  const cart: CartLine[] = [
+    {
+      productId: products[8].id,
+      name: products[8].name,
+      unit: products[8].unit,
+      retailPrice: products[8].retailPrice,
+      wholesalePrice: products[8].wholesalePrice,
+      wholesaleMinQty: products[8].wholesaleMinQty,
+      priceType: 'retail',
+      qty: 8,
+    },
+  ];
+
+  const snapProducts = JSON.stringify(products);
+  const snapSales = JSON.stringify(sales);
+  const snapCart = JSON.stringify(cart);
+  const snapSettings = JSON.stringify(DEFAULT_SETTINGS);
+
+  const ctx = {
+    products,
+    sales,
+    heldOrders: [],
+    settings: { ...DEFAULT_SETTINGS, adminPinHash: 'hash', adminPinSalt: 'salt', adminPinAlgo: 'PBKDF2-SHA512' as const, lastBackup: now.toISOString() },
+    now,
+    cart,
+    stockLog: [],
+    securityLog: [],
+  };
+
+  // 1. Live Store Pulse
+  const pulse = computeStorePulse(ctx);
+  assert.equal(pulse.todayNet, 1230);
+  assert.equal(pulse.expiredCount, 1);
+  assert.equal(pulse.lossCount, 1);
+  assert.equal(pulse.cartNearWholesaleCount, 1);
+  assert.ok(pulse.healthScore > 0 && pulse.healthScore < 100);
+
+  const bot = new OfflineAssistant();
+
+  // 2. Executive Briefing + safe action deep links
+  const brief = bot.ask('Store briefing', ctx);
+  assert.equal(brief.intent, 'briefing');
+  assert.ok((brief.metrics?.length || 0) >= 3);
+  assert.ok((brief.bars?.length || 0) >= 1);
+  assert.ok(brief.actions?.some((a) => a.type === 'open-stock-filter' && a.filter === 'EXPIRED'));
+
+  // 3. Stockout Forecast
+  const fc = bot.ask('Stockout forecast', ctx);
+  assert.equal(fc.intent, 'forecast');
+  assert.match(fc.text, /Tender Juicy Hotdog/i);
+  assert.ok(fc.actions?.some((a) => a.type === 'open-reorder'));
+
+  // 4. Frequently Bought Together / Bundles
+  const bun = bot.ask('Frequently bought together', ctx);
+  assert.equal(bun.intent, 'bundles');
+  assert.match(bun.text, /2x/);
+  assert.ok((bun.bars?.length || 0) >= 1);
+
+  // 5. Category Revenue Breakdown
+  const cat = bot.ask('Category sales', ctx);
+  assert.equal(cat.intent, 'category');
+  assert.match(cat.text, /Frozen Meat/);
+
+  // 6. Margin Audit
+  const mar = bot.ask('Margin audit', ctx);
+  assert.equal(mar.intent, 'margins');
+  assert.ok(mar.actions?.some((a) => a.type === 'open-stock-filter' && a.filter === 'LOSS'));
+
+  // 7. Cart Wholesale Check
+  const crt = bot.ask('Check cart', ctx);
+  assert.equal(crt.intent, 'cart');
+  assert.match(crt.text, /\+4 pc/i);
+
+  // 8. Daypart Breakdown
+  const dp = bot.ask('Daypart breakdown', ctx);
+  assert.equal(dp.intent, 'daypart');
+  assert.match(dp.text, /Morning/);
+  assert.match(dp.text, /Evening/);
+
+  // 9. Exact Receipt Lookup + Open Receipt Action
+  const rec = bot.ask('Check receipt OR-261117-0001', ctx);
+  assert.equal(rec.intent, 'receipt');
+  assert.match(rec.text, /OR-261117-0001/);
+  assert.ok(rec.actions?.some((a) => a.type === 'open-receipt' && a.receiptNo === 'OR-261117-0001'));
+
+  // 10. Language override to Tagalog + Security Audit
+  const sec = bot.ask('Security health', { ...ctx, preferredLang: 'tl' });
+  assert.equal(sec.intent, 'security');
+  assert.equal(sec.lang, 'tl');
+  assert.match(sec.text, /Seguridad/);
+
+  // 11. Strict Non-Mutation guarantee on all inputs
+  assert.equal(JSON.stringify(products), snapProducts);
+  assert.equal(JSON.stringify(sales), snapSales);
+  assert.equal(JSON.stringify(cart), snapCart);
+  assert.equal(JSON.stringify(DEFAULT_SETTINGS), snapSettings);
+});
+

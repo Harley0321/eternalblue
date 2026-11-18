@@ -26,31 +26,7 @@ import {
 } from '../utils/posMath';
 import { CategoryBar } from './CategoryBar';
 
-interface InventoryViewProps {
-  products: Product[];
-  sales: SaleRecord[];
-  settings: StoreSettings;
-  selectedCategory: string;
-  lowStockThreshold: number;
-  expiryWarnDays: number;
-  stockLogCount: number;
-  searchQuery: string;
-  onSetSearchQuery: (q: string) => void;
-  onSelectCategory: (cat: string) => void;
-  onOpenCategorySheet: () => void;
-  onOpenScanner: () => void;
-  onOpenScReview: () => void;
-  onOpenReorder: () => void;
-  onOpenBatchStock: (mode?: 'delta' | 'set') => void;
-  onOpenCsvImport: () => void;
-  onOpenStockLog: () => void;
-  onOpenProductModal: (productId?: string) => void;
-  onOpenStockAdjust: (productId: string) => void;
-  onAskDeleteProduct: (productId: string) => void;
-  onToast: (msg: string, type?: 'success' | 'warning' | 'error') => void;
-}
-
-type StockFilter =
+export type StockFilter =
   | 'ALL'
   | 'LOW'
   | 'OUT'
@@ -72,11 +48,39 @@ type StockSort =
   | 'margin-asc'
   | 'name-asc';
 
+interface InventoryViewProps {
+  products: Product[];
+  sales: SaleRecord[];
+  settings: StoreSettings;
+  selectedCategory: string;
+  activeStockFilter?: StockFilter;
+  onChangeStockFilter?: (f: StockFilter) => void;
+  lowStockThreshold: number;
+  expiryWarnDays: number;
+  stockLogCount: number;
+  searchQuery: string;
+  onSetSearchQuery: (q: string) => void;
+  onSelectCategory: (cat: string) => void;
+  onOpenCategorySheet: () => void;
+  onOpenScanner: () => void;
+  onOpenScReview: () => void;
+  onOpenReorder: () => void;
+  onOpenBatchStock: (mode?: 'delta' | 'set') => void;
+  onOpenCsvImport: () => void;
+  onOpenStockLog: () => void;
+  onOpenProductModal: (productId?: string) => void;
+  onOpenStockAdjust: (productId: string) => void;
+  onAskDeleteProduct: (productId: string) => void;
+  onToast: (msg: string, type?: 'success' | 'warning' | 'error') => void;
+}
+
 export const InventoryView: React.FC<InventoryViewProps> = ({
   products,
   sales,
   settings,
   selectedCategory,
+  activeStockFilter,
+  onChangeStockFilter,
   lowStockThreshold,
   expiryWarnDays,
   stockLogCount,
@@ -95,7 +99,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onAskDeleteProduct,
   onToast,
 }) => {
-  const [stockFilter, setStockFilter] = useState<StockFilter>('ALL');
+  const [localFilter, setLocalFilter] = useState<StockFilter>('ALL');
+  const stockFilter = activeStockFilter ?? localFilter;
+  const setStockFilter = (next: StockFilter | ((prev: StockFilter) => StockFilter)) => {
+    const resolved = typeof next === 'function' ? next(stockFilter) : next;
+    setLocalFilter(resolved);
+    onChangeStockFilter?.(resolved);
+  };
   const [sortBy, setSortBy] = useState<StockSort>('default');
 
   const kpis = useMemo(

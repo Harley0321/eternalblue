@@ -70,7 +70,7 @@ import { TopBar } from './components/TopBar';
 import { ToastContainer, type ToastItem } from './components/ToastContainer';
 import { CategorySheetModal } from './components/CategorySheetModal';
 import { PosView } from './components/PosView';
-import { InventoryView } from './components/InventoryView';
+import { InventoryView, type StockFilter } from './components/InventoryView';
 import { ProductModal } from './components/ProductModal';
 import { StockAdjustModal } from './components/StockAdjustModal';
 import { ScReviewModal } from './components/ScReviewModal';
@@ -92,6 +92,7 @@ import {
   WeightModal,
 } from './components/SmallModals';
 import { AssistantWidget } from './components/AssistantWidget';
+import type { AssistantAction } from './utils/assistantEngine';
 
 export default function App() {
   // Core persistent state — preserves 100% of existing mobile/tablet data
@@ -121,6 +122,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabName>('pos');
   const [posCategory, setPosCategory] = useState('All');
   const [invCategory, setInvCategory] = useState('All');
+  const [invStockFilter, setInvStockFilter] = useState<StockFilter>('ALL');
   const [posSearch, setPosSearch] = useState('');
   const [invSearch, setInvSearch] = useState('');
 
@@ -1290,6 +1292,62 @@ export default function App() {
 
   const activeCategoryForSheet = activeTab === 'inventory' ? invCategory : posCategory;
 
+  const handleAssistantAction = (action: AssistantAction) => {
+    setAssistantOpen(false);
+    switch (action.type) {
+      case 'open-reorder':
+        setActiveTab('inventory');
+        setReorderOpen(true);
+        break;
+      case 'open-stock-filter':
+        setInvCategory('All');
+        setInvSearch('');
+        setInvStockFilter(action.filter);
+        setActiveTab('inventory');
+        break;
+      case 'open-sc-review':
+        setActiveTab('inventory');
+        setScReviewOpen(true);
+        break;
+      case 'open-batch-restock':
+        setActiveTab('inventory');
+        setBatchStockModal({ open: true, mode: 'delta' });
+        break;
+      case 'open-csv-import':
+        setActiveTab('inventory');
+        setCsvImportOpen(true);
+        break;
+      case 'open-stock-log':
+        setActiveTab('inventory');
+        setStockLogOpen(true);
+        break;
+      case 'open-receipt': {
+        const target = sales.find((s) => s.receiptNo === action.receiptNo);
+        if (target) {
+          setReceiptReading(null);
+          setReceiptSale(target);
+        } else {
+          setActiveTab('sales');
+        }
+        break;
+      }
+      case 'open-sales':
+        setActiveTab('sales');
+        break;
+      case 'open-held':
+        setActiveTab('pos');
+        setHeldModalOpen(true);
+        break;
+      case 'open-settings':
+        openSettingsTab();
+        break;
+      case 'open-scanner':
+        setActiveTab('pos');
+        setScannerState({ open: true, mode: 'pos' });
+        break;
+    }
+  };
+
   return (
     <div className="h-[100dvh] flex flex-col bg-slate-50 text-slate-900 overflow-hidden">
       <TopBar
@@ -1352,6 +1410,8 @@ export default function App() {
           sales={sales}
           settings={settings}
           selectedCategory={invCategory}
+          activeStockFilter={invStockFilter}
+          onChangeStockFilter={setInvStockFilter}
           lowStockThreshold={Number(settings.lowStockThreshold) || 10}
           expiryWarnDays={Number(settings.expiryWarnDays) || 30}
           stockLogCount={stockLog.length}
@@ -1732,6 +1792,10 @@ export default function App() {
         sales={sales}
         heldOrders={heldOrders}
         settings={settings}
+        cart={cart}
+        stockLog={stockLog}
+        securityLog={securityLog}
+        onExecuteAction={handleAssistantAction}
         onClose={() => setAssistantOpen(false)}
       />
 
