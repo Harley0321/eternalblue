@@ -207,7 +207,7 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
                         }
                         val badgeText = when {
                             state.updateChecking -> "Checking..."
-                            info?.status == GitHubUpdateChecker.SyncStatus.UPDATE_AVAILABLE -> "Update ${info.tagName}"
+                            info?.status == GitHubUpdateChecker.SyncStatus.UPDATE_AVAILABLE -> "Update Available"
                             info?.status == GitHubUpdateChecker.SyncStatus.UP_TO_DATE -> "Up to Date"
                             info?.status == GitHubUpdateChecker.SyncStatus.NO_RELEASE_APK_YET -> "Release Needed"
                             info?.status == GitHubUpdateChecker.SyncStatus.ERROR -> "Sync Issue"
@@ -245,7 +245,7 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
                             progress = { (state.apkDownloadProgress / 100f).coerceIn(0f, 1f) },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("Downloading APK update... ${state.apkDownloadProgress}%", fontSize = 11.sp, color = EmeraldDark, fontWeight = FontWeight.Bold)
+                        Text("Updating... ${state.apkDownloadProgress}%", fontSize = 11.sp, color = EmeraldDark, fontWeight = FontWeight.Bold)
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -255,7 +255,7 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
                             colors = ButtonDefaults.buttonColors(containerColor = IndigoAccent),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(if (state.updateChecking) "Checking..." else "Check GitHub Now", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(if (state.updateChecking) "Checking..." else "Check for Updates", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         if (info?.isNewer == true) {
                             Button(
@@ -264,7 +264,7 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
                                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text(if (info.apkDownloadUrl != null) "Install ${info.tagName}" else "Open Release", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(if (state.apkDownloading) "Updating..." else "Update", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         } else if (info != null) {
                             OutlinedButton(

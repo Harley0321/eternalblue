@@ -95,7 +95,7 @@ object AndroidDeviceBridge {
             val code = conn.responseCode
             if (code !in 200..299) {
                 conn.disconnect()
-                return@withContext ApkInstallOutcome.Failed("Download failed (HTTP $code)")
+                return@withContext ApkInstallOutcome.Failed("Update failed (HTTP $code)")
             }
 
             val totalBytes = conn.contentLengthLong.takeIf { it > 0L } ?: -1L
@@ -132,7 +132,7 @@ object AndroidDeviceBridge {
             }
             ApkInstallOutcome.InstallerLaunched
         } catch (e: Exception) {
-            ApkInstallOutcome.Failed(e.message ?: "Unable to download APK")
+            ApkInstallOutcome.Failed(e.message ?: "Unable to fetch update")
         }
     }
 }

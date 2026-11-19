@@ -168,8 +168,7 @@ object GitHubUpdateChecker {
                 val newer = isVersionNewer(tag, currentVersion)
                 val status = if (newer) SyncStatus.UPDATE_AVAILABLE else SyncStatus.UP_TO_DATE
                 val msg = when {
-                    newer && apkUrl != null -> "New release $tag is ready to download & install."
-                    newer -> "New release $tag found on GitHub (open Releases to download APK)."
+                    newer -> "Update $tag is available."
                     else -> "App is up to date (installed v$currentVersion, latest $tag)."
                 }
                 return@withContext ReleaseInfo(
@@ -212,7 +211,7 @@ object GitHubUpdateChecker {
                 htmlUrl = "https://github.com/$clean/actions",
                 latestCommitSha = commitSha,
                 latestCommitMessage = commitMsg,
-                message = "${commitInfo}No GitHub Release APK published yet — run the GitHub Actions workflow or publish a Release with an .apk file."
+                message = "${commitInfo}No published update release yet — run the GitHub release workflow."
             )
         } catch (e: Exception) {
             ReleaseInfo(

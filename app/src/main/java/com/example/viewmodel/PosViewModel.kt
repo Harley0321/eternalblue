@@ -982,7 +982,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         val apkUrl = info.apkDownloadUrl
         if (apkUrl.isNullOrBlank()) {
             AndroidDeviceBridge.openUrl(context, info.htmlUrl)
-            toast("Opening GitHub Releases in browser")
+            toast("Opening update on GitHub")
             return
         }
         _state.update { it.copy(apkDownloading = true, apkDownloadProgress = 0) }
@@ -997,13 +997,13 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(apkDownloading = false) }
             when (outcome) {
                 is AndroidDeviceBridge.ApkInstallOutcome.InstallerLaunched -> {
-                    toast("APK downloaded — confirm update install")
+                    toast("Update ready — confirm to apply")
                 }
                 is AndroidDeviceBridge.ApkInstallOutcome.NeedsInstallPermission -> {
-                    toast("Enable 'Allow from this source', then tap Install again", ToastType.WARNING)
+                    toast("Allow app updates from this source, then tap Update again", ToastType.WARNING)
                 }
                 is AndroidDeviceBridge.ApkInstallOutcome.Failed -> {
-                    toast("Install failed: ${outcome.reason}", ToastType.ERROR)
+                    toast("Update failed: ${outcome.reason}", ToastType.ERROR)
                 }
             }
         }
