@@ -219,6 +219,10 @@ export interface CashierAccount {
   name: string;
   role: 'manager' | 'cashier';
   pin?: string;
+  pinHash?: string;
+  pinSalt?: string;
+  pinIter?: number;
+  pinAlgo?: 'PBKDF2-SHA256' | 'PBKDF2-SHA512';
   active: boolean;
   createdAt: string;
 }

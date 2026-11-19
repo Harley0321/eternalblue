@@ -269,7 +269,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     onToast('Stock CSV downloaded');
   };
 

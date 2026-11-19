@@ -117,6 +117,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const photoInputRef = useRef<HTMLInputElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const overlayClearTimerRef = useRef<number | null>(null);
+  const lockFlashTimerRef = useRef<number | null>(null);
+  const focusRingTimerRef = useRef<number | null>(null);
 
   const barcodeIndex = useMemo(() => buildBarcodeIndex(products), [products]);
   const continuousRef = useRef(continuous);
@@ -246,7 +248,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         drawDetectedBox(options.cornerPoints, options.cropRect);
       }
       setLockFlash(true);
-      window.setTimeout(() => setLockFlash(false), 260);
+      if (lockFlashTimerRef.current !== null) {
+        window.clearTimeout(lockFlashTimerRef.current);
+      }
+      lockFlashTimerRef.current = window.setTimeout(() => {
+        setLockFlash(false);
+        lockFlashTimerRef.current = null;
+      }, 260);
 
       playFeedback();
       const fmtLabel = normalizeBarcodeFormat(options.format).replace('_', '-').toUpperCase();
@@ -288,7 +296,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         const qtyPrefix = effectiveQty !== 1 ? `${effectiveQty}× ` : '';
         const speedSuffix = options.decodeMs !== undefined ? ` (${options.decodeMs}ms)` : '';
         setStatusMsg(`Added ${qtyPrefix}${found.name}${speedSuffix}`);
-        if (!continuous || mode === 'inventory') {
+        if (!continuousRef.current || mode === 'inventory') {
           onClose();
         }
       } else {
@@ -303,7 +311,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     },
     [
       barcodeIndex,
-      continuous,
       drawDetectedBox,
       mode,
       onClose,
@@ -327,6 +334,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       window.clearTimeout(overlayClearTimerRef.current);
       overlayClearTimerRef.current = null;
     }
+    if (lockFlashTimerRef.current !== null) {
+      window.clearTimeout(lockFlashTimerRef.current);
+      lockFlashTimerRef.current = null;
+    }
+    if (focusRingTimerRef.current !== null) {
+      window.clearTimeout(focusRingTimerRef.current);
+      focusRingTimerRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -337,6 +352,15 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     setZoomCaps(null);
     setZoomLevel(1);
     setDarkAlert(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+        audioCtxRef.current.close().catch(() => {});
+      }
+      audioCtxRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -673,7 +697,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const handleTapFocus = async (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     setFocusRing({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-    window.setTimeout(() => setFocusRing(null), 650);
+    if (focusRingTimerRef.current !== null) {
+      window.clearTimeout(focusRingTimerRef.current);
+    }
+    focusRingTimerRef.current = window.setTimeout(() => {
+      setFocusRing(null);
+      focusRingTimerRef.current = null;
+    }, 650);
     const track = trackRef.current;
     if (!track) return;
     try {

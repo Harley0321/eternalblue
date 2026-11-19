@@ -1,4 +1,4 @@
-import type { StoreSettings } from '../types';
+import type { CashierAccount, StoreSettings } from '../types';
 import { safeJsonParse, STORAGE_KEYS } from './posMath';
 
 export const PIN_ALGO_LATEST = 'PBKDF2-SHA512' as const;
@@ -23,9 +23,26 @@ export type PinAlgo = 'PBKDF2-SHA256' | 'PBKDF2-SHA512';
 
 const getCrypto = (): Crypto | undefined => globalThis.crypto;
 
+/**
+ * Returns an exact-length ArrayBuffer for any Uint8Array (even subarrays/Node Buffers
+ * where byteOffset !== 0 or byteLength < buffer.byteLength).
+ */
+export function toExactArrayBuffer(u8: Uint8Array): ArrayBuffer {
+  if (
+    u8.byteOffset === 0 &&
+    u8.byteLength === u8.buffer.byteLength &&
+    u8.buffer instanceof ArrayBuffer
+  ) {
+    return u8.buffer;
+  }
+  const copy = new Uint8Array(u8.byteLength);
+  copy.set(u8);
+  return copy.buffer;
+}
+
 export const bytesToB64 = (u8: Uint8Array): string => {
   if (typeof Buffer !== 'undefined') {
-    return Buffer.from(u8).toString('base64');
+    return Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength).toString('base64');
   }
   let t = '';
   for (let i = 0; i < u8.length; i++) {
@@ -36,7 +53,8 @@ export const bytesToB64 = (u8: Uint8Array): string => {
 
 export const b64ToBytes = (b: string): Uint8Array => {
   if (typeof Buffer !== 'undefined') {
-    return new Uint8Array(Buffer.from(b, 'base64'));
+    const buf = Buffer.from(b, 'base64');
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength).slice();
   }
   return Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
 };
@@ -67,7 +85,7 @@ export async function derivePinHash(
   const hashName = algo === 'PBKDF2-SHA512' ? 'SHA-512' : 'SHA-256';
   const bitLen = algo === 'PBKDF2-SHA512' ? 512 : 256;
   const bits = await c.subtle.deriveBits(
-    { name: 'PBKDF2', hash: hashName, salt: saltBytes.buffer as ArrayBuffer, iterations: iter },
+    { name: 'PBKDF2', hash: hashName, salt: toExactArrayBuffer(saltBytes), iterations: iter },
     key,
     bitLen,
   );
@@ -169,20 +187,57 @@ interface PinLockState {
   until: number;
 }
 
-export function pinLockRead(): PinLockState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.PINLOCK);
-    if (!raw) return { fails: 0, until: 0 };
-    const parsed = safeJsonParse<PinLockState | null>(raw);
-    return parsed || { fails: 0, until: 0 };
-  } catch {
-    return { fails: 0, until: 0 };
+let memLockState: PinLockState = { fails: 0, until: 0 };
+let memLockStorageRef: unknown = null;
+
+function syncLockStorageRef(): void {
+  const ls = typeof localStorage !== 'undefined' ? localStorage : null;
+  if (ls !== memLockStorageRef) {
+    memLockStorageRef = ls;
+    memLockState = { fails: 0, until: 0 };
   }
 }
 
-export function pinLockWrite(o: PinLockState): void {
+export function pinLockRead(): PinLockState {
+  syncLockStorageRef();
+  let stored: PinLockState = { fails: 0, until: 0 };
   try {
-    localStorage.setItem(STORAGE_KEYS.PINLOCK, JSON.stringify(o));
+    const raw = localStorage.getItem(STORAGE_KEYS.PINLOCK);
+    if (raw) {
+      const parsed = safeJsonParse<Partial<PinLockState> | null>(raw);
+      if (parsed && typeof parsed === 'object') {
+        stored = {
+          fails: Number.isFinite(Number(parsed.fails)) ? Math.max(0, Math.floor(Number(parsed.fails))) : 0,
+          until: Number.isFinite(Number(parsed.until)) ? Math.max(0, Number(parsed.until)) : 0,
+        };
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  // Take stricter state between in-memory mirror and localStorage so clearing the key mid-session cannot reset lockouts
+  const merged: PinLockState = {
+    fails: Math.max(stored.fails, memLockState.fails),
+    until: Math.max(stored.until, memLockState.until),
+  };
+  memLockState = { ...merged };
+  return merged;
+}
+
+export function pinLockWrite(o: PinLockState, resetMemory = false): void {
+  syncLockStorageRef();
+  const clean: PinLockState = {
+    fails: Number.isFinite(Number(o.fails)) ? Math.max(0, Math.floor(Number(o.fails))) : 0,
+    until: Number.isFinite(Number(o.until)) ? Math.max(0, Number(o.until)) : 0,
+  };
+  memLockState = resetMemory
+    ? { ...clean }
+    : {
+        fails: Math.max(clean.fails, memLockState.fails),
+        until: Math.max(clean.until, memLockState.until),
+      };
+  try {
+    localStorage.setItem(STORAGE_KEYS.PINLOCK, JSON.stringify(memLockState));
   } catch {
     // ignore storage failures cleanly
   }
@@ -204,7 +259,7 @@ export function pinRegisterFail(): PinLockState {
 }
 
 export function pinRegisterOk(): void {
-  pinLockWrite({ fails: 0, until: 0 });
+  pinLockWrite({ fails: 0, until: 0 }, true);
 }
 
 export function fmtWait(sec: number): string {
@@ -299,5 +354,168 @@ export async function verifyPinWithSettings(
       w2 > 0
         ? `Too many wrong PINs. Locked for ${fmtWait(w2)}`
         : `Incorrect Manager PIN (${remaining} tries left before lock)`,
+  };
+}
+
+// ============================================================================
+// Cashier Profile PIN Hashing (PBKDF2-SHA512) & Brute-Force Lockout
+// ============================================================================
+
+const CASHIER_LOCK_KEY = 'omnimart_cashier_lock_v1';
+let memCashierLocks: Record<string, PinLockState> = {};
+let memCashierStorageRef: unknown = null;
+
+function readCashierLockMap(): Record<string, PinLockState> {
+  const ls = typeof localStorage !== 'undefined' ? localStorage : null;
+  if (ls !== memCashierStorageRef) {
+    memCashierStorageRef = ls;
+    memCashierLocks = {};
+  }
+  let stored: Record<string, PinLockState> = {};
+  try {
+    const raw = localStorage.getItem(CASHIER_LOCK_KEY);
+    if (raw) {
+      const parsed = safeJsonParse<Record<string, Partial<PinLockState>> | null>(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v && typeof v === 'object') {
+            stored[k] = {
+              fails: Number.isFinite(Number(v.fails)) ? Math.max(0, Math.floor(Number(v.fails))) : 0,
+              until: Number.isFinite(Number(v.until)) ? Math.max(0, Number(v.until)) : 0,
+            };
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  const merged: Record<string, PinLockState> = { ...stored };
+  for (const [k, mv] of Object.entries(memCashierLocks)) {
+    const sv = merged[k] || { fails: 0, until: 0 };
+    merged[k] = {
+      fails: Math.max(sv.fails, mv.fails),
+      until: Math.max(sv.until, mv.until),
+    };
+  }
+  memCashierLocks = merged;
+  return merged;
+}
+
+function writeCashierLock(cashierId: string, state: PinLockState, reset = false): void {
+  const map = readCashierLockMap();
+  const prev = map[cashierId] || { fails: 0, until: 0 };
+  map[cashierId] = reset
+    ? { ...state }
+    : {
+        fails: Math.max(prev.fails, state.fails),
+        until: Math.max(prev.until, state.until),
+      };
+  memCashierLocks = map;
+  try {
+    localStorage.setItem(CASHIER_LOCK_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
+export function cashierHasPin(cashier: Pick<CashierAccount, 'pin' | 'pinHash'> | null | undefined): boolean {
+  return !!(cashier && (cashier.pinHash || cashier.pin));
+}
+
+export async function setCashierPinFields(
+  cashier: CashierAccount,
+  rawPin?: string,
+): Promise<CashierAccount> {
+  const next: CashierAccount = { ...cashier };
+  const clean = String(rawPin || '').trim();
+  if (!clean) {
+    delete next.pin;
+    delete next.pinHash;
+    delete next.pinSalt;
+    delete next.pinIter;
+    delete next.pinAlgo;
+    return next;
+  }
+  const c = getCrypto();
+  if (c?.subtle && typeof c.getRandomValues === 'function') {
+    const salt = bytesToB64(c.getRandomValues(new Uint8Array(16)));
+    next.pinHash = await derivePinHash(clean, salt, PIN_ITER_LATEST, PIN_ALGO_LATEST);
+    next.pinSalt = salt;
+    next.pinIter = PIN_ITER_LATEST;
+    next.pinAlgo = PIN_ALGO_LATEST;
+    delete next.pin;
+  } else {
+    next.pin = clean;
+  }
+  return next;
+}
+
+export async function verifyCashierPin(
+  entered: string,
+  cashier: CashierAccount,
+): Promise<{
+  ok: boolean;
+  error?: string;
+  upgradedCashier?: CashierAccount;
+  lockedOutNow?: boolean;
+}> {
+  if (!cashierHasPin(cashier)) {
+    return { ok: true };
+  }
+  const lockMap = readCashierLockMap();
+  const curLock = lockMap[cashier.id] || { fails: 0, until: 0 };
+  const wait = Math.max(0, Math.ceil((curLock.until - Date.now()) / 1000));
+  if (wait > 0) {
+    return {
+      ok: false,
+      lockedOutNow: true,
+      error: `Too many wrong cashier PINs for ${cashier.name}. Try again in ${fmtWait(wait)}`,
+    };
+  }
+
+  const clean = String(entered || '').trim();
+  let ok = false;
+  let upgradedCashier: CashierAccount | undefined;
+
+  if (cashier.pinHash && pinCryptoOk()) {
+    const algo: PinAlgo = cashier.pinAlgo === 'PBKDF2-SHA512' ? 'PBKDF2-SHA512' : 'PBKDF2-SHA256';
+    const iter = Number(cashier.pinIter) || PIN_ITER_LEGACY;
+    try {
+      const h = await derivePinHash(clean, String(cashier.pinSalt || ''), iter, algo);
+      ok = safeEqual(h, String(cashier.pinHash));
+      if (ok && (algo !== PIN_ALGO_LATEST || iter < PIN_ITER_LATEST)) {
+        upgradedCashier = await setCashierPinFields(cashier, clean);
+      }
+    } catch {
+      ok = false;
+    }
+  } else if (cashier.pin) {
+    ok = safeEqual(clean, String(cashier.pin));
+    if (ok && pinCryptoOk()) {
+      upgradedCashier = await setCashierPinFields(cashier, clean);
+    }
+  }
+
+  if (ok) {
+    writeCashierLock(cashier.id, { fails: 0, until: 0 }, true);
+    return { ok: true, upgradedCashier };
+  }
+
+  const nextFails = curLock.fails + 1;
+  const nextUntil =
+    nextFails % 5 === 0
+      ? Date.now() + Math.min(15 * 60, 30 * Math.pow(2, nextFails / 5 - 1)) * 1000
+      : curLock.until;
+  writeCashierLock(cashier.id, { fails: nextFails, until: nextUntil });
+  const w2 = Math.max(0, Math.ceil((nextUntil - Date.now()) / 1000));
+  const rem = 5 - (nextFails % 5 || 5);
+  return {
+    ok: false,
+    lockedOutNow: w2 > 0,
+    error:
+      w2 > 0
+        ? `Too many wrong PINs for ${cashier.name}. Locked for ${fmtWait(w2)}`
+        : `Incorrect cashier PIN for ${cashier.name} (${rem} tries left)`,
   };
 }

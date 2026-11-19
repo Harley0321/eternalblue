@@ -113,6 +113,25 @@ export function loadSettingsFromStorage(): StoreSettings {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         const { sanitized, strippedCount } = stripLegacySyncFields(parsed as Record<string, unknown>);
         const merged: StoreSettings = { ...DEFAULT_SETTINGS, ...(sanitized as Partial<StoreSettings>) };
+        const clampNum = (v: unknown, fallback: number, min = 0): number => {
+          const n = Number(v);
+          return Number.isFinite(n) && n >= min ? n : fallback;
+        };
+        merged.lowStockThreshold = clampNum(merged.lowStockThreshold, DEFAULT_SETTINGS.lowStockThreshold, 0);
+        merged.expiryWarnDays = clampNum(merged.expiryWarnDays, DEFAULT_SETTINGS.expiryWarnDays, 1);
+        merged.reorderLeadDays = clampNum(merged.reorderLeadDays, DEFAULT_SETTINGS.reorderLeadDays, 0);
+        merged.reorderSafetyDays = clampNum(merged.reorderSafetyDays, DEFAULT_SETTINGS.reorderSafetyDays, 0);
+        merged.scDiscountCap = clampNum(merged.scDiscountCap, DEFAULT_SETTINGS.scDiscountCap, 0);
+        merged.zCount = Math.floor(clampNum(merged.zCount, 0, 0));
+        if (merged.autoLockMinutes !== undefined) {
+          merged.autoLockMinutes = clampNum(merged.autoLockMinutes, 5, 0);
+        }
+        if (merged.loyaltyPesoPerPoint !== undefined) {
+          merged.loyaltyPesoPerPoint = clampNum(merged.loyaltyPesoPerPoint, 50, 1);
+        }
+        if (merged.loyaltyPointValue !== undefined) {
+          merged.loyaltyPointValue = clampNum(merged.loyaltyPointValue, 1, 0.01);
+        }
         const nameCheck = upgradeLegacyDefaultStoreName(merged.storeName);
         if (nameCheck.upgraded) {
           merged.storeName = nameCheck.storeName;

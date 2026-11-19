@@ -438,8 +438,8 @@ export const PinModal: React.FC<PinModalProps> = ({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${
-        persistent ? 'bg-slate-950/95 backdrop-blur-md' : 'bg-slate-900/55'
+      className={`fixed inset-0 flex items-center justify-center p-4 ${
+        persistent ? 'z-[70] bg-slate-950/95 backdrop-blur-md' : 'z-50 bg-slate-900/55'
       }`}
       onClick={() => {
         if (!persistent) onClose();

@@ -290,8 +290,12 @@ export function expiryInfo(
     return { status: 'none', days: null };
   }
   const [y, m, d] = p.expiry.split('-').map(Number);
+  const expDate = new Date(y, m - 1, d);
+  if (expDate.getFullYear() !== y || expDate.getMonth() !== m - 1 || expDate.getDate() !== d) {
+    return { status: 'none', days: null };
+  }
   const today = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
-  const days = Math.round((new Date(y, m - 1, d).getTime() - today.getTime()) / DAY_MS);
+  const days = Math.round((expDate.getTime() - today.getTime()) / DAY_MS);
   const warn = Number(expiryWarnDays) > 0 ? Number(expiryWarnDays) : 30;
   if (days <= 0) return { status: 'expired', days };
   if (days <= warn) return { status: 'soon', days };
@@ -948,7 +952,12 @@ export function computeReorderList(
 
 export function escapeCsvCell(v: unknown): string {
   let t = String(v ?? '');
-  if (/^[=+\-@\t\r]/.test(t) && Number.isNaN(Number(t))) {
+  const trimmed = t.trimStart();
+  if (
+    /^[\t\r]/.test(t) ||
+    (/^[=+\-@]/.test(trimmed) &&
+      (trimmed.startsWith('=') || trimmed.startsWith('@') || Number.isNaN(Number(trimmed))))
+  ) {
     t = "'" + t;
   }
   return '"' + t.replace(/"/g, '""') + '"';
@@ -1004,26 +1013,97 @@ export function safeJsonParse<T = unknown>(raw: string): T {
   }) as T;
 }
 
+const BACKUP_CREDENTIAL_KEYS = [
+  'adminPin',
+  'adminPinHash',
+  'adminPinSalt',
+  'adminPinIter',
+  'adminPinAlgo',
+  'adminPinWeak',
+  'passkeyCredId',
+  'passkeyPubKeySpki',
+  'passkeyLabel',
+  'passkeyRegisteredAt',
+] as const;
+
 export function validateBackupPayload(data: unknown): { ok: true; data: { products: Product[]; sales: SaleRecord[]; heldOrders: HeldOrder[]; settings?: Partial<StoreSettings>; exportedAt?: string } } | { ok: false; error: string } {
   const isObj = (o: unknown): o is Record<string, unknown> => !!o && typeof o === 'object' && !Array.isArray(o);
+  const isFiniteNonNeg = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
   if (!isObj(data) || data.app !== 'omnimart-ph-pos' || !Array.isArray(data.products) || !Array.isArray(data.sales)) {
     return { ok: false, error: 'This is not an EternalBlue / OmniMart POS backup file' };
   }
-  const productsOk = data.products.every((p) => isObj(p) && typeof p.id === 'string');
-  const salesOk = data.sales.every((x) => isObj(x) && Array.isArray(x.items) && x.items.every(isObj));
-  const heldOk = data.heldOrders === undefined || (Array.isArray(data.heldOrders) && data.heldOrders.every(isObj));
+  const productsOk = data.products.every((p) => {
+    if (!isObj(p) || typeof p.id !== 'string' || !p.id.trim() || typeof p.name !== 'string' || !p.name.trim()) {
+      return false;
+    }
+    if (p.retailPrice !== undefined && (!isFiniteNonNeg(p.retailPrice) || p.retailPrice <= 0)) return false;
+    if (p.wholesalePrice !== undefined && !isFiniteNonNeg(p.wholesalePrice)) return false;
+    if (p.stock !== undefined && !isFiniteNonNeg(p.stock)) return false;
+    if (p.capital !== undefined && !isFiniteNonNeg(p.capital)) return false;
+    if (p.wholesaleMinQty !== undefined && (!isFiniteNonNeg(p.wholesaleMinQty) || p.wholesaleMinQty < 1)) return false;
+    return true;
+  });
+  const salesOk = data.sales.every((x) => {
+    if (!isObj(x) || typeof x.receiptNo !== 'string' || !x.receiptNo.trim() || !Array.isArray(x.items)) {
+      return false;
+    }
+    if (x.grandTotal !== undefined && !isFiniteNonNeg(x.grandTotal)) return false;
+    if (x.tendered !== undefined && !isFiniteNonNeg(x.tendered)) return false;
+    return x.items.every((it) => {
+      if (!isObj(it) || typeof it.name !== 'string' || !it.name.trim()) return false;
+      if (it.qty !== undefined && !isFiniteNonNeg(it.qty)) return false;
+      if (it.unitPrice !== undefined && !isFiniteNonNeg(it.unitPrice)) return false;
+      if (it.lineTotal !== undefined && !isFiniteNonNeg(it.lineTotal)) return false;
+      return true;
+    });
+  });
+  const heldOk =
+    data.heldOrders === undefined ||
+    (Array.isArray(data.heldOrders) &&
+      data.heldOrders.every(
+        (h) => isObj(h) && typeof h.id === 'string' && Array.isArray(h.items) && h.items.every(isObj),
+      ));
   if (!productsOk || !salesOk || !heldOk) {
     return { ok: false, error: 'Backup file is damaged or has unexpected data. Nothing was changed.' };
   }
+
+  let safeSettings: Partial<StoreSettings> | undefined;
+  if (isObj(data.settings)) {
+    const stripped = { ...stripLegacySyncFields(data.settings).sanitized };
+    for (const k of BACKUP_CREDENTIAL_KEYS) {
+      delete stripped[k];
+    }
+    const numericPosKeys = [
+      'lowStockThreshold',
+      'expiryWarnDays',
+      'reorderLeadDays',
+      'reorderSafetyDays',
+      'scDiscountCap',
+      'autoLockMinutes',
+      'zCount',
+      'loyaltyPesoPerPoint',
+      'loyaltyPointValue',
+    ] as const;
+    for (const nk of numericPosKeys) {
+      if (stripped[nk] !== undefined) {
+        const num = Number(stripped[nk]);
+        if (!Number.isFinite(num) || num < 0) {
+          delete stripped[nk];
+        } else {
+          stripped[nk] = num;
+        }
+      }
+    }
+    safeSettings = stripped as Partial<StoreSettings>;
+  }
+
   return {
     ok: true,
     data: {
       products: data.products as unknown as Product[],
       sales: data.sales as unknown as SaleRecord[],
       heldOrders: (Array.isArray(data.heldOrders) ? data.heldOrders : []) as unknown as HeldOrder[],
-      settings: isObj(data.settings)
-        ? (stripLegacySyncFields(data.settings).sanitized as Partial<StoreSettings>)
-        : undefined,
+      settings: safeSettings,
       exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : undefined,
     },
   };

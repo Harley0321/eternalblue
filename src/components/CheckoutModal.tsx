@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Award,
   Banknote,
@@ -73,6 +73,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [quickLimitStr, setQuickLimitStr] = useState('1000');
 
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
+  const submitUnlockTimerRef = useRef<number | null>(null);
 
   const selectedCustomer = useMemo(
     () => customers.find((c) => c.id === customerId) || null,
@@ -98,6 +101,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const pointsWillEarn = selectedCustomer ? computeLoyaltyPointsEarned(finalDue, pesoPerPoint) : 0;
 
   useEffect(() => {
+    if (submitUnlockTimerRef.current !== null) {
+      window.clearTimeout(submitUnlockTimerRef.current);
+      submitUnlockTimerRef.current = null;
+    }
+    submitLockRef.current = false;
+    setSubmitting(false);
     if (!open) return;
     const defDue = new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-CA');
     setMethod('Cash');
@@ -116,6 +125,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setQuickLimitStr('1000');
     setError('');
   }, [open, totals.grandTotal]);
+
+  useEffect(() => {
+    return () => {
+      if (submitUnlockTimerRef.current !== null) {
+        window.clearTimeout(submitUnlockTimerRef.current);
+        submitUnlockTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Keep cash tendered synced when toggling Suki points redemption if cashier hasn't entered custom cash
   useEffect(() => {
@@ -140,13 +158,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   if (!open) return null;
 
-  const tenderedNum = parseFloat(tenderedStr) || 0;
-  const cashChange = round2(tenderedNum - finalDue);
-  const splitCash = round2(parseFloat(splitCashStr) || 0);
-  const splitDigital = round2(Math.max(0, finalDue - splitCash));
+  const parsedTendered = parseFloat(tenderedStr);
+  const tenderedNum = Number.isFinite(parsedTendered) ? parsedTendered : NaN;
+  const safeTenderedDisplay = Number.isFinite(tenderedNum) ? tenderedNum : 0;
+  const cashChange = round2(safeTenderedDisplay - finalDue);
+  const parsedSplitCash = parseFloat(splitCashStr);
+  const splitCash = Number.isFinite(parsedSplitCash) ? round2(parsedSplitCash) : NaN;
+  const safeSplitCashDisplay = Number.isFinite(splitCash) ? splitCash : 0;
+  const splitDigital = round2(Math.max(0, finalDue - safeSplitCashDisplay));
 
   const addBillToTendered = (bill: number) => {
-    const current = parseFloat(tenderedStr) || 0;
+    const parsed = parseFloat(tenderedStr);
+    const current = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
     const base = Math.abs(current - finalDue) < 0.001 ? 0 : current;
     setTenderedStr(round2(base + bill).toFixed(2));
     setError('');
@@ -178,8 +201,23 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       projectedUtangBalance > selectedCustomer.creditLimit + 1e-6,
   );
 
+  const beginSubmit = (payload: Parameters<CheckoutModalProps['onCompleteSale']>[0]) => {
+    submitLockRef.current = true;
+    setSubmitting(true);
+    if (submitUnlockTimerRef.current !== null) {
+      window.clearTimeout(submitUnlockTimerRef.current);
+    }
+    submitUnlockTimerRef.current = window.setTimeout(() => {
+      submitLockRef.current = false;
+      setSubmitting(false);
+      submitUnlockTimerRef.current = null;
+    }, 400);
+    onCompleteSale(payload);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitLockRef.current) return;
     setError('');
 
     if (totals.seniorDiscount > 0 && !seniorId.trim()) {
@@ -204,7 +242,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         );
         return;
       }
-      onCompleteSale({
+      beginSubmit({
         paymentMethod: 'Utang',
         tendered: finalDue,
         change: 0,
@@ -217,11 +255,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
 
     if (method === 'Cash') {
+      if (!Number.isFinite(tenderedNum) || tenderedNum < 0) {
+        setError('Enter a valid non-negative cash amount.');
+        return;
+      }
       if (tenderedNum + 1e-6 < finalDue) {
         setError(`Cash tendered is short by ${formatPeso(finalDue - tenderedNum)}.`);
         return;
       }
-      onCompleteSale({
+      beginSubmit({
         paymentMethod: 'Cash',
         tendered: round2(tenderedNum),
         change: Math.max(0, cashChange),
@@ -232,11 +274,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
 
     if (method === 'Split') {
-      if (splitCash <= 0 || splitCash >= finalDue) {
+      if (!Number.isFinite(splitCash) || splitCash <= 0 || splitCash >= finalDue) {
         setError('In Split Payment, Cash portion must be greater than ₱0 and less than the Amount Due.');
         return;
       }
-      onCompleteSale({
+      beginSubmit({
         paymentMethod: 'Split',
         tendered: finalDue,
         change: 0,
@@ -252,7 +294,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       return;
     }
 
-    onCompleteSale({
+    beginSubmit({
       paymentMethod: method,
       tendered: finalDue,
       change: 0,
@@ -668,11 +710,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </button>
           <button
             type="submit"
+            disabled={submitting}
             data-testid="confirm-complete-sale"
-            className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-extrabold cursor-pointer transition-colors"
+            className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-extrabold cursor-pointer disabled:opacity-60 transition-colors"
           >
             <CheckCircle2 className="w-4 h-4" />
-            Complete Sale ({formatPeso(finalDue)})
+            {submitting ? 'Completing…' : `Complete Sale (${formatPeso(finalDue)})`}
           </button>
         </div>
       </form>

@@ -3,6 +3,13 @@
 # so mobile, tablet, and PC PWAs receive GitHub -> Cloudflare production updates automatically
 # without ever touching device-local store data in localStorage/IndexedDB.
 
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-DNS-Prefetch-Control: off
+  X-Permitted-Cross-Domain-Policies: none
+  Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=(), usb=()
+
 /
   Cache-Control: no-cache, no-store, must-revalidate
 

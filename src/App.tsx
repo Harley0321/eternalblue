@@ -60,6 +60,7 @@ import {
   applyUtangCharge,
   applyUtangPayment,
   computeLoyaltyPointsEarned,
+  computePointsRedemption,
   computeShiftLedgerSummary,
   executeRepackConversion,
   isCustomerOverdue,
@@ -67,7 +68,7 @@ import {
 import { warmUpScannerEngine } from './utils/scannerEngine';
 import { initPwaAutoUpdater, shouldAutoApplyAppUpdate } from './utils/pwaUpdater';
 import { APP_VERSION } from './version';
-import { pinIsSet } from './utils/pinSecurity';
+import { pinIsSet, setCashierPinFields, verifyCashierPin } from './utils/pinSecurity';
 import {
   createSecurityLogEntry,
   ensureDeviceHmacKey,
@@ -240,8 +241,14 @@ export default function App() {
   const [salesCashDrawerSignal, setSalesCashDrawerSignal] = useState(0);
   const [confirmState, setConfirmState] = useState<{
     open: boolean;
-    type: 'delete-product' | 'clear-cart' | 'clear-sales' | 'factory-reset';
+    type: 'delete-product' | 'clear-cart' | 'clear-sales' | 'factory-reset' | 'replace-restore';
     productId?: string;
+    restorePayload?: {
+      products: Product[];
+      sales: SaleRecord[];
+      heldOrders: HeldOrder[];
+      settings?: Partial<StoreSettings>;
+    };
     title: string;
     message: string;
     confirmLabel: string;
@@ -686,42 +693,56 @@ export default function App() {
   );
 
   const handleOpenShift = useCallback(
-    (cashierId: string, openingFloat: number, pinInput?: string): boolean => {
+    async (cashierId: string, openingFloat: number, pinInput?: string): Promise<boolean> => {
       const cashier = cashiers.find((c) => c.id === cashierId && c.active);
       if (!cashier) {
         toast('Select an active cashier profile', 'warning');
         return false;
       }
-      if (cashier.pin && cashier.pin !== (pinInput || '').trim()) {
-        toast(`Incorrect cashier PIN for ${cashier.name}`, 'error');
+      const check = await verifyCashierPin(pinInput || '', cashier);
+      if (!check.ok) {
+        toast(check.error || `Incorrect cashier PIN for ${cashier.name}`, 'error');
+        void logSecurityEvent(
+          check.lockedOutNow ? 'PIN_LOCKOUT' : 'PIN_FAIL',
+          `${check.lockedOutNow ? 'Cashier lockout triggered' : 'Failed cashier PIN'} for ${cashier.name}`,
+          check.lockedOutNow ? 'critical' : 'warning',
+        );
         return false;
       }
+      if (check.upgradedCashier) {
+        setCashiers((prev) => {
+          const next = prev.map((c) => (c.id === check.upgradedCashier!.id ? check.upgradedCashier! : c));
+          saveCashiersToStorage(next);
+          return next;
+        });
+      }
+      const cleanFloat = Number.isFinite(openingFloat) ? Math.max(0, round2(openingFloat)) : 0;
       const nextShift: ActiveShiftState = {
         shiftId: 'SHF-' + Date.now().toString(36).toUpperCase(),
         cashierId: cashier.id,
         cashierName: cashier.name,
         cashierRole: cashier.role,
         openedAt: new Date().toISOString(),
-        openingFloat: Math.max(0, round2(openingFloat)),
+        openingFloat: cleanFloat,
       };
       setActiveShift(nextShift);
       saveActiveShiftToStorage(nextShift);
       toast(`Shift started for ${cashier.name} (${formatPeso(nextShift.openingFloat)} float)`, 'success');
       return true;
     },
-    [cashiers, toast],
+    [cashiers, logSecurityEvent, toast],
   );
 
   const handleAddCashier = useCallback(
-    (data: { name: string; role: 'manager' | 'cashier'; pin?: string }) => {
-      const created: CashierAccount = {
+    async (data: { name: string; role: 'manager' | 'cashier'; pin?: string }) => {
+      const base: CashierAccount = {
         id: 'CSH-' + Date.now().toString(36).toUpperCase(),
         name: data.name.trim(),
         role: data.role,
-        pin: data.pin,
         active: true,
         createdAt: new Date().toISOString(),
       };
+      const created = data.pin ? await setCashierPinFields(base, data.pin) : base;
       setCashiers((prev) => {
         const next = [...prev, created];
         saveCashiersToStorage(next);
@@ -816,15 +837,37 @@ export default function App() {
     [toast],
   );
 
+  const closeTransientOverlays = useCallback(() => {
+    setPinModal((p) => ({ ...p, open: false }));
+    setCheckoutOpen(false);
+    setReceiptSale(null);
+    setReceiptReading(null);
+    setScannerState((s) => ({ ...s, open: false, initialContinuous: undefined }));
+    setCategorySheetOpen(false);
+    setHoldModalOpen(false);
+    setHeldModalOpen(false);
+    setWeightProduct(null);
+    setProductModal((pm) => ({ ...pm, open: false }));
+    setStockAdjustProduct(null);
+    setBatchStockModal((b) => ({ ...b, open: false }));
+    setCsvImportOpen(false);
+    setStockLogOpen(false);
+    setScReviewOpen(false);
+    setReorderOpen(false);
+    setVoidTargetSale(null);
+    setConfirmState(null);
+    setAssistantOpen(false);
+  }, []);
+
   const handleLockTerminal = useCallback(() => {
     if (!pinIsSet(settings)) return;
     setSettingsUnlocked(false);
     setActiveTab((prev) => (prev === 'settings' ? 'pos' : prev));
+    closeTransientOverlays();
     setTerminalLocked(true);
-    setPinModal((p) => ({ ...p, open: false }));
     void logSecurityEvent('POS_LOCK', 'Terminal locked manually by operator', 'info');
     toast('Terminal locked', 'success');
-  }, [logSecurityEvent, settings, toast]);
+  }, [closeTransientOverlays, logSecurityEvent, settings, toast]);
 
   // Configurable inactivity auto-lock (Settings-only or Whole-POS)
   const lastActivityRef = useRef(Date.now());
@@ -844,6 +887,8 @@ export default function App() {
       if (Date.now() - lastActivityRef.current > mins * 60 * 1000) {
         if (monitorWholePos) {
           setSettingsUnlocked(false);
+          setActiveTab((prev) => (prev === 'settings' ? 'pos' : prev));
+          closeTransientOverlays();
           setTerminalLocked(true);
           void logSecurityEvent('POS_LOCK', `Terminal auto-locked after ${mins} min idle`, 'info');
           toast(`Terminal auto-locked (${mins}m idle)`, 'warning');
@@ -860,21 +905,28 @@ export default function App() {
       window.removeEventListener('pointerdown', bump);
       window.removeEventListener('keydown', bump);
     };
-  }, [activeTab, settingsUnlocked, settings, terminalLocked, logSecurityEvent, toast]);
+  }, [activeTab, settingsUnlocked, settings, terminalLocked, closeTransientOverlays, logSecurityEvent, toast]);
 
   // Cart manipulation
   const addQtyToCart = useCallback(
     (product: Product, addQty: number) => {
+      if (!Number.isFinite(addQty) || addQty <= 0) return;
+      const exp = expiryInfo(product, Number(settings.expiryWarnDays) || 30);
+      if (exp.status === 'expired') {
+        toast(`${product.name} is expired and cannot be sold`, 'error');
+        return;
+      }
       if (product.stock <= 0) {
         toast(`${product.name} is out of stock`, 'error');
         return;
       }
+      const cleanAdd = product.unit === 'kg' ? Number(addQty.toFixed(3)) : Math.max(1, Math.round(addQty));
 
       let warningMsg = '';
       setCart((prev) => {
         const idx = prev.findIndex((c) => c.productId === product.id);
         const currentQty = idx >= 0 ? prev[idx].qty : 0;
-        const targetQty = Number((currentQty + addQty).toFixed(3));
+        const targetQty = Number((currentQty + cleanAdd).toFixed(3));
         if (targetQty > product.stock + 1e-6) {
           warningMsg = `Only ${product.stock} ${product.unit} available in stock`;
           return prev;
@@ -925,6 +977,10 @@ export default function App() {
     (productId: string) => {
       const prod = productMap.get(productId);
       if (!prod) return;
+      if (expiryInfo(prod, Number(settings.expiryWarnDays) || 30).status === 'expired') {
+        toast(`${prod.name} is expired and cannot be sold`, 'error');
+        return;
+      }
       if (prod.stock <= 0) {
         toast(`${prod.name} is out of stock`, 'error');
         return;
@@ -935,7 +991,7 @@ export default function App() {
         addQtyToCart(prod, 1);
       }
     },
-    [addQtyToCart, productMap, toast],
+    [addQtyToCart, productMap, settings.expiryWarnDays, toast],
   );
 
   const handleChangeCartQty = useCallback(
@@ -1086,6 +1142,8 @@ export default function App() {
   const wedgeRef = useRef<{ buf: string; lastTime: number }>({ buf: '', lastTime: 0 });
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (terminalLocked) return;
+
       if (e.key === 'F2') {
         if (activeTab === 'pos' && cart.length > 0) {
           e.preventDefault();
@@ -1208,13 +1266,42 @@ export default function App() {
       digitalMethod: 'GCash' | 'Card';
     };
   }) => {
+    if (cart.length === 0) {
+      toast('Basket is empty', 'warning');
+      return;
+    }
+
+    const warnDays = Number(settings.expiryWarnDays) || 30;
+    const requestedByProduct = new Map<string, number>();
+    for (const line of cart) {
+      if (!Number.isFinite(line.qty) || line.qty <= 0) {
+        toast(`Invalid quantity for ${line.name}`, 'error');
+        return;
+      }
+      requestedByProduct.set(
+        line.productId,
+        Number(((requestedByProduct.get(line.productId) || 0) + line.qty).toFixed(3)),
+      );
+    }
+    for (const [pid, reqQty] of requestedByProduct) {
+      const liveProd = productMap.get(pid);
+      if (!liveProd) {
+        toast('One or more items in basket are no longer in inventory', 'error');
+        return;
+      }
+      if (expiryInfo(liveProd, warnDays).status === 'expired') {
+        toast(`${liveProd.name} is expired and cannot be checked out`, 'error');
+        return;
+      }
+      if (reqQty > liveProd.stock + 1e-6) {
+        toast(`Insufficient stock for ${liveProd.name} (${liveProd.stock} ${liveProd.unit} left)`, 'error');
+        return;
+      }
+    }
+
     const now = new Date();
     const receiptNo = nextReceiptNo(sales, now);
     const nowIso = now.toISOString();
-
-    const pointsDiscount = round2(payload.pointsDiscount || 0);
-    const pointsRedeemed = Math.max(0, Math.floor(payload.pointsRedeemed || 0));
-    const finalGrandTotal = round2(Math.max(0, cartTotals.grandTotal - pointsDiscount));
 
     let customer = payload.customerId
       ? customers.find((c) => c.id === payload.customerId) || null
@@ -1223,6 +1310,43 @@ export default function App() {
     if (payload.paymentMethod === 'Utang' && !customer) {
       toast('Select a Suki customer account for Utang checkout', 'warning');
       return;
+    }
+
+    const pointValue = Number(settings.loyaltyPointValue) > 0 ? Number(settings.loyaltyPointValue) : 1;
+    const requestedPts = customer ? Math.max(0, Math.floor(Number(payload.pointsRedeemed) || 0)) : 0;
+    const clampedRedeem = customer
+      ? computePointsRedemption(requestedPts, customer.points, pointValue, cartTotals.grandTotal)
+      : { pointsUsed: 0, discountPeso: 0 };
+
+    const pointsDiscount = round2(clampedRedeem.discountPeso);
+    const pointsRedeemed = clampedRedeem.pointsUsed;
+    const finalGrandTotal = round2(Math.max(0, cartTotals.grandTotal - pointsDiscount));
+
+    let safeTendered = Number.isFinite(payload.tendered) ? round2(payload.tendered) : finalGrandTotal;
+    let safeChange = 0;
+    let safeSplit = payload.splitDetails;
+
+    if (payload.paymentMethod === 'Cash') {
+      if (!Number.isFinite(safeTendered) || safeTendered + 1e-6 < finalGrandTotal) {
+        toast('Cash tendered cannot be less than Amount Due', 'error');
+        return;
+      }
+      safeChange = round2(Math.max(0, safeTendered - finalGrandTotal));
+    } else if (payload.paymentMethod === 'Split') {
+      if (!safeSplit || !Number.isFinite(safeSplit.cash) || safeSplit.cash <= 0 || safeSplit.cash >= finalGrandTotal) {
+        toast('Split cash portion must be between ₱0 and Amount Due', 'error');
+        return;
+      }
+      const cleanCash = round2(safeSplit.cash);
+      const cleanDigital = round2(Math.max(0, finalGrandTotal - cleanCash));
+      safeSplit = {
+        cash: cleanCash,
+        digital: cleanDigital,
+        digitalMethod: safeSplit.digitalMethod === 'Card' ? 'Card' : 'GCash',
+      };
+      safeTendered = finalGrandTotal;
+    } else {
+      safeTendered = finalGrandTotal;
     }
 
     const pesoPerPoint =
@@ -1306,10 +1430,10 @@ export default function App() {
       seniorDiscount: cartTotals.seniorDiscount,
       grandTotal: finalGrandTotal,
       paymentMethod: payload.paymentMethod,
-      tendered: payload.tendered,
-      change: payload.change,
+      tendered: safeTendered,
+      change: safeChange,
       refNo: payload.refNo,
-      splitDetails: payload.splitDetails,
+      splitDetails: safeSplit,
       seniorId: payload.seniorId,
       seniorBase: cartTotals.seniorDiscount > 0 ? cartTotals.seniorBase : undefined,
       seniorCapped: cartTotals.seniorDiscount > 0 ? cartTotals.seniorCapped : undefined,
@@ -1324,12 +1448,12 @@ export default function App() {
       shiftId: activeShift?.shiftId,
     };
 
-    // Deduct stock safely
+    // Deduct stock safely across all lines
     updateProducts((prev) =>
       prev.map((p) => {
-        const soldLine = cart.find((c) => c.productId === p.id);
-        if (!soldLine) return p;
-        const nextStock = Math.max(0, Number((p.stock - soldLine.qty).toFixed(3)));
+        const soldQty = requestedByProduct.get(p.id);
+        if (!soldQty) return p;
+        const nextStock = Math.max(0, Number((p.stock - soldQty).toFixed(3)));
         return { ...p, stock: nextStock };
       }),
     );
@@ -1371,12 +1495,13 @@ export default function App() {
     const order = heldOrders.find((h) => h.id === id);
     if (!order) return;
 
-    // Validate recalled lines against live stock so stale parked baskets cannot oversell
+    // Validate recalled lines against live stock and expiry so stale parked baskets cannot oversell
+    const warnDays = Number(settings.expiryWarnDays) || 30;
     let adjustedCount = 0;
     const validatedItems: CartLine[] = [];
     for (const line of order.items) {
       const liveProd = productMap.get(line.productId);
-      if (!liveProd || liveProd.stock <= 0) {
+      if (!liveProd || liveProd.stock <= 0 || expiryInfo(liveProd, warnDays).status === 'expired') {
         adjustedCount++;
         continue;
       }
@@ -1720,18 +1845,20 @@ export default function App() {
     const nowIso = new Date().toISOString();
     const voidLogs: StockLogEntry[] = [];
 
-    // Restore stock for each item and record audit entries
+    // Restore stock for all matching lines (summed across lines) and record audit entries
     updateProducts((prev) =>
       prev.map((p) => {
-        const line = target.items.find((it) => it.productId === p.id || it.name === p.name);
-        if (!line) return p;
-        const nextStock = Number((p.stock + line.qty).toFixed(3));
+        const restoreQty = target.items
+          .filter((it) => it.productId === p.id || (!it.productId && it.name === p.name))
+          .reduce((acc, it) => acc + (Number(it.qty) || 0), 0);
+        if (!(restoreQty > 0)) return p;
+        const nextStock = Number((p.stock + restoreQty).toFixed(3));
         voidLogs.push({
           id: `LOG-${Date.now().toString(36)}-${p.id}`,
           dateIso: nowIso,
           productId: p.id,
           productName: p.name,
-          delta: line.qty,
+          delta: restoreQty,
           prevStock: p.stock,
           newStock: nextStock,
           reason: 'Count Correction',
@@ -1809,16 +1936,13 @@ export default function App() {
     toast(`Receipt ${receiptNo} voided and stock restored`, 'warning');
   };
 
-  const handleApplyRestore = (
-    payload: {
+  const applyReplaceRestore = useCallback(
+    (payload: {
       products: Product[];
       sales: SaleRecord[];
       heldOrders: HeldOrder[];
       settings?: Partial<StoreSettings>;
-    },
-    mode: 'replace' | 'merge',
-  ) => {
-    if (mode === 'replace') {
+    }) => {
       updateProducts(() => payload.products);
       updateSales(() => payload.sales);
       updateHeld(() => payload.heldOrders);
@@ -1846,6 +1970,30 @@ export default function App() {
         'warning',
       );
       toast('Backup restored (device PIN & Passkeys preserved)', 'success');
+    },
+    [logSecurityEvent, settings, toast, updateHeld, updateProducts, updateSales, updateSettings],
+  );
+
+  const handleApplyRestore = (
+    payload: {
+      products: Product[];
+      sales: SaleRecord[];
+      heldOrders: HeldOrder[];
+      settings?: Partial<StoreSettings>;
+    },
+    mode: 'replace' | 'merge',
+  ) => {
+    if (mode === 'replace') {
+      setConfirmState({
+        open: true,
+        type: 'replace-restore',
+        restorePayload: payload,
+        title: 'Replace All Device Data?',
+        message: `This will replace all current products, sales, and held orders with the backup (${payload.products.length} SKUs, ${payload.sales.length} sales). Device Manager PIN and Passkeys are preserved.`,
+        confirmLabel: 'Replace Device Data',
+        danger: true,
+        requirePin: true,
+      });
       return;
     }
 
@@ -1888,7 +2036,7 @@ export default function App() {
       void logSecurityEvent('PIN_UPGRADED', 'Auto-upgraded Manager PIN to PBKDF2-SHA512 (310k)', 'info');
     }
     if (!confirmState) return;
-    const { type, productId } = confirmState;
+    const { type, productId, restorePayload } = confirmState;
 
     if (type === 'delete-product' && productId) {
       updateProducts((prev) => prev.filter((p) => p.id !== productId));
@@ -1903,6 +2051,8 @@ export default function App() {
       updateSales(() => []);
       void logSecurityEvent('DATA_CLEARED', `Cleared all sales history (${sales.length} receipts removed)`, 'critical');
       toast('Sales history cleared', 'warning');
+    } else if (type === 'replace-restore' && restorePayload) {
+      applyReplaceRestore(restorePayload);
     } else if (type === 'factory-reset') {
       const freshCatalog = buildDefaultCatalog();
       updateProducts(() => freshCatalog);

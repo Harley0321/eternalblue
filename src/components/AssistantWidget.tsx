@@ -129,6 +129,16 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const pulse = useMemo(
     () =>
@@ -214,8 +224,12 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
       const clean = text.replace(/\*\*/g, '');
       await navigator.clipboard.writeText(clean);
       setCopiedId(id);
-      window.setTimeout(() => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
         setCopiedId((prev) => (prev === id ? null : prev));
+        copyTimerRef.current = null;
       }, 1500);
     } catch {
       // Clipboard unavailable in restricted context

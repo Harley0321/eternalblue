@@ -54,6 +54,7 @@ import {
   summarizeDigitalServices,
   summarizeUtangLedger,
 } from '../utils/opsMath';
+import { cashierHasPin } from '../utils/pinSecurity';
 import { DAY_MS, formatPeso, startOfDay } from '../utils/posMath';
 import { BarcodeSvg } from './BarcodeSvg';
 
@@ -96,8 +97,8 @@ interface OperationsViewProps {
   onCreateRepackRule: (rule: Omit<RepackRule, 'id' | 'updatedAt'>) => void;
   onDeleteRepackRule: (ruleId: string) => void;
   onRunRepack: (ruleId: string, qty: number) => void;
-  onOpenShift: (cashierId: string, openingFloat: number, pinInput?: string) => boolean;
-  onAddCashier: (data: { name: string; role: 'manager' | 'cashier'; pin?: string }) => void;
+  onOpenShift: (cashierId: string, openingFloat: number, pinInput?: string) => Promise<boolean> | boolean;
+  onAddCashier: (data: { name: string; role: 'manager' | 'cashier'; pin?: string }) => Promise<void> | void;
   onToggleCashierActive: (cashierId: string) => void;
   onAddDrawerEvent: (data: {
     type: DrawerEventType;
@@ -1263,9 +1264,13 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                 </h2>
 
                 <form
-                  onSubmit={(e) => {
+                  onSubmit={async (e) => {
                     e.preventDefault();
-                    const ok = onOpenShift(shiftCashierId, Math.max(0, parseFloat(shiftFloatStr) || 0), shiftPin);
+                    const ok = await onOpenShift(
+                      shiftCashierId,
+                      Math.max(0, parseFloat(shiftFloatStr) || 0),
+                      shiftPin,
+                    );
                     if (ok) setShiftPin('');
                   }}
                   className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end bg-slate-50 border border-slate-200 rounded-xl p-3"
@@ -1299,7 +1304,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                     />
                   </div>
                   <div className="flex gap-1.5">
-                    {cashiers.find((c) => c.id === shiftCashierId)?.pin && (
+                    {cashierHasPin(cashiers.find((c) => c.id === shiftCashierId)) && (
                       <input
                         type="password"
                         maxLength={15}
@@ -1326,49 +1331,54 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                     <span>Cashier Profiles ({cashiers.length})</span>
                   </div>
                   <form
-                    onSubmit={(e) => {
+                    onSubmit={async (e) => {
                       e.preventDefault();
                       if (!newCashierName.trim()) {
                         onToast('Enter cashier name', 'warning');
                         return;
                       }
-                      onAddCashier({
+                      const cleanPin = newCashierPin.trim();
+                      if (cleanPin && (cleanPin.length < 4 || /\s/.test(cleanPin))) {
+                        onToast('Cashier PIN must be 4–15 characters (no spaces)', 'warning');
+                        return;
+                      }
+                      await onAddCashier({
                         name: newCashierName.trim(),
                         role: newCashierRole,
-                        pin: newCashierPin.trim() || undefined,
+                        pin: cleanPin || undefined,
                       });
                       setNewCashierName('');
                       setNewCashierPin('');
                     }}
-                    className="grid grid-cols-1 sm:grid-cols-4 gap-1.5"
+                    className="grid grid-cols-1 sm:grid-cols-12 gap-1.5"
                   >
                     <input
                       type="text"
                       placeholder="Cashier Name"
                       value={newCashierName}
                       onChange={(e) => setNewCashierName(e.target.value)}
-                      className="sm:col-span-2 px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs"
+                      className="sm:col-span-5 px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs"
                     />
                     <select
                       value={newCashierRole}
                       onChange={(e) => setNewCashierRole(e.target.value as 'cashier' | 'manager')}
-                      className="px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold"
+                      className="sm:col-span-3 px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold"
                     >
                       <option value="cashier">Cashier</option>
                       <option value="manager">Manager</option>
                     </select>
-                    <div className="flex gap-1">
+                    <div className="sm:col-span-4 flex gap-1.5">
                       <input
                         type="password"
                         maxLength={15}
-                        placeholder="PIN (max 15)"
+                        placeholder="PIN (4–15)"
                         value={newCashierPin}
                         onChange={(e) => setNewCashierPin(e.target.value.slice(0, 15))}
-                        className="w-24 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono-num"
+                        className="min-w-0 flex-1 px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono-num"
                       />
                       <button
                         type="submit"
-                        className="flex-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold cursor-pointer"
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer"
                       >
                         + Add
                       </button>
@@ -1382,7 +1392,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                           <span className="font-bold text-slate-800">{c.name}</span>
                           <span className="ml-1.5 text-[10px] font-bold uppercase text-slate-500">
                             {c.role}
-                            {c.pin ? ' · PIN locked' : ''}
+                            {cashierHasPin(c) ? ' · PIN locked' : ''}
                           </span>
                         </div>
                         {c.id !== 'CSH-OWNER' && (

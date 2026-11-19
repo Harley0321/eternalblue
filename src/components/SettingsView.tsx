@@ -392,8 +392,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const a = document.createElement('a');
     a.href = url;
     a.download = `omnimart-backup-${new Date().toLocaleDateString('en-CA')}.json`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 
     const updated = { ...settings, lastBackup: nowIso };
     onSaveSettings(updated);
@@ -426,8 +428,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const a = document.createElement('a');
       a.href = url;
       a.download = `omnimart-vault-aes256gcm-${new Date().toLocaleDateString('en-CA')}.json`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 
       const updated = { ...settings, lastBackup: nowIso };
       onSaveSettings(updated);
@@ -526,8 +530,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const a = document.createElement('a');
       a.href = url;
       a.download = `omnimart-offline-kit-${new Date().toLocaleDateString('en-CA')}.zip`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       onToast('Offline backup kit ZIP downloaded', 'success');
     } catch {
       onToast('Could not build offline ZIP', 'error');

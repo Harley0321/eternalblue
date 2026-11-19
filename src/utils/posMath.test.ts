@@ -1526,3 +1526,249 @@ test('DEFAULT_STORE_NAME upgrades untouched legacy placeholder without touching 
     upgraded: false,
   });
 });
+
+test('security hardening: subarray byteOffset safety, DER validation, WebAuthn UV enforcement, and chain head validation', async () => {
+  const {
+    derEcdsaToP1363,
+    verifySecurityChain,
+    verifyWebAuthnAssertionSignature,
+    createSecurityLogEntry,
+  } = await import('./cryptoVault');
+  const {
+    b64ToBytes,
+    bytesToB64,
+    derivePinHash,
+    toExactArrayBuffer,
+  } = await import('./pinSecurity');
+
+  // 1. Subarray with byteOffset > 0 works accurately with derivePinHash & toExactArrayBuffer
+  const padded = new Uint8Array([99, 98, 10, 20, 30, 40, 50, 60, 77]);
+  const sub = padded.subarray(2, 8);
+  assert.equal(sub.byteOffset, 2);
+  const subBuf = toExactArrayBuffer(sub);
+  assert.equal(subBuf.byteLength, 6);
+  assert.deepEqual(Array.from(new Uint8Array(subBuf)), [10, 20, 30, 40, 50, 60]);
+
+  const saltB64 = bytesToB64(sub);
+  const decodedSalt = b64ToBytes(saltB64);
+  assert.deepEqual(Array.from(decodedSalt), [10, 20, 30, 40, 50, 60]);
+  const hash1 = await derivePinHash('482910', saltB64, 1000, 'PBKDF2-SHA512');
+  const hash2 = await derivePinHash('482910', bytesToB64(new Uint8Array([10, 20, 30, 40, 50, 60])), 1000, 'PBKDF2-SHA512');
+  assert.equal(hash1, hash2);
+
+  // 2. derEcdsaToP1363 rejects negative ASN.1 integer signs, invalid lengths, and trailing bytes
+  assert.throws(
+    () => derEcdsaToP1363(new Uint8Array([0x30, 0x06, 0x02, 0x01, 0x80, 0x02, 0x01, 0x01])),
+    /negative/i,
+  );
+  assert.throws(
+    () => derEcdsaToP1363(new Uint8Array([0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01, 0x00])),
+    /bounds/i,
+  );
+
+  // 3. WebAuthn must reject assertions missing User Verification (UV bit 0x04) when UP (0x01) is set alone
+  const kp = await globalThis.crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify'],
+  );
+  const spkiB64 = bytesToB64(
+    new Uint8Array(await globalThis.crypto.subtle.exportKey('spki', kp.publicKey)),
+  );
+  const challenge = new Uint8Array(40).subarray(5, 37); // subarray with byteOffset > 0
+  challenge.fill(7);
+  const challengeB64Url = bytesToB64(challenge).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const clientBytesFull = new TextEncoder().encode(
+    'XX' + JSON.stringify({ type: 'webauthn.get', challenge: challengeB64Url, origin: 'http://localhost:3000' }) + 'YY',
+  );
+  const clientDataJSON = clientBytesFull.subarray(2, clientBytesFull.length - 2);
+  const authDataFull = new Uint8Array(45);
+  const authDataNoUv = authDataFull.subarray(4, 41);
+  authDataNoUv[32] = 0x01; // UP only, missing UV!
+
+  const clientHash = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', toExactArrayBuffer(clientDataJSON)));
+  const signedBuf = new Uint8Array(authDataNoUv.length + clientHash.length);
+  signedBuf.set(authDataNoUv, 0);
+  signedBuf.set(clientHash, authDataNoUv.length);
+  const rawSig = new Uint8Array(
+    await globalThis.crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey, signedBuf),
+  );
+  const encInt = (bytes: Uint8Array): number[] => {
+    let i = 0;
+    while (i < bytes.length - 1 && bytes[i] === 0) i++;
+    const trimmed = Array.from(bytes.slice(i));
+    if (trimmed[0] >= 0x80) trimmed.unshift(0);
+    return [0x02, trimmed.length, ...trimmed];
+  };
+  const rA = encInt(rawSig.slice(0, 32));
+  const sA = encInt(rawSig.slice(32, 64));
+  const derNoUv = new Uint8Array([0x30, rA.length + sA.length, ...rA, ...sA]);
+
+  const rejectedNoUv = await verifyWebAuthnAssertionSignature({
+    spkiB64,
+    authenticatorData: authDataNoUv,
+    clientDataJSON,
+    derSignature: derNoUv,
+    expectedChallenge: challenge,
+    expectedOrigin: 'http://localhost:3000',
+  });
+  assert.equal(rejectedNoUv, false);
+
+  // Valid UV (0x05) with subarray inputs passes
+  const authDataUv = new Uint8Array(45).subarray(4, 41);
+  authDataUv[32] = 0x05;
+  const signedBufUv = new Uint8Array(authDataUv.length + clientHash.length);
+  signedBufUv.set(authDataUv, 0);
+  signedBufUv.set(clientHash, authDataUv.length);
+  const rawSigUv = new Uint8Array(
+    await globalThis.crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey, signedBufUv),
+  );
+  const rUv = encInt(rawSigUv.slice(0, 32));
+  const sUv = encInt(rawSigUv.slice(32, 64));
+  const derUv = new Uint8Array([9, 0x30, rUv.length + sUv.length, ...rUv, ...sUv, 9]).subarray(1, 3 + rUv.length + sUv.length);
+
+  const acceptedUv = await verifyWebAuthnAssertionSignature({
+    spkiB64,
+    authenticatorData: authDataUv,
+    clientDataJSON,
+    derSignature: derUv,
+    expectedChallenge: challenge,
+    expectedOrigin: 'http://localhost:3000',
+  });
+  assert.equal(acceptedUv, true);
+
+  // 4. verifySecurityChain rejects forged GENESIS at seq > 1 and rejects sequence gaps
+  const e1 = await createSecurityLogEntry([], {
+    event: 'PIN_SET',
+    severity: 'info',
+    summary: 'Entry 1',
+    signWithHardware: false,
+  });
+  const e2 = await createSecurityLogEntry([e1], {
+    event: 'PIN_SET',
+    severity: 'info',
+    summary: 'Entry 2',
+    signWithHardware: false,
+  });
+  const forgedHead = { ...e2, seq: 5, prevHash: 'GENESIS' };
+  const forgedReport = await verifySecurityChain([forgedHead]);
+  assert.equal(forgedReport.valid, false);
+  assert.ok(forgedReport.brokenSeqs.includes(5));
+
+  const e3 = await createSecurityLogEntry([e2, e1], {
+    event: 'PIN_SET',
+    severity: 'info',
+    summary: 'Entry 3',
+    signWithHardware: false,
+  });
+  const gappedReport = await verifySecurityChain([e3, e1]);
+  assert.equal(gappedReport.valid, false);
+});
+
+test('security & validation: lockout tamper resistance, cashier PBKDF2 PINs, strict calendar dates, CSV injection, and backup sanitization', async () => {
+  const { STORAGE_KEYS } = await import('./posMath');
+  const {
+    pinLockedFor,
+    pinRegisterFail,
+    pinRegisterOk,
+    setCashierPinFields,
+    verifyCashierPin,
+  } = await import('./pinSecurity');
+
+  // Install isolated mock localStorage
+  const store = new Map<string, string>();
+  const prevStorage = (globalThis as { localStorage?: Storage }).localStorage;
+  (globalThis as { localStorage: Storage }).localStorage = {
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+    getItem: (k: string) => store.get(k) ?? null,
+    key: (i: number) => Array.from(store.keys())[i] ?? null,
+    removeItem: (k: string) => {
+      store.delete(k);
+    },
+    setItem: (k: string, v: string) => {
+      store.set(k, String(v));
+    },
+  };
+
+  try {
+    // 1. Mid-session localStorage.removeItem cannot reset active lockout
+    for (let i = 0; i < 5; i++) pinRegisterFail();
+    assert.ok(pinLockedFor() > 0);
+    localStorage.removeItem(STORAGE_KEYS.PINLOCK);
+    assert.ok(pinLockedFor() > 0);
+    pinRegisterOk();
+    assert.equal(pinLockedFor(), 0);
+
+    // 2. Cashier PBKDF2 hashing, wrong PIN tracking, and legacy plaintext auto-upgrade
+    const cRaw = await setCashierPinFields(
+      { id: 'CSH-99', name: 'Nena', role: 'cashier', active: true, createdAt: '2026-11-18T00:00:00.000Z' },
+      '847291',
+    );
+    assert.equal(cRaw.pin, undefined);
+    assert.ok(cRaw.pinHash);
+    assert.equal(cRaw.pinAlgo, 'PBKDF2-SHA512');
+
+    const badTry = await verifyCashierPin('000000', cRaw);
+    assert.equal(badTry.ok, false);
+    const goodTry = await verifyCashierPin('847291', cRaw);
+    assert.equal(goodTry.ok, true);
+
+    const legacyCashier = { id: 'CSH-LEG', name: 'Legacy', role: 'cashier' as const, active: true, createdAt: '2026-11-18T00:00:00.000Z', pin: '4321' };
+    const upgRes = await verifyCashierPin('4321', legacyCashier);
+    assert.equal(upgRes.ok, true);
+    assert.ok(upgRes.upgradedCashier?.pinHash);
+    assert.equal(upgRes.upgradedCashier?.pin, undefined);
+
+    // 3. Strict calendar expiry validation rejects rollover dates like Feb 31
+    assert.equal(expiryInfo({ expiry: '2026-02-31' }, 30).status, 'none');
+    assert.notEqual(expiryInfo({ expiry: '2026-02-28' }, 30).status, 'none');
+
+    // 4. CSV formula neutralization including leading whitespace while keeping plain negatives intact
+    assert.equal(escapeCsvCell(' =CMD()'), '"\' =CMD()"');
+    assert.equal(escapeCsvCell(' -1+1'), '"\' -1+1"');
+    assert.equal(escapeCsvCell('\t=SUM(A1)'), '"\'\t=SUM(A1)"');
+    assert.equal(escapeCsvCell('-45.50'), '"-45.50"');
+    assert.equal(escapeCsvCell('-45+1'), '"\'-45+1"');
+
+    // 5. validateBackupPayload rejects negative product price/stock & strips credential keys from settings
+    const badBackup = validateBackupPayload({
+      app: 'omnimart-ph-pos',
+      products: [{ id: 'P1', name: 'Negative Item', retailPrice: -10, stock: 5 }],
+      sales: [],
+    });
+    assert.equal(badBackup.ok, false);
+    if (!badBackup.ok) {
+      assert.match(badBackup.error, /damaged/i);
+    }
+
+    const sanitizedBackup = validateBackupPayload({
+      app: 'omnimart-ph-pos',
+      products: [{ id: 'P1', name: 'Safe Item', retailPrice: 25, stock: 5 }],
+      sales: [],
+      settings: {
+        storeName: 'Sanitized Store',
+        adminPinHash: 'STOLEN_HASH',
+        adminPinSalt: 'STOLEN_SALT',
+        passkeyCredId: 'STOLEN_CRED',
+        lowStockThreshold: -99,
+      },
+    });
+    assert.equal(sanitizedBackup.ok, true);
+    if (sanitizedBackup.ok) {
+      assert.equal((sanitizedBackup.data.settings as Record<string, unknown>)?.adminPinHash, undefined);
+      assert.equal((sanitizedBackup.data.settings as Record<string, unknown>)?.passkeyCredId, undefined);
+      assert.equal(sanitizedBackup.data.settings?.lowStockThreshold, undefined);
+      assert.equal(sanitizedBackup.data.settings?.storeName, 'Sanitized Store');
+    }
+  } finally {
+    if (prevStorage === undefined) {
+      delete (globalThis as { localStorage?: Storage }).localStorage;
+    } else {
+      (globalThis as { localStorage: Storage }).localStorage = prevStorage;
+    }
+  }
+});
+

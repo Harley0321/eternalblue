@@ -8,7 +8,7 @@ import type {
   SecuritySeverity,
   StoreSettings,
 } from '../types';
-import { b64ToBytes, bytesToB64 } from './pinSecurity';
+import { b64ToBytes, bytesToB64, toExactArrayBuffer } from './pinSecurity';
 import { safeJsonParse, validateBackupPayload } from './posMath';
 
 const getCrypto = (): Crypto | undefined => globalThis.crypto;
@@ -144,7 +144,7 @@ export async function verifyWithDeviceKey(message: string, sigB64: string): Prom
     return await c.subtle.verify(
       'HMAC',
       cachedHmacKey,
-      sigBytes.buffer as ArrayBuffer,
+      toExactArrayBuffer(sigBytes),
       new TextEncoder().encode(message),
     );
   } catch {
@@ -255,7 +255,7 @@ async function deriveVaultAesKey(
     {
       name: 'PBKDF2',
       hash: 'SHA-512',
-      salt: pbkdfSalt.buffer as ArrayBuffer,
+      salt: toExactArrayBuffer(pbkdfSalt),
       iterations,
     },
     baseKey,
@@ -266,7 +266,7 @@ async function deriveVaultAesKey(
     {
       name: 'HKDF',
       hash: 'SHA-256',
-      salt: hkdfSalt.buffer as ArrayBuffer,
+      salt: toExactArrayBuffer(hkdfSalt),
       info: new TextEncoder().encode('omnimart-vault-v2-aes256gcm'),
     },
     hkdfKey,
@@ -278,7 +278,7 @@ async function deriveVaultAesKey(
 
 function buildVaultAad(exportedAt: string): ArrayBuffer {
   const bytes = new TextEncoder().encode(`omnimart-ph-pos:${VAULT_FORMAT}:${exportedAt}`);
-  return bytes.buffer as ArrayBuffer;
+  return toExactArrayBuffer(bytes);
 }
 
 export interface BackupPayloadObject {
@@ -310,7 +310,7 @@ export async function encryptBackupPayload(
   const encrypted = await c.subtle.encrypt(
     {
       name: 'AES-GCM',
-      iv: iv.buffer as ArrayBuffer,
+      iv: toExactArrayBuffer(iv),
       additionalData: buildVaultAad(payload.exportedAt),
       tagLength: 128,
     },
@@ -365,12 +365,12 @@ export async function decryptBackupPayload(
     plainBuf = await c.subtle.decrypt(
       {
         name: 'AES-GCM',
-        iv: iv.buffer as ArrayBuffer,
+        iv: toExactArrayBuffer(iv),
         additionalData: buildVaultAad(envelope.exportedAt),
         tagLength: 128,
       },
       aesKey,
-      ciphertext.buffer as ArrayBuffer,
+      toExactArrayBuffer(ciphertext),
     );
   } catch {
     throw new Error('Decryption failed: incorrect passphrase or tampered vault file.');
@@ -481,12 +481,18 @@ export async function verifySecurityChain(
 
   for (let i = 0; i < sorted.length; i++) {
     const cur = sorted[i];
+    if (!Number.isInteger(cur.seq) || cur.seq < 1 || typeof cur.entryHash !== 'string' || typeof cur.prevHash !== 'string') {
+      brokenSeqs.push(Number(cur.seq) || 0);
+      continue;
+    }
     const expectedHash = await sha256Hex(canonicalSecurityRecord(cur));
     const linkExpected =
       i === 0
         ? cur.seq === 1
           ? 'GENESIS'
-          : cur.prevHash
+          : /^[0-9a-f]{64}$/.test(cur.prevHash)
+            ? cur.prevHash
+            : '__INVALID_PREV__'
         : sorted[i - 1].entryHash;
 
     if (cur.entryHash !== expectedHash || cur.prevHash !== linkExpected || (i > 0 && cur.seq !== sorted[i - 1].seq + 1)) {
@@ -532,30 +538,59 @@ export function isPasskeySupported(): boolean {
  * into the fixed 64-byte IEEE P1363 (r || s) encoding expected by WebCrypto SubtleCrypto.
  */
 export function derEcdsaToP1363(der: Uint8Array, coordinateSize = 32): Uint8Array {
-  if (der.length < 8 || der[0] !== 0x30) {
+  if (!der || der.length < 8 || der[0] !== 0x30) {
     throw new Error('Invalid ECDSA DER signature');
   }
   let offset = 2;
-  if (der[1] & 0x80) {
-    offset = 2 + (der[1] & 0x7f);
+  let seqLen = der[1];
+  if (seqLen & 0x80) {
+    const lenBytes = seqLen & 0x7f;
+    if (lenBytes < 1 || lenBytes > 2 || 2 + lenBytes >= der.length) {
+      throw new Error('Invalid DER sequence length');
+    }
+    seqLen = 0;
+    for (let i = 0; i < lenBytes; i++) {
+      seqLen = (seqLen << 8) | der[2 + i];
+    }
+    offset = 2 + lenBytes;
   }
-  if (der[offset] !== 0x02) throw new Error('Invalid DER R tag');
+  if (offset + seqLen !== der.length) {
+    throw new Error('Invalid DER sequence bounds');
+  }
+
+  if (offset + 2 > der.length || der[offset] !== 0x02) {
+    throw new Error('Invalid DER R tag');
+  }
   const rLen = der[offset + 1];
   const rStart = offset + 2;
-  const rRaw = der.slice(rStart, rStart + rLen);
+  if (rLen < 1 || rStart + rLen > der.length) {
+    throw new Error('Invalid DER R length');
+  }
+  const rRaw = der.subarray(rStart, rStart + rLen);
+  if ((rRaw[0] & 0x80) !== 0) {
+    throw new Error('Invalid negative ECDSA R coordinate');
+  }
   offset = rStart + rLen;
 
-  if (der[offset] !== 0x02) throw new Error('Invalid DER S tag');
+  if (offset + 2 > der.length || der[offset] !== 0x02) {
+    throw new Error('Invalid DER S tag');
+  }
   const sLen = der[offset + 1];
   const sStart = offset + 2;
-  const sRaw = der.slice(sStart, sStart + sLen);
+  if (sLen < 1 || sStart + sLen !== der.length) {
+    throw new Error('Invalid DER S length');
+  }
+  const sRaw = der.subarray(sStart, sStart + sLen);
+  if ((sRaw[0] & 0x80) !== 0) {
+    throw new Error('Invalid negative ECDSA S coordinate');
+  }
 
   const out = new Uint8Array(coordinateSize * 2);
   const copyTrimmed = (src: Uint8Array, destOffset: number) => {
     let i = 0;
     while (i < src.length - 1 && src[i] === 0) i++;
-    const significant = src.slice(i);
-    if (significant.length > coordinateSize) {
+    const significant = src.subarray(i);
+    if (significant.length === 0 || significant.length > coordinateSize) {
       throw new Error('ECDSA coordinate exceeds P-256 size');
     }
     out.set(significant, destOffset + (coordinateSize - significant.length));
@@ -572,50 +607,58 @@ export async function verifyWebAuthnAssertionSignature(params: {
   derSignature: Uint8Array;
   expectedChallenge: Uint8Array;
   expectedOrigin?: string;
+  requireUserVerification?: boolean;
 }): Promise<boolean> {
   const c = getCrypto();
   if (!c?.subtle) return false;
 
-  const clientText = new TextDecoder().decode(params.clientDataJSON);
-  const clientData = safeJsonParse<{ type?: string; challenge?: string; origin?: string }>(clientText);
-  if (clientData.type !== 'webauthn.get') return false;
-  if (params.expectedOrigin && clientData.origin !== params.expectedOrigin) return false;
+  try {
+    const clientText = new TextDecoder().decode(params.clientDataJSON);
+    const clientData = safeJsonParse<{ type?: string; challenge?: string; origin?: string } | null>(clientText);
+    if (!clientData || typeof clientData !== 'object') return false;
+    if (clientData.type !== 'webauthn.get') return false;
+    if (params.expectedOrigin && clientData.origin !== params.expectedOrigin) return false;
 
-  // Verify base64url challenge
-  const expectedB64Url = bytesToB64(params.expectedChallenge)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-  if (clientData.challenge !== expectedB64Url) return false;
+    // Verify base64url challenge
+    const expectedB64Url = bytesToB64(params.expectedChallenge)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    if (typeof clientData.challenge !== 'string' || clientData.challenge !== expectedB64Url) return false;
 
-  // Verify AuthenticatorData flags: bit 0 (UP = User Present) must be set
-  if (params.authenticatorData.length < 37) return false;
-  const flags = params.authenticatorData[32];
-  if ((flags & 0x01) === 0) return false;
+    // Verify AuthenticatorData flags: bit 0 (UP) & bit 2 (UV when userVerification='required')
+    if (params.authenticatorData.length < 37) return false;
+    const flags = params.authenticatorData[32];
+    const requireUv = params.requireUserVerification !== false;
+    const requiredBits = requireUv ? 0x05 : 0x01;
+    if ((flags & requiredBits) !== requiredBits) return false;
 
-  const spkiBytes = b64ToBytes(params.spkiB64);
-  const pubKey = await c.subtle.importKey(
-    'spki',
-    spkiBytes.buffer as ArrayBuffer,
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    false,
-    ['verify'],
-  );
+    const spkiBytes = b64ToBytes(params.spkiB64);
+    const pubKey = await c.subtle.importKey(
+      'spki',
+      toExactArrayBuffer(spkiBytes),
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['verify'],
+    );
 
-  const clientHash = new Uint8Array(
-    await c.subtle.digest('SHA-256', params.clientDataJSON.buffer as ArrayBuffer),
-  );
-  const signedData = new Uint8Array(params.authenticatorData.length + clientHash.length);
-  signedData.set(params.authenticatorData, 0);
-  signedData.set(clientHash, params.authenticatorData.length);
+    const clientHash = new Uint8Array(
+      await c.subtle.digest('SHA-256', toExactArrayBuffer(params.clientDataJSON)),
+    );
+    const signedData = new Uint8Array(params.authenticatorData.length + clientHash.length);
+    signedData.set(params.authenticatorData, 0);
+    signedData.set(clientHash, params.authenticatorData.length);
 
-  const rawSig = derEcdsaToP1363(params.derSignature, 32);
-  return c.subtle.verify(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    pubKey,
-    rawSig.buffer as ArrayBuffer,
-    signedData.buffer as ArrayBuffer,
-  );
+    const rawSig = derEcdsaToP1363(params.derSignature, 32);
+    return await c.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      pubKey,
+      toExactArrayBuffer(rawSig),
+      toExactArrayBuffer(signedData),
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function enrollLocalPasskey(storeName: string): Promise<{
@@ -687,7 +730,7 @@ export async function verifyLocalPasskey(
   const assertion = (await navigator.credentials.get({
     publicKey: {
       challenge,
-      allowCredentials: [{ id: credId.buffer as ArrayBuffer, type: 'public-key' }],
+      allowCredentials: [{ id: toExactArrayBuffer(credId), type: 'public-key' }],
       userVerification: 'required',
       timeout: 60000,
     },

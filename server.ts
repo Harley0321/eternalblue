@@ -9,6 +9,18 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(self), microphone=(), geolocation=(), payment=(), usb=()',
+    );
+    next();
+  });
   const httpServer = http.createServer(app);
 
   const isProd = process.env.NODE_ENV === 'production';

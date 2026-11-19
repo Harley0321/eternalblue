@@ -158,26 +158,46 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       finalCategory = existing || cleaned;
     }
 
-    const rawCap = parseFloat(capital) || 0;
+    const rawCap = capital.trim() !== '' ? parseFloat(capital) : 0;
     const rawRet = parseFloat(retail);
     const rawWhs = wholesale.trim() !== '' ? parseFloat(wholesale) : rawRet;
-    const rawMin = parseInt(minQty, 10) || 10;
-    const rawStk = parseFloat(stock) || 0;
+    const rawMin = parseInt(minQty, 10);
+    const rawStk = stock.trim() !== '' ? parseFloat(stock) : 0;
 
-    if (!cleanName || !Number.isFinite(rawRet) || rawRet <= 0) {
-      onToast('Please enter product name and a selling price above zero', 'warning');
+    if (!cleanName || !Number.isFinite(rawRet) || rawRet <= 0 || rawRet > 100000000) {
+      onToast('Please enter product name and a valid selling price above zero', 'warning');
       return;
     }
     if (
       rawCap < 0 ||
       !Number.isFinite(rawCap) ||
+      rawCap > 100000000 ||
       !Number.isFinite(rawWhs) ||
       rawWhs < 0 ||
+      rawWhs > 100000000 ||
       rawStk < 0 ||
-      !Number.isFinite(rawStk)
+      !Number.isFinite(rawStk) ||
+      rawStk > 100000000
     ) {
-      onToast('Capital, wholesale price and stock cannot be negative', 'warning');
+      onToast('Capital, wholesale price and stock must be valid non-negative numbers', 'warning');
       return;
+    }
+    if (!Number.isInteger(rawMin) || rawMin < 1 || rawMin > 100000) {
+      onToast('Wholesale minimum quantity must be at least 1', 'warning');
+      return;
+    }
+    const cleanExpiry = expiry.trim();
+    if (cleanExpiry) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanExpiry)) {
+        onToast('Expiry date must use YYYY-MM-DD format', 'warning');
+        return;
+      }
+      const [ey, em, ed] = cleanExpiry.split('-').map(Number);
+      const dCheck = new Date(ey, em - 1, ed);
+      if (dCheck.getFullYear() !== ey || dCheck.getMonth() !== em - 1 || dCheck.getDate() !== ed) {
+        onToast('Please enter a valid calendar expiry date', 'warning');
+        return;
+      }
     }
 
     onSave(
@@ -191,7 +211,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         wholesalePrice: round2(rawWhs),
         wholesaleMinQty: rawMin,
         stock: Number(rawStk.toFixed(3)),
-        expiry: expiry || '',
+        expiry: cleanExpiry || '',
         scEligible,
         icon: icon !== 'auto' ? icon : undefined,
         iconColor: iconColor !== 'auto' ? iconColor : undefined,
