@@ -208,4 +208,17 @@ object AndroidDeviceBridge {
             .build()
         prompt.authenticate(info)
     }
+
+    fun openUrl(context: Context, url: String) {
+        runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                if (context !is FragmentActivity) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            }
+            context.startActivity(intent)
+        }.onFailure {
+            Toast.makeText(context, "Could not open link: ${it.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
 }

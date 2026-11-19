@@ -9,11 +9,17 @@ android {
     compileSdk = 36
 
     defaultConfig {
+        val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        val resolvedVersionCode = ciRunNumber ?: 1
+        val resolvedVersionName = if (ciRunNumber != null) "2.3.$ciRunNumber" else "2.3.0"
+        val resolvedGithubRepo = (System.getenv("GITHUB_REPOSITORY") ?: "").replace("\"", "")
+
         applicationId = "com.aistudio.eternalbluepos.kxmpzq"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "2.3.0"
+        versionCode = resolvedVersionCode
+        versionName = resolvedVersionName
+        buildConfigField("String", "GITHUB_REPO", "\"$resolvedGithubRepo\"")
     }
 
     signingConfigs {

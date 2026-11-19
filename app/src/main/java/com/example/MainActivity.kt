@@ -8,7 +8,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
@@ -16,10 +21,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.hardware.AndroidDeviceBridge
 import com.example.model.TabName
 import com.example.ui.components.PosBottomBar
 import com.example.ui.components.PosNavigationRail
@@ -80,6 +88,8 @@ private fun EternalBluePosApp(
     val outOfStockCount by vm.outOfStockCount.collectAsStateWithLifecycle()
     val overdueUtangCount by vm.overdueUtangCount.collectAsStateWithLifecycle()
     val toasts by vm.toasts.collectAsStateWithLifecycle()
+    val updateState by vm.updateState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val isWideLayout = widthSizeClass != WindowWidthSizeClass.Compact
     val hasPin = vm.security.pinIsSet(settings)
@@ -163,6 +173,37 @@ private fun EternalBluePosApp(
         ConfirmDialog(vm)
         PinDialog(vm)
         TerminalLockOverlay(vm)
+
+        val rel = updateState.availableRelease
+        if (rel != null && !updateState.bannerDismissed) {
+            AlertDialog(
+                onDismissRequest = { vm.dismissUpdateBanner() },
+                title = { Text("App Update Available") },
+                text = {
+                    Text("A newer GitHub build (${rel.title}) is ready. Download and tap the APK to update while keeping all your store data.")
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            vm.dismissUpdateBanner()
+                            AndroidDeviceBridge.openUrl(context, rel.apkDownloadUrl)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = PosColors.Emerald600),
+                        modifier = Modifier.testTag("update_dialog_download_btn")
+                    ) {
+                        Text("Download APK")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { vm.dismissUpdateBanner() },
+                        modifier = Modifier.testTag("update_dialog_later_btn")
+                    ) {
+                        Text("Later")
+                    }
+                }
+            )
+        }
 
         ToastOverlay(
             toasts = toasts,

@@ -8,6 +8,8 @@ jobs:
   build-apk:
     name: Build Debug APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -53,9 +55,24 @@ jobs:
       - name: Prepare EternalBluePOS.apk
         run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/EternalBluePOS.apk
 
-      - name: Upload EternalBluePOS APK
+      - name: Upload EternalBluePOS APK Artifact
         uses: actions/upload-artifact@v7
         with:
           path: app/build/outputs/apk/debug/EternalBluePOS.apk
           archive: false
           if-no-files-found: error
+
+      - name: Publish GitHub Release APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="latest"
+          TITLE="EternalBlue POS v2.3.${{ github.run_number }}"
+          NOTES="Automated Android APK build #${{ github.run_number }} from commit ${{ github.sha }} [versionCode:${{ github.run_number }}]"
+          APK="app/build/outputs/apk/debug/EternalBluePOS.apk"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$TAG" "$APK" --target "${{ github.sha }}" --title "$TITLE" --notes "$NOTES"
+          fi

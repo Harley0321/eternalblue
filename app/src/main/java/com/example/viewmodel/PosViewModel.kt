@@ -3,18 +3,21 @@ package com.example.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
 import com.example.data.PosRepository
 import com.example.domain.AssistantAction
 import com.example.domain.AssistantContext
 import com.example.domain.AssistantEngine
 import com.example.domain.AssistantLang
 import com.example.domain.AssistantReply
+import com.example.domain.GitHubUpdateChecker
 import com.example.domain.OpsMath
 import com.example.domain.PosMath
 import com.example.domain.StockAlerts
 import com.example.hardware.AndroidDeviceBridge
 import com.example.hardware.EscPosPrinter
 import com.example.model.ActiveShiftState
+import com.example.model.AppUpdateUiState
 import com.example.model.BackupPayload
 import com.example.model.CartLine
 import com.example.model.CartTotals
@@ -287,6 +290,15 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private val _btPrinterName = MutableStateFlow(EscPosPrinter.getSession().deviceName)
     val btPrinterName: StateFlow<String> = _btPrinterName.asStateFlow()
 
+    private val _updateState = MutableStateFlow(
+        AppUpdateUiState(
+            currentVersionName = BuildConfig.VERSION_NAME,
+            currentVersionCode = BuildConfig.VERSION_CODE,
+            effectiveRepo = resolveEffectiveGithubRepo(_settings.value)
+        )
+    )
+    val updateState: StateFlow<AppUpdateUiState> = _updateState.asStateFlow()
+
     // Derived StateFlows
     val productMap: StateFlow<Map<String, Product>> = _products
         .map { PosMath.buildProductMap(it) }
@@ -337,6 +349,91 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             )
             _configHistory.value = listOf(baseline)
             repo.saveConfigHistory(_configHistory.value)
+        }
+        val repoSlug = resolveEffectiveGithubRepo(_settings.value)
+        if (_settings.value.autoCheckUpdates && repoSlug.isNotEmpty()) {
+            checkForAppUpdate(silent = true)
+        }
+    }
+
+    private fun resolveEffectiveGithubRepo(s: StoreSettings): String {
+        val custom = GitHubUpdateChecker.normalizeRepo(s.githubRepo)
+        if (custom.isNotEmpty()) return custom
+        return GitHubUpdateChecker.normalizeRepo(BuildConfig.GITHUB_REPO)
+    }
+
+    fun saveGithubRepo(raw: String) {
+        val norm = GitHubUpdateChecker.normalizeRepo(raw)
+        if (raw.isNotBlank() && norm.isEmpty()) {
+            toast("Enter repo as username/repository", ToastType.WARNING)
+            return
+        }
+        val next = _settings.value.copy(githubRepo = norm.ifEmpty { null })
+        updateSettings(next, "Updated GitHub update source")
+        _updateState.value = _updateState.value.copy(
+            effectiveRepo = resolveEffectiveGithubRepo(next),
+            errorMessage = null,
+            upToDateMessage = null
+        )
+        toast(if (norm.isNotEmpty()) "Saved GitHub repo: $norm" else "Cleared custom GitHub repo")
+    }
+
+    fun toggleAutoCheckUpdates(enabled: Boolean) {
+        val next = _settings.value.copy(autoCheckUpdates = enabled)
+        updateSettings(next)
+    }
+
+    fun dismissUpdateBanner() {
+        _updateState.value = _updateState.value.copy(bannerDismissed = true)
+    }
+
+    fun checkForAppUpdate(silent: Boolean = false) {
+        val repoSlug = resolveEffectiveGithubRepo(_settings.value)
+        if (repoSlug.isEmpty()) {
+            if (!silent) toast("Set your GitHub owner/repo in App Updates first", ToastType.WARNING)
+            _updateState.value = _updateState.value.copy(
+                effectiveRepo = "",
+                checking = false,
+                errorMessage = if (silent) null else "Enter your GitHub repo (owner/repo) to check for updates."
+            )
+            return
+        }
+        if (_updateState.value.checking) return
+        _updateState.value = _updateState.value.copy(
+            effectiveRepo = repoSlug,
+            checking = true,
+            errorMessage = null,
+            upToDateMessage = null
+        )
+        viewModelScope.launch {
+            when (val res = GitHubUpdateChecker.checkLatestRelease(repoSlug, BuildConfig.VERSION_CODE)) {
+                is GitHubUpdateChecker.Outcome.UpdateAvailable -> {
+                    _updateState.value = _updateState.value.copy(
+                        checking = false,
+                        availableRelease = res.release,
+                        upToDateMessage = null,
+                        errorMessage = null,
+                        bannerDismissed = false
+                    )
+                    if (!silent) toast("Update available: ${res.release.title}")
+                }
+                is GitHubUpdateChecker.Outcome.UpToDate -> {
+                    _updateState.value = _updateState.value.copy(
+                        checking = false,
+                        availableRelease = null,
+                        upToDateMessage = "Up to date (${res.title})",
+                        errorMessage = null
+                    )
+                    if (!silent) toast("You're on the latest build (${BuildConfig.VERSION_NAME})")
+                }
+                is GitHubUpdateChecker.Outcome.Error -> {
+                    _updateState.value = _updateState.value.copy(
+                        checking = false,
+                        errorMessage = if (silent) null else res.message
+                    )
+                    if (!silent) toast(res.message, ToastType.WARNING)
+                }
+            }
         }
     }
 

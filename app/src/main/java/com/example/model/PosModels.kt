@@ -194,7 +194,9 @@ data class StoreSettings(
     val qrAccountNumber: String? = null,
     val qrEmvPayload: String? = null,
     val qrImageDataUrl: String? = null,
-    val customerDisplayGreeting: String? = null
+    val customerDisplayGreeting: String? = null,
+    val githubRepo: String? = null,
+    val autoCheckUpdates: Boolean = true
 )
 
 @Serializable
@@ -501,4 +503,24 @@ data class StorageBreakdownItem(
     val label: String,
     val bytes: Long,
     val pct: Int
+)
+
+data class GitHubReleaseInfo(
+    val tagName: String,
+    val title: String,
+    val remoteVersionCode: Int,
+    val apkDownloadUrl: String,
+    val releasePageUrl: String,
+    val notes: String = ""
+)
+
+data class AppUpdateUiState(
+    val currentVersionName: String = "2.3.0",
+    val currentVersionCode: Int = 1,
+    val effectiveRepo: String = "",
+    val checking: Boolean = false,
+    val availableRelease: GitHubReleaseInfo? = null,
+    val upToDateMessage: String? = null,
+    val errorMessage: String? = null,
+    val bannerDismissed: Boolean = false
 )

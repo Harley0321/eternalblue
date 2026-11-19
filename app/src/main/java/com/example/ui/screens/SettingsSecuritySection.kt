@@ -19,9 +19,11 @@ import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.PosRepository
+import com.example.domain.GitHubUpdateChecker
 import com.example.hardware.AndroidDeviceBridge
 import com.example.model.BackupPayload
 import com.example.model.EncryptedVaultEnvelope
@@ -63,6 +66,7 @@ fun SettingsSecurityAndBackupSection(vm: PosViewModel) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val securityLog by vm.securityLog.collectAsStateWithLifecycle()
     val configHistory by vm.configHistory.collectAsStateWithLifecycle()
+    val updateState by vm.updateState.collectAsStateWithLifecycle()
 
     val chainReport = remember(securityLog) { vm.security.verifySecurityChain(securityLog) }
     val storageInfo = remember(vm.products.value, vm.sales.value, securityLog) { vm.repo.getStorageBreakdown() }
@@ -224,6 +228,97 @@ fun SettingsSecurityAndBackupSection(vm: PosViewModel) {
                         onClick = { pendingRestoreMode = "replace"; restoreFileLauncher.launch(arrayOf("*/*")) },
                         modifier = Modifier.weight(1f)
                     ) { Text("Replace Restore", fontSize = 11.sp) }
+                }
+            }
+        }
+
+        // App Updates (GitHub Releases)
+        Surface(shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
+            var repoInput by remember(updateState.effectiveRepo) { mutableStateOf(updateState.effectiveRepo) }
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Rounded.SystemUpdate, contentDescription = null, tint = PosColors.Emerald600)
+                    Column {
+                        Text("App Updates (GitHub Releases)", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Installed: v${updateState.currentVersionName} (Build #${updateState.currentVersionCode})",
+                            fontSize = 11.sp,
+                            color = PosColors.Slate500
+                        )
+                    }
+                }
+
+                updateState.availableRelease?.let { rel ->
+                    Surface(shape = RoundedCornerShape(10.dp), color = PosColors.Emerald50, border = BorderStroke(1.dp, PosColors.Emerald500)) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("New update ready: ${rel.title}", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = PosColors.Emerald700)
+                            Button(
+                                onClick = { AndroidDeviceBridge.openUrl(context, rel.apkDownloadUrl) },
+                                colors = ButtonDefaults.buttonColors(containerColor = PosColors.Emerald600),
+                                modifier = Modifier.fillMaxWidth().testTag("settings_download_update_btn")
+                            ) {
+                                Text("Download & Install APK", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+
+                updateState.upToDateMessage?.let { msg ->
+                    Text(msg, fontSize = 11.sp, color = PosColors.Emerald700, fontWeight = FontWeight.SemiBold)
+                }
+                updateState.errorMessage?.let { err ->
+                    Text(err, fontSize = 11.sp, color = PosColors.Rose700)
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = repoInput,
+                        onValueChange = { repoInput = it },
+                        label = { Text("GitHub Repo (owner/repo)") },
+                        placeholder = { Text("username/eternalblue") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f).testTag("settings_github_repo_input")
+                    )
+                    Button(
+                        onClick = { vm.saveGithubRepo(repoInput) },
+                        colors = ButtonDefaults.buttonColors(containerColor = PosColors.Slate900),
+                        modifier = Modifier.testTag("settings_save_repo_btn")
+                    ) { Text("Save") }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Auto-check GitHub on launch", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = settings.autoCheckUpdates,
+                        onCheckedChange = { vm.toggleAutoCheckUpdates(it) }
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { vm.checkForAppUpdate(silent = false) },
+                        enabled = !updateState.checking,
+                        colors = ButtonDefaults.buttonColors(containerColor = PosColors.Indigo600),
+                        modifier = Modifier.weight(1f).testTag("settings_check_update_btn")
+                    ) {
+                        Text(if (updateState.checking) "Checking..." else "Check for Update", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val targetRepo = repoInput.ifBlank { updateState.effectiveRepo }
+                            AndroidDeviceBridge.openUrl(context, GitHubUpdateChecker.releasesUrlForRepo(targetRepo))
+                        },
+                        enabled = repoInput.isNotBlank() || updateState.effectiveRepo.isNotBlank(),
+                        modifier = Modifier.weight(1f).testTag("settings_open_releases_btn")
+                    ) {
+                        Icon(Icons.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Open Releases", fontSize = 11.sp)
+                    }
                 }
             }
         }
