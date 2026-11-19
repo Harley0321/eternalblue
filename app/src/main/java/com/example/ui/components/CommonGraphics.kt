@@ -1,5 +1,11 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -34,18 +40,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -55,6 +66,9 @@ import com.example.model.ToastItem
 import com.example.model.ToastType
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldDark
+import com.example.ui.theme.EmeraldGlowCore
+import com.example.ui.theme.EmeraldGlowHighlight
+import com.example.ui.theme.EmeraldGlowNeon
 import com.example.ui.theme.EmeraldLightBg
 import com.example.ui.theme.EmeraldPrimary
 import com.example.ui.theme.IndigoAccent
@@ -62,6 +76,89 @@ import com.example.ui.theme.RoseDanger
 import com.example.ui.theme.SlateBorder
 import com.example.ui.theme.SlateMuted
 import com.example.ui.theme.SlateText
+
+@Composable
+fun GlowingEmeraldStoreName(
+    text: String,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 16.sp
+) {
+    val transition = rememberInfiniteTransition(label = "emeraldStoreGlow")
+    val glowPulse by transition.animateFloat(
+        initialValue = 0.72f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowPulse"
+    )
+
+    val baseStyle = TextStyle(
+        fontSize = fontSize,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 0.3.sp
+    )
+
+    Box(modifier = modifier) {
+        // Layer 1: Wide atmospheric Cyber-Emerald bloom
+        Text(
+            text = text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = Color.Transparent,
+            style = baseStyle.copy(
+                shadow = Shadow(
+                    color = EmeraldGlowNeon.copy(alpha = 0.55f * glowPulse),
+                    offset = Offset.Zero,
+                    blurRadius = 28f
+                )
+            )
+        )
+        // Layer 2: Mid saturated emerald aura
+        Text(
+            text = text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = Color.Transparent,
+            style = baseStyle.copy(
+                shadow = Shadow(
+                    color = EmeraldPrimary.copy(alpha = 0.90f),
+                    offset = Offset.Zero,
+                    blurRadius = 14f
+                )
+            )
+        )
+        // Layer 3: Tight luminous mint-emerald rim
+        Text(
+            text = text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = Color.Transparent,
+            style = baseStyle.copy(
+                shadow = Shadow(
+                    color = EmeraldGlowHighlight.copy(alpha = 0.95f * glowPulse),
+                    offset = Offset.Zero,
+                    blurRadius = 5f
+                )
+            )
+        )
+        // Layer 4: Crisp, high-contrast emerald green core
+        Text(
+            text = text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = EmeraldGlowCore,
+            style = baseStyle.copy(
+                shadow = Shadow(
+                    color = EmeraldGlowNeon.copy(alpha = 0.45f),
+                    offset = Offset.Zero,
+                    blurRadius = 2f
+                )
+            )
+        )
+    }
+}
 
 @Composable
 fun StoreEmblem(iconKey: String?, size: Dp = 36.dp) {

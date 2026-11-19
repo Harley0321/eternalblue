@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Surface
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -39,6 +41,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.PosMath
+import com.example.ui.components.GlowingEmeraldStoreName
+import com.example.ui.components.StoreEmblem
+import com.example.ui.theme.EmeraldDeepCanvas
+import com.example.ui.theme.EmeraldGlowCore
 import com.example.ui.theme.EmeraldPrimary
 import com.example.ui.theme.SlateBorder
 import com.example.ui.theme.SlateMuted
@@ -84,6 +90,25 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, SlateBorder)) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(14.dp)) {
                     Text("Store Profile & Emblem", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = EmeraldDeepCanvas,
+                        border = BorderStroke(1.dp, EmeraldGlowCore.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                        ) {
+                            StoreEmblem(iconKey = state.settings.storeIcon, size = 32.dp)
+                            Spacer(Modifier.width(10.dp))
+                            GlowingEmeraldStoreName(
+                                text = storeName.trim().ifEmpty { "EternalBlue Mart" },
+                                fontSize = 16.sp,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                        }
+                    }
                     OutlinedTextField(value = storeName, onValueChange = { storeName = it }, label = { Text("Store Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = storeAddr, onValueChange = { storeAddr = it }, label = { Text("Address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = storeFooter, onValueChange = { storeFooter = it }, label = { Text("Receipt Footer") }, singleLine = true, modifier = Modifier.fillMaxWidth())

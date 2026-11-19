@@ -54,8 +54,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.domain.PosMath
 import com.example.security.SecurityManager
+import com.example.ui.components.GlowingEmeraldStoreName
 import com.example.ui.theme.AmberWarn
 import com.example.ui.theme.EmeraldDark
+import com.example.ui.theme.EmeraldDeepCanvas
+import com.example.ui.theme.EmeraldGlowCore
 import com.example.ui.theme.EmeraldPrimary
 import com.example.ui.theme.RoseDanger
 import com.example.ui.theme.SlateBorder
@@ -242,8 +245,21 @@ fun SmallModalsHost(state: PosUiState, vm: PosViewModel) {
                     ) {
                         Icon(Icons.Filled.Lock, contentDescription = null, tint = EmeraldPrimary)
                     }
-                    Spacer(Modifier.height(8.dp))
-                    Text("${state.settings.storeName} Locked", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = SlateText)
+                    Spacer(Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = EmeraldDeepCanvas,
+                        border = BorderStroke(1.dp, EmeraldGlowCore.copy(alpha = 0.45f))
+                    ) {
+                        Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                            GlowingEmeraldStoreName(
+                                text = state.settings.storeName,
+                                fontSize = 17.sp
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text("Terminal Locked", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = SlateText)
                     Text("Tap your 4–8 digit Manager PIN", fontSize = 12.sp, color = SlateMuted)
                     Spacer(Modifier.height(12.dp))
                     SecurePinPad(

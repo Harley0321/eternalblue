@@ -62,14 +62,11 @@ fun PosTopBar(
             StoreEmblem(iconKey = state.settings.storeIcon, size = 36.dp)
             Spacer(Modifier.width(10.dp))
             Column {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        state.settings.storeName,
-                        color = Color.White,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GlowingEmeraldStoreName(
+                        text = state.settings.storeName,
+                        fontSize = 16.sp,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Surface(color = EmeraldPrimary.copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp)) {
                         Text(
