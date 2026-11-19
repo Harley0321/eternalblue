@@ -634,10 +634,10 @@ export async function enrollLocalPasskey(storeName: string): Promise<{
   const cred = (await navigator.credentials.create({
     publicKey: {
       challenge,
-      rp: { name: storeName || 'OmniMart PH POS' },
+      rp: { name: storeName || 'EternalBlue POS' },
       user: {
         id: userId,
-        name: 'store-manager@omnimart.local',
+        name: 'store-manager@eternalblue.local',
         displayName: 'Store Manager',
       },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }], // ES256 P-256

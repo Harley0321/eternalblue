@@ -66,14 +66,14 @@ export const TopBar: React.FC<TopBarProps> = ({
   const cleanTagline = (storeTagline || '').trim();
 
   const desktopTabClass = (isActive: boolean) =>
-    `justify-center px-3.5 py-1.5 min-h-[36px] rounded-lg text-sm font-semibold flex items-center gap-1.5 transition whitespace-nowrap shrink-0 cursor-pointer ${
+    `justify-center lg:px-2.5 xl:px-3.5 py-1.5 min-h-[36px] rounded-lg lg:text-[13px] xl:text-sm font-semibold flex items-center gap-1.5 transition whitespace-nowrap shrink-0 cursor-pointer ${
       isActive
         ? 'bg-emerald-500 text-slate-950 shadow-sm'
         : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
     }`;
 
   const mobileTabClass = (isActive: boolean) =>
-    `justify-center px-1 py-1 min-h-[34px] rounded-lg text-[10.5px] font-bold flex items-center gap-1 transition whitespace-nowrap cursor-pointer ${
+    `justify-center px-1 sm:px-2 py-1 sm:py-1.5 min-h-[34px] sm:min-h-[38px] rounded-lg text-[10.5px] sm:text-xs font-bold flex items-center gap-1 sm:gap-1.5 transition whitespace-nowrap cursor-pointer ${
       isActive
         ? 'bg-emerald-500 text-slate-950 shadow-xs'
         : 'text-slate-300 hover:text-white bg-slate-800/80'
@@ -81,23 +81,31 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <header className="bg-slate-900 text-white shadow-md z-30 shrink-0">
-      {/* Primary Row: Store Brand + (Desktop Nav) + Clock/Date + Lock + Store AI */}
-      <div className="px-2.5 sm:px-4 py-1.5 flex items-center justify-between gap-2 sm:gap-4 min-h-[46px] md:min-h-[54px]">
+      {/* Primary Row: Store Brand + (Desktop Nav on lg+) + Clock/Date + Lock + Store AI */}
+      <div className="px-2.5 sm:px-4 py-1.5 flex items-center justify-between gap-2 sm:gap-3 lg:gap-4 min-h-[46px] sm:min-h-[52px] lg:min-h-[54px]">
         <button
           type="button"
           onClick={() => onSelectTab('pos')}
           aria-label={`${storeName} — go to POS counter`}
           title={cleanTagline ? `${storeName} · ${cleanTagline}` : storeName}
-          className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1 md:flex-initial md:max-w-[260px] lg:max-w-[320px] text-left rounded-xl py-0.5 pr-1 hover:bg-slate-800/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 transition cursor-pointer"
+          className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1 lg:flex-initial lg:min-w-[176px] lg:max-w-[270px] xl:max-w-[330px] text-left rounded-xl bg-gradient-to-r from-slate-950/85 via-emerald-950/55 to-slate-900/75 border border-emerald-400/25 shadow-[0_0_16px_-6px_rgba(16,185,129,0.5)] py-1 px-2 hover:border-emerald-400/45 hover:from-slate-950/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 transition cursor-pointer"
         >
           <StoreEmblem storeName={storeName} storeIcon={storeIcon} size="sm" />
           <div className="min-w-0 flex-1">
-            <h1
-              data-testid="topbar-store-name"
-              className="font-extrabold text-[13.5px] sm:text-[15.5px] tracking-tight leading-tight truncate text-white"
-            >
-              {storeName}
-            </h1>
+            <div className="relative min-w-0">
+              <span
+                aria-hidden="true"
+                className="absolute inset-0 pointer-events-none select-none font-extrabold text-[14.5px] sm:text-[17px] lg:text-[16px] xl:text-[17px] tracking-[0.012em] leading-snug truncate store-name-aura py-1.5 -my-1.5 px-1.5 -mx-1.5"
+              >
+                {storeName}
+              </span>
+              <h1
+                data-testid="topbar-store-name"
+                className="relative font-extrabold text-[14.5px] sm:text-[17px] lg:text-[16px] xl:text-[17px] tracking-[0.012em] leading-snug truncate store-name-glow py-1.5 -my-1.5 px-1.5 -mx-1.5"
+              >
+                {storeName}
+              </h1>
+            </div>
             {(cleanTagline || activeCashierName) && (
               <div
                 data-testid="topbar-store-tagline"
@@ -109,11 +117,11 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         </button>
 
-        {/* Desktop / Tablet Primary Nav — Store Ops placed strictly in the middle of Stock and Sales */}
+        {/* Desktop / Tablet Landscape Primary Nav (1024px+) — Store Ops placed strictly in the middle */}
         <nav
           aria-label="Primary sections"
           data-testid="desktop-primary-nav"
-          className="hidden md:flex items-center gap-1 bg-slate-800/90 p-1 rounded-xl border border-slate-700/70 shrink-0"
+          className="hidden lg:flex items-center gap-0.5 xl:gap-1 bg-slate-800/90 p-1 rounded-xl border border-slate-700/70 shrink-0"
         >
           <button
             type="button"
@@ -186,8 +194,8 @@ export const TopBar: React.FC<TopBarProps> = ({
             </div>
             <div className="text-[10px] text-slate-300 md:text-slate-400 whitespace-nowrap">
               <span className="min-[380px]:hidden">{shortDateStr}</span>
-              <span className="hidden min-[380px]:inline md:hidden">{compactDateStr}</span>
-              <span className="hidden md:inline">{dateStr}</span>
+              <span className="hidden min-[380px]:inline xl:hidden">{compactDateStr}</span>
+              <span className="hidden xl:inline">{dateStr}</span>
             </div>
           </div>
 
@@ -198,10 +206,10 @@ export const TopBar: React.FC<TopBarProps> = ({
               aria-label="Lock terminal"
               data-testid="lock-terminal-btn"
               title="Lock Terminal (Alt+L)"
-              className="h-8 w-8 md:h-9 md:w-auto md:px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 flex items-center justify-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
+              className="h-8 w-8 sm:h-9 sm:w-9 xl:w-auto xl:px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 flex items-center justify-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
             >
               <Lock className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden lg:inline">Lock</span>
+              <span className="hidden xl:inline">Lock</span>
             </button>
           )}
 
@@ -211,19 +219,19 @@ export const TopBar: React.FC<TopBarProps> = ({
             aria-label="Open Store Assistant"
             data-testid="assistant-fab"
             title="Offline Store AI Analyst (Ctrl+/)"
-            className="h-8 w-8 md:h-9 md:w-auto md:px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white flex items-center justify-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
+            className="h-8 w-8 sm:h-9 sm:w-auto sm:px-2.5 xl:px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white flex items-center justify-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
           >
             <Bot className="w-4 h-4 text-emerald-400" />
-            <span className="hidden md:inline">Store AI</span>
+            <span className="hidden sm:inline">Store AI</span>
           </button>
         </div>
       </div>
 
-      {/* Mobile Primary Nav Strip (visible labels for all 5 tabs, Store Ops strictly between Stock and Sales) */}
+      {/* Mobile & Portrait-Tablet Primary Nav Strip (shown below 1024px so store name always stays 100% visible) */}
       <nav
         aria-label="Mobile sections"
         data-testid="mobile-primary-nav"
-        className="md:hidden grid grid-cols-5 gap-1 px-2 pb-1.5 pt-0.5 border-t border-slate-800/80"
+        className="lg:hidden grid grid-cols-5 gap-1 sm:gap-1.5 px-2 sm:px-4 pb-1.5 pt-0.5 border-t border-slate-800/80"
       >
         <button
           type="button"
@@ -231,7 +239,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           className={mobileTabClass(activeTab === 'pos')}
           aria-current={activeTab === 'pos' ? 'page' : undefined}
         >
-          <Store className="w-3 h-3 shrink-0" />
+          <Store className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
           <span>POS</span>
         </button>
         <button
@@ -240,10 +248,10 @@ export const TopBar: React.FC<TopBarProps> = ({
           className={mobileTabClass(activeTab === 'inventory')}
           aria-current={activeTab === 'inventory' ? 'page' : undefined}
         >
-          <Boxes className="w-3 h-3 shrink-0" />
+          <Boxes className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
           <span>Stock</span>
           {lowStockCount > 0 && (
-            <span className="px-1 text-[9px] font-extrabold rounded-full bg-amber-400 text-slate-950 font-mono-num">
+            <span className="px-1 sm:px-1.5 text-[9px] sm:text-[10px] font-extrabold rounded-full bg-amber-400 text-slate-950 font-mono-num">
               {lowStockCount}
             </span>
           )}
@@ -255,10 +263,11 @@ export const TopBar: React.FC<TopBarProps> = ({
           className={mobileTabClass(activeTab === 'operations')}
           aria-current={activeTab === 'operations' ? 'page' : undefined}
         >
-          <ClipboardList className="w-3 h-3 shrink-0" />
-          <span>Ops</span>
+          <ClipboardList className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+          <span className="sm:hidden">Ops</span>
+          <span className="hidden sm:inline">Store Ops</span>
           {overdueUtangCount > 0 && (
-            <span className="px-1 text-[9px] font-extrabold rounded-full bg-rose-500 text-white font-mono-num">
+            <span className="px-1 sm:px-1.5 text-[9px] sm:text-[10px] font-extrabold rounded-full bg-rose-500 text-white font-mono-num">
               {overdueUtangCount}
             </span>
           )}
@@ -269,7 +278,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           className={mobileTabClass(activeTab === 'sales')}
           aria-current={activeTab === 'sales' ? 'page' : undefined}
         >
-          <ChartLine className="w-3 h-3 shrink-0" />
+          <ChartLine className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
           <span>Sales</span>
         </button>
         <button
@@ -279,7 +288,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           aria-label="Settings"
           aria-current={activeTab === 'settings' ? 'page' : undefined}
         >
-          <Settings className="w-3 h-3 shrink-0" />
+          <Settings className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
           <span>Settings</span>
         </button>
       </nav>

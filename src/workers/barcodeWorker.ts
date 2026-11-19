@@ -7,12 +7,16 @@ import {
 } from 'zxing-wasm/reader';
 import zxingReaderWasmUrl from 'zxing-wasm/reader/zxing_reader.wasm?url';
 
-const POS_FORMATS: ReadInputBarcodeFormat[] = [
+const RETAIL_1D_FORMATS: ReadInputBarcodeFormat[] = [
   'EAN13',
   'EAN8',
   'UPCA',
   'UPCE',
   'Code128',
+];
+
+const POS_FORMATS: ReadInputBarcodeFormat[] = [
+  ...RETAIL_1D_FORMATS,
   'Code39',
   'Code93',
   'ITF',
@@ -61,6 +65,8 @@ export interface WorkerDetection {
   cornerPoints?: WorkerPoint[];
 }
 
+export type ScanPassMode = 'fast-1d' | 'fast' | 'deep';
+
 export type WorkerRequest =
   | { type: 'warmup'; id: number }
   | {
@@ -69,7 +75,7 @@ export type WorkerRequest =
       buffer: ArrayBuffer;
       width: number;
       height: number;
-      mode: 'fast' | 'deep';
+      mode: ScanPassMode;
     }
   | {
       type: 'scan-image';
@@ -105,6 +111,18 @@ function mapReadResults(results: ReadResult[]): WorkerDetection[] {
   return out;
 }
 
+const FAST_1D_OPTIONS: ReaderOptions = {
+  formats: RETAIL_1D_FORMATS,
+  tryHarder: false,
+  tryRotate: false,
+  tryInvert: false,
+  tryDownscale: false,
+  tryDenoise: false,
+  binarizer: 'LocalAverage',
+  maxNumberOfSymbols: 1,
+  textMode: 'Plain',
+};
+
 const FAST_OPTIONS: ReaderOptions = {
   formats: POS_FORMATS,
   tryHarder: true,
@@ -113,7 +131,7 @@ const FAST_OPTIONS: ReaderOptions = {
   tryDownscale: false,
   tryDenoise: false,
   binarizer: 'LocalAverage',
-  maxNumberOfSymbols: 3,
+  maxNumberOfSymbols: 2,
   textMode: 'Plain',
 };
 
@@ -189,7 +207,12 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     if (msg.type === 'scan-frame') {
       const rgba = new Uint8ClampedArray(msg.buffer);
       const imgData = new ImageData(rgba, msg.width, msg.height);
-      const opts = msg.mode === 'deep' ? DEEP_OPTIONS : FAST_OPTIONS;
+      const opts =
+        msg.mode === 'deep'
+          ? DEEP_OPTIONS
+          : msg.mode === 'fast-1d'
+            ? FAST_1D_OPTIONS
+            : FAST_OPTIONS;
       let results = await readBarcodes(imgData, opts);
       if (results.length === 0 && msg.mode === 'deep') {
         results = await readBarcodes(imgData, { ...DEEP_OPTIONS, binarizer: 'LocalAverage' });

@@ -28,17 +28,20 @@ import type {
 } from './types';
 import {
   applyBatchStockUpdates,
+  buildBarcodeIndex,
   buildDefaultCatalog,
   buildProductMap,
   computeCartTotals,
   computeSalesStats,
   DAY_MS,
   DEFAULT_SETTINGS,
+  DEFAULT_STORE_NAME,
   diffConfigFields,
   expiryInfo,
-  extractGs1Gtin,
-  findProductByBarcode,
+  extractScanPayload,
+  findProductByBarcodeIndexed,
   formatPeso,
+  getLastVoidableSale,
   getLinePrice,
   getTopFastMoverIds,
   inRange,
@@ -46,7 +49,6 @@ import {
   lineTotalPeso,
   nextReceiptNo,
   normBarcode,
-  parseQtySearchInput,
   round2,
   sanitizeConfigForSnapshot,
   startOfDay,
@@ -63,6 +65,7 @@ import {
   isCustomerOverdue,
 } from './utils/opsMath';
 import { warmUpScannerEngine } from './utils/scannerEngine';
+import { initPwaAutoUpdater, shouldAutoApplyAppUpdate } from './utils/pwaUpdater';
 import { APP_VERSION } from './version';
 import { pinIsSet } from './utils/pinSecurity';
 import {
@@ -203,7 +206,11 @@ export default function App() {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [receiptSale, setReceiptSale] = useState<SaleRecord | null>(null);
   const [receiptReading, setReceiptReading] = useState<ReadingReport | null>(null);
-  const [scannerState, setScannerState] = useState<{ open: boolean; mode: ScannerMode }>({
+  const [scannerState, setScannerState] = useState<{
+    open: boolean;
+    mode: ScannerMode;
+    initialContinuous?: boolean;
+  }>({
     open: false,
     mode: 'pos',
   });
@@ -251,6 +258,53 @@ export default function App() {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 2800);
   }, []);
+
+  // Safe non-destructive PWA auto-updater (updates mobile/tablet/PC app shell when idle without touching device data)
+  const [pwaUpdateReady, setPwaUpdateReady] = useState(false);
+  const cartLenRef = useRef(cart.length);
+  cartLenRef.current = cart.length;
+  const hasBlockingUi =
+    checkoutOpen ||
+    productModal.open ||
+    batchStockModal.open ||
+    csvImportOpen ||
+    Boolean(stockAdjustProduct) ||
+    Boolean(voidTargetSale) ||
+    Boolean(confirmState?.open) ||
+    scReviewOpen ||
+    scannerState.open;
+  const hasBlockingUiRef = useRef(hasBlockingUi);
+  hasBlockingUiRef.current = hasBlockingUi;
+
+  useEffect(() => {
+    return initPwaAutoUpdater({
+      onUpdateActivated: () => {
+        setPwaUpdateReady(true);
+        if (
+          !shouldAutoApplyAppUpdate({
+            updateReady: true,
+            cartCount: cartLenRef.current,
+            hasBlockingUi: hasBlockingUiRef.current,
+          })
+        ) {
+          toast('App update ready — will refresh automatically once current task finishes', 'warning');
+        }
+      },
+    });
+  }, [toast]);
+
+  useEffect(() => {
+    if (!pwaUpdateReady) return;
+    if (
+      shouldAutoApplyAppUpdate({
+        updateReady: pwaUpdateReady,
+        cartCount: cart.length,
+        hasBlockingUi,
+      })
+    ) {
+      window.location.reload();
+    }
+  }, [pwaUpdateReady, cart.length, hasBlockingUi]);
 
   // Request durable browser storage once on mount & pre-warm barcode WASM worker on idle
   useEffect(() => {
@@ -322,7 +376,9 @@ export default function App() {
   }, [logSecurityEvent, toast]);
 
   const productMap = useMemo(() => buildProductMap(products), [products]);
+  const barcodeIndex = useMemo(() => buildBarcodeIndex(products), [products]);
   const fastMoverIds = useMemo(() => getTopFastMoverIds(products, sales, 12), [products, sales]);
+  const lastVoidableSale = useMemo(() => getLastVoidableSale(sales), [sales]);
 
   // Derived cart totals
   const cartTotals = useMemo(
@@ -998,9 +1054,9 @@ export default function App() {
 
   const handleSearchEnter = useCallback(
     (raw: string) => {
-      const { qty, query } = parseQtySearchInput(raw);
-      if (!query) return;
-      const byBc = findProductByBarcode(query, products);
+      const { qty, code, rawQuery } = extractScanPayload(raw);
+      if (!rawQuery) return;
+      const byBc = findProductByBarcodeIndexed(code, barcodeIndex);
       if (byBc) {
         if (qty !== 1 || byBc.unit !== 'kg') {
           addQtyToCart(byBc, qty);
@@ -1010,9 +1066,9 @@ export default function App() {
         setPosSearch('');
         return;
       }
-      const lower = query.toLowerCase();
+      const lower = rawQuery.toLowerCase();
       const matches = products.filter(
-        (p) => p.name.toLowerCase().includes(lower) || normBarcode(p.barcode) === normBarcode(query),
+        (p) => p.name.toLowerCase().includes(lower) || normBarcode(p.barcode) === normBarcode(rawQuery),
       );
       if (matches.length === 1) {
         if (qty !== 1 || matches[0].unit !== 'kg') {
@@ -1023,7 +1079,7 @@ export default function App() {
         setPosSearch('');
       }
     },
-    [addQtyToCart, handleProductClick, products],
+    [addQtyToCart, barcodeIndex, handleProductClick, products],
   );
 
   // Global hardware wedge barcode scanner (fast keystroke burst + Enter) + Cashier shortcuts
@@ -1047,7 +1103,7 @@ export default function App() {
       if (e.key === 'F8') {
         if (activeTab === 'pos') {
           e.preventDefault();
-          setScannerState({ open: true, mode: 'pos' });
+          setScannerState({ open: true, mode: 'pos', initialContinuous: undefined });
         }
         return;
       }
@@ -1112,11 +1168,11 @@ export default function App() {
         wedgeRef.current.buf = '';
         wedgeRef.current.lastTime = now;
         if (rawCode.length >= 4) {
-          const code = extractGs1Gtin(rawCode) || rawCode;
-          const found = findProductByBarcode(code, products);
+          const { qty, code } = extractScanPayload(rawCode);
+          const found = findProductByBarcodeIndexed(code, barcodeIndex);
           if (found) {
-            addQtyToCart(found, 1);
-            toast(`Scanned: ${found.name}`, 'success');
+            addQtyToCart(found, qty);
+            toast(`Scanned${qty !== 1 ? ` ${qty}×` : ''}: ${found.name}`, 'success');
           } else {
             toast(`Barcode ${code} not found`, 'warning');
           }
@@ -1132,7 +1188,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTab, cart.length, products, addQtyToCart, handleSetPriceMode, priceMode, settings, terminalLocked, handleLockTerminal, toast]);
+  }, [activeTab, barcodeIndex, cart.length, addQtyToCart, handleSetPriceMode, priceMode, settings, terminalLocked, handleLockTerminal, toast]);
 
   // Complete sale (supports Cash, GCash, Card, Split, Utang + Suki Loyalty + Cashier tag)
   const handleCompleteSale = (payload: {
@@ -1564,7 +1620,7 @@ export default function App() {
       subtitle: `${paper} Thermal Width Preview · Non-Sales`,
       settingsOverride: draft,
       lines: [
-        { label: 'Store', value: draft.storeName.trim() || 'OmniMart PH', bold: true },
+        { label: 'Store', value: draft.storeName.trim() || DEFAULT_STORE_NAME, bold: true },
         { label: 'Paper Width', value: paper },
         { label: 'Phone', value: draft.storePhone.trim() || '—', dividerAfter: true },
         { label: 'Sample Item A x2', value: formatPeso(50) },
@@ -1998,12 +2054,31 @@ export default function App() {
           isSeniorPwd={isSeniorPwd}
           mobileCartOpen={mobileCartOpen}
           fastMoverIds={fastMoverIds}
+          lastVoidableSale={lastVoidableSale}
           onSetSearchQuery={setPosSearch}
           onSearchEnter={handleSearchEnter}
           onSetPriceMode={handleSetPriceMode}
           onSelectCategory={setPosCategory}
           onOpenCategorySheet={() => setCategorySheetOpen(true)}
-          onOpenScanner={() => setScannerState({ open: true, mode: 'pos' })}
+          onOpenScanner={() => setScannerState({ open: true, mode: 'pos', initialContinuous: undefined })}
+          onOpenRapidScanner={() =>
+            setScannerState({ open: true, mode: 'pos', initialContinuous: true })
+          }
+          onReprintLastSale={() => {
+            if (lastVoidableSale) {
+              setReceiptReading(null);
+              setReceiptSale(lastVoidableSale);
+            } else {
+              toast('No recent sale to reprint', 'warning');
+            }
+          }}
+          onVoidLastSale={() => {
+            if (lastVoidableSale) {
+              setVoidTargetSale(lastVoidableSale);
+            } else {
+              toast('No recent sale to void', 'warning');
+            }
+          }}
           onProductClick={handleProductClick}
           onChangeCartQty={handleChangeCartQty}
           onSetCartQty={handleSetCartQty}
@@ -2174,7 +2249,7 @@ export default function App() {
             setConfirmState({
               open: true,
               type: 'factory-reset',
-              title: 'Factory Reset OmniMart POS?',
+              title: 'Factory Reset EternalBlue POS?',
               message: 'This erases all custom products, sales, held orders, and settings, restoring the default starter catalog.',
               confirmLabel: 'Reset Everything',
               danger: true,
@@ -2293,19 +2368,20 @@ export default function App() {
       <BarcodeScannerModal
         open={scannerState.open}
         mode={scannerState.mode}
+        initialContinuous={scannerState.initialContinuous}
         products={products}
         cart={cart}
         cartTotal={cartTotals.grandTotal}
         beepEnabled={!!settings.beep}
         vibrateEnabled={!!settings.vibrate}
-        onClose={() => setScannerState((s) => ({ ...s, open: false }))}
-        onScanProduct={(prod) => {
+        onClose={() => setScannerState((s) => ({ ...s, open: false, initialContinuous: undefined }))}
+        onScanProduct={(prod, qty = 1) => {
           if (scannerState.mode === 'inventory') {
             setInvSearch(prod.barcode || prod.name);
-            setScannerState((s) => ({ ...s, open: false }));
+            setScannerState((s) => ({ ...s, open: false, initialContinuous: undefined }));
             toast(`Found ${prod.name}`, 'success');
           } else {
-            addQtyToCart(prod, 1);
+            addQtyToCart(prod, qty);
           }
         }}
         onUnknownBarcode={(barcode, mode) => {

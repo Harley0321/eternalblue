@@ -284,7 +284,7 @@ describe('Code-128B Barcode & ESC/POS Thermal Encoding', () => {
       kickDrawer: true,
     });
     const text = Buffer.from(bytes).toString('latin1');
-    assert.match(text, /OMNIMART PH SUPERMARKET/);
+    assert.match(text, /ETERNALBLUE MART/);
     assert.match(text, /OR-999/);
     assert.match(text, /Aling Nena/);
     assert.equal(bytes[0], 0x1b);

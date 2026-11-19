@@ -262,7 +262,7 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="OmniMart Store AI"
+      aria-label="EternalBlue Store AI"
       data-testid="assistant-dialog"
     >
       <div
@@ -277,7 +277,7 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
             </div>
             <div className="min-w-0">
               <div className="text-xs font-extrabold leading-tight flex items-center gap-1.5 truncate">
-                <span>OmniMart Store AI</span>
+                <span>EternalBlue Store AI</span>
                 <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[9.5px] font-bold">
                   <ShieldCheck className="w-2.5 h-2.5" /> Read-Only
                 </span>
@@ -556,7 +556,7 @@ export const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                 ? 'Tanong: benta ngayon, kelan mauubos, resibo...'
                 : 'Ask: briefing, forecast, combos, receipt, magkano...'
             }
-            aria-label="Ask OmniMart Store AI"
+            aria-label="Ask EternalBlue Store AI"
             className="flex-1 min-w-0 px-3 py-2 min-h-[40px] rounded-xl border border-slate-300 text-base sm:text-xs focus:border-emerald-600 focus:outline-none"
           />
           <button

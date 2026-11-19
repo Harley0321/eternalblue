@@ -228,7 +228,7 @@ export async function detectWithNative(source: ImageBitmapSource): Promise<ScanD
 
 export async function detectImageDataWithWasm(
   imageData: ImageData,
-  mode: 'fast' | 'deep' = 'fast',
+  mode: 'fast-1d' | 'fast' | 'deep' = 'fast',
 ): Promise<ScanDetection[]> {
   // Clone/transfer cleanly so caller buffer isn't detached unexpectedly if reused
   const copy = new Uint8ClampedArray(imageData.data);
@@ -259,15 +259,16 @@ export async function detectImageDataWithWasm(
     // Inline fallback if worker failed
     try {
       await ensureInlineZxingReady();
+      const is1d = mode === 'fast-1d';
       const results = await readBarcodes(imageData, {
-        formats: ZXING_FALLBACK_FORMATS,
-        tryHarder: true,
-        tryRotate: true,
-        tryInvert: true,
+        formats: is1d ? ['EAN13', 'EAN8', 'UPCA', 'UPCE', 'Code128'] : ZXING_FALLBACK_FORMATS,
+        tryHarder: !is1d,
+        tryRotate: !is1d,
+        tryInvert: !is1d,
         tryDownscale: mode === 'deep',
         tryDenoise: mode === 'deep',
         binarizer: mode === 'deep' ? 'GlobalHistogram' : 'LocalAverage',
-        maxNumberOfSymbols: 3,
+        maxNumberOfSymbols: is1d ? 1 : 3,
         textMode: 'Plain',
       });
       return results

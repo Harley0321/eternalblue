@@ -54,10 +54,18 @@ import {
   verifySecurityChain,
   type SecurityChainReport,
 } from '../utils/cryptoVault';
-import { formatPeso, safeJsonParse, validateBackupPayload } from '../utils/posMath';
+import {
+  DEFAULT_STORE_NAME,
+  formatPeso,
+  safeJsonParse,
+  STORE_NAME_PRESETS,
+  validateBackupPayload,
+} from '../utils/posMath';
+import { formatStoreTitleCase } from '../utils/storeBrand';
 import { getStorageBreakdown, getUsedStorageBytes } from '../utils/storage';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { APP_VERSION, PRESERVED_DATA_KEYS, RELEASE_DATE, RELEASE_TAG } from '../version';
+import { checkForPwaUpdateNow } from '../utils/pwaUpdater';
 
 interface SettingsViewProps {
   settings: StoreSettings;
@@ -260,7 +268,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const cleaned: StoreSettings = {
       ...settings,
       ...form,
-      storeName: form.storeName.trim() || 'OmniMart PH Supermarket',
+      storeName: form.storeName.trim() || DEFAULT_STORE_NAME,
       lowStockThreshold: Math.max(0, Number(form.lowStockThreshold) || 10),
       expiryWarnDays: Math.max(1, Number(form.expiryWarnDays) || 30),
       reorderLeadDays: Math.max(0, Number(form.reorderLeadDays) ?? 3),
@@ -501,14 +509,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       zip.file(
         'README-OFFLINE.txt',
         [
-          'OmniMart PH POS - Offline Backup & Recovery Kit',
+          'EternalBlue POS - Offline Backup & Recovery Kit',
           '================================================',
           `Store: ${settings.storeName}`,
           `Exported: ${new Date().toLocaleString('en-PH')}`,
           `Products: ${products.length}`,
           `Sales Records: ${sales.length}`,
           '',
-          '1. Install OmniMart PH POS onto your phone/tablet home screen for full offline mode.',
+          '1. Install EternalBlue POS onto your PC, phone, or tablet for full offline mode.',
           '2. Keep omnimart-backup.json safe. Use Encrypted AES-256-GCM Vaults for cloud or flash drive storage.',
           '3. Manager PIN hashes and Passkey credentials are never exported in backups for security.',
         ].join('\n'),
@@ -529,20 +537,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleCheckSwUpdate = async () => {
-    if (!('serviceWorker' in navigator)) {
+    const status = await checkForPwaUpdateNow(true);
+    if (status === 'unsupported') {
       onToast('Offline worker is not supported in this browser', 'warning');
-      return;
-    }
-    try {
-      const reg = await navigator.serviceWorker.getRegistration();
-      if (!reg) {
-        onToast('Offline cache worker not registered yet (reload when online)', 'warning');
-        return;
-      }
-      await reg.update();
-      onToast('Checked for app updates cleanly — your store data is safe', 'success');
-    } catch {
-      onToast('Unable to check for updates while offline', 'warning');
+    } else if (status === 'offline') {
+      onToast('Currently offline — reconnect to check for app updates (your data is safe)', 'warning');
+    } else if (status === 'updated') {
+      onToast('New app update found — installing automatically without touching your data', 'success');
+    } else {
+      onToast('EternalBlue POS is up to date — all device data stays local & isolated', 'success');
     }
   };
 
@@ -777,14 +780,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div className="sm:col-span-2">
-                <label className="block font-semibold text-slate-700 mb-1">Store Name</label>
+              <div className="sm:col-span-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="settings-store-name" className="block font-semibold text-slate-700">
+                    Store Name
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        storeName: formatStoreTitleCase(f.storeName) || DEFAULT_STORE_NAME,
+                      }))
+                    }
+                    className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer"
+                  >
+                    Format Title Case
+                  </button>
+                </div>
                 <input
+                  id="settings-store-name"
                   type="text"
                   value={form.storeName}
                   onChange={(e) => setForm({ ...form, storeName: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:border-emerald-600 focus:outline-none"
+                  placeholder={DEFAULT_STORE_NAME}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold focus:border-emerald-600 focus:outline-none"
                 />
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px]">
+                  <span className="font-semibold text-slate-400">Quick names:</span>
+                  {STORE_NAME_PRESETS.map((preset) => {
+                    const active = form.storeName.trim() === preset;
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, storeName: preset }))}
+                        className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
+                          active
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="sm:col-span-2">
@@ -1382,7 +1423,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     type="button"
                     onClick={async () => {
                       const ok = await install();
-                      if (ok) onToast('OmniMart PH POS installed on this device', 'success');
+                      if (ok) onToast('EternalBlue POS installed on this device', 'success');
                     }}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
                   >

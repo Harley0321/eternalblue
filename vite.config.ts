@@ -18,8 +18,8 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'],
         manifest: {
           id: '/',
-          name: 'OmniMart PH Supermarket POS',
-          short_name: 'OmniMart POS',
+          name: 'EternalBlue POS',
+          short_name: 'EternalBlue POS',
           description: 'Philippine Supermarket & Sari-Sari POS Terminal',
           start_url: '/',
           scope: '/',
@@ -59,7 +59,8 @@ export default defineConfig(() => {
           cleanupOutdatedCaches: true,
           skipWaiting: true,
           clientsClaim: true,
-          navigateFallbackDenylist: [/^\/api\//],
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/api\//, /^\/sw\.js$/, /^\/registerSW\.js$/, /^\/manifest\.webmanifest$/],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

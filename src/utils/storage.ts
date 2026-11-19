@@ -17,10 +17,15 @@ import type {
 } from '../types';
 import {
   buildDefaultCatalog,
+  DEFAULT_QUICK_ACTIONS_DOCK,
   DEFAULT_SETTINGS,
+  isQuickActionsDock,
+  type QuickActionsDock,
   safeJsonParse,
   STORAGE_KEYS,
+  upgradeLegacyDefaultStoreName,
 } from './posMath';
+import { LEGACY_SYNC_LOCAL_KEYS, stripLegacySyncFields } from './pwaUpdateRules';
 
 export interface SaveResult {
   ok: boolean;
@@ -97,18 +102,6 @@ export function saveHeldToStorage(heldOrders: HeldOrder[]): SaveResult {
   }
 }
 
-const LEGACY_SYNC_LOCAL_KEYS = [
-  'omnimart_ph_sync_tombstones_v1',
-  'omnimart_ph_device_sync_id_v1',
-];
-
-const LEGACY_SYNC_SETTING_FIELDS = [
-  'syncEnabled',
-  'syncStoreId',
-  'syncStoreIdCustomized',
-  'lastSyncedAt',
-];
-
 export function loadSettingsFromStorage(): StoreSettings {
   try {
     for (const legacyKey of LEGACY_SYNC_LOCAL_KEYS) {
@@ -118,16 +111,13 @@ export function loadSettingsFromStorage(): StoreSettings {
     if (raw) {
       const parsed = safeJsonParse<unknown>(raw);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const record = { ...(parsed as Record<string, unknown>) };
-        let hadLegacySyncFields = false;
-        for (const field of LEGACY_SYNC_SETTING_FIELDS) {
-          if (field in record) {
-            delete record[field];
-            hadLegacySyncFields = true;
-          }
+        const { sanitized, strippedCount } = stripLegacySyncFields(parsed as Record<string, unknown>);
+        const merged: StoreSettings = { ...DEFAULT_SETTINGS, ...(sanitized as Partial<StoreSettings>) };
+        const nameCheck = upgradeLegacyDefaultStoreName(merged.storeName);
+        if (nameCheck.upgraded) {
+          merged.storeName = nameCheck.storeName;
         }
-        const merged: StoreSettings = { ...DEFAULT_SETTINGS, ...(record as Partial<StoreSettings>) };
-        if (hadLegacySyncFields) {
+        if (strippedCount > 0 || nameCheck.upgraded) {
           saveSettingsToStorage(merged);
         }
         return merged;
@@ -361,7 +351,25 @@ export function saveActiveShiftToStorage(shift: ActiveShiftState | null): SaveRe
     }
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: String(e) };
+  return { ok: false, error: String(e) };
+  }
+}
+
+export function loadQuickActionsDockFromStorage(): QuickActionsDock {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.QA_DOCK);
+    if (isQuickActionsDock(raw)) return raw;
+  } catch {
+    // ignore
+  }
+  return DEFAULT_QUICK_ACTIONS_DOCK;
+}
+
+export function saveQuickActionsDockToStorage(dock: QuickActionsDock): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.QA_DOCK, dock);
+  } catch {
+    // ignore
   }
 }
 
@@ -403,6 +411,7 @@ const STORAGE_LABELS: Record<string, string> = {
   [STORAGE_KEYS.SERVICE_LOGS]: 'GCash / Maya / E-Load',
   [STORAGE_KEYS.CASHIERS]: 'Cashier Accounts',
   [STORAGE_KEYS.ACTIVE_SHIFT]: 'Active Shift State',
+  [STORAGE_KEYS.QA_DOCK]: 'Quick Actions Position',
 };
 
 export function getStorageBreakdown(): { totalBytes: number; items: StorageBreakdownItem[] } {

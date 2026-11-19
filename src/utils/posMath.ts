@@ -9,6 +9,7 @@ import type {
   StockLogEntry,
   StoreSettings,
 } from '../types';
+import { stripLegacySyncFields } from './pwaUpdateRules';
 
 export const STORAGE_KEYS = {
   PRODUCTS: 'omnimart_ph_products_v1',
@@ -28,10 +29,45 @@ export const STORAGE_KEYS = {
   SERVICE_LOGS: 'omnimart_ph_service_logs_v1',
   CASHIERS: 'omnimart_ph_cashiers_v1',
   ACTIVE_SHIFT: 'omnimart_ph_active_shift_v1',
+  QA_DOCK: 'omnimart_ph_qa_dock_v1',
 } as const;
 
+export const DEFAULT_STORE_NAME = 'EternalBlue Mart';
+
+export const STORE_NAME_PRESETS = [
+  'EternalBlue Mart',
+  'EternalBlue Supermart',
+  'EternalBlue Sari-Sari',
+  'EternalBlue Supply Hub',
+] as const;
+
+const LEGACY_PLACEHOLDER_STORE_NAMES = new Set([
+  '',
+  'omnimart ph supermarket',
+  'omnimart ph',
+  'omnimart',
+]);
+
+/**
+ * Upgrades only untouched legacy template placeholder store names to EternalBlue Mart.
+ * Any custom store name entered by a store owner is preserved verbatim.
+ */
+export function upgradeLegacyDefaultStoreName(raw?: string): {
+  storeName: string;
+  upgraded: boolean;
+} {
+  const trimmed = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (LEGACY_PLACEHOLDER_STORE_NAMES.has(trimmed.toLowerCase())) {
+    return {
+      storeName: DEFAULT_STORE_NAME,
+      upgraded: trimmed !== DEFAULT_STORE_NAME,
+    };
+  }
+  return { storeName: trimmed, upgraded: false };
+}
+
 export const DEFAULT_SETTINGS: StoreSettings = {
-  storeName: 'OmniMart PH Supermarket',
+  storeName: DEFAULT_STORE_NAME,
   storeAddress: 'Mangatarem, Pangasinan, Philippines',
   storeTin: 'NON-VAT / NON-BIR INVOICE',
   zCount: 0,
@@ -353,6 +389,59 @@ export function findProductByBarcode(code: string, products: Product[]): Product
     }
   }
   return undefined;
+}
+
+/**
+ * Builds an O(1) lookup Map keyed by normalized barcode (strips leading zeros).
+ */
+export function buildBarcodeIndex(products: Product[]): Map<string, Product> {
+  const map = new Map<string, Product>();
+  for (const p of products) {
+    const n = normBarcode(p.barcode);
+    if (n && !map.has(n)) {
+      map.set(n, p);
+    }
+  }
+  return map;
+}
+
+/**
+ * Fast O(1) indexed barcode lookup with UPC-E -> UPC-A expansion support.
+ */
+export function findProductByBarcodeIndexed(
+  code: string,
+  index: Map<string, Product>,
+): Product | undefined {
+  const n = normBarcode(code);
+  if (!n) return undefined;
+  const direct = index.get(n);
+  if (direct) return direct;
+
+  const trimmed = String(code || '').trim();
+  if (/^[01]\d{7}$/.test(trimmed)) {
+    const upca = expandUpcE(trimmed);
+    if (upca) {
+      return index.get(normBarcode(upca));
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Parses optional cashier multiplier prefix (e.g. "5*4800016644801") and GS1 AI(01) GTIN codes.
+ */
+export function extractScanPayload(rawInput: string): {
+  qty: number;
+  code: string;
+  rawQuery: string;
+} {
+  const { qty, query } = parseQtySearchInput(rawInput);
+  const gtin = extractGs1Gtin(query);
+  return {
+    qty,
+    code: gtin || query,
+    rawQuery: query,
+  };
 }
 
 export function isStrongRead(code: string, format?: string): boolean {
@@ -918,7 +1007,7 @@ export function safeJsonParse<T = unknown>(raw: string): T {
 export function validateBackupPayload(data: unknown): { ok: true; data: { products: Product[]; sales: SaleRecord[]; heldOrders: HeldOrder[]; settings?: Partial<StoreSettings>; exportedAt?: string } } | { ok: false; error: string } {
   const isObj = (o: unknown): o is Record<string, unknown> => !!o && typeof o === 'object' && !Array.isArray(o);
   if (!isObj(data) || data.app !== 'omnimart-ph-pos' || !Array.isArray(data.products) || !Array.isArray(data.sales)) {
-    return { ok: false, error: 'This is not an OmniMart backup file' };
+    return { ok: false, error: 'This is not an EternalBlue / OmniMart POS backup file' };
   }
   const productsOk = data.products.every((p) => isObj(p) && typeof p.id === 'string');
   const salesOk = data.sales.every((x) => isObj(x) && Array.isArray(x.items) && x.items.every(isObj));
@@ -932,7 +1021,9 @@ export function validateBackupPayload(data: unknown): { ok: true; data: { produc
       products: data.products as unknown as Product[],
       sales: data.sales as unknown as SaleRecord[],
       heldOrders: (Array.isArray(data.heldOrders) ? data.heldOrders : []) as unknown as HeldOrder[],
-      settings: isObj(data.settings) ? (data.settings as Partial<StoreSettings>) : undefined,
+      settings: isObj(data.settings)
+        ? (stripLegacySyncFields(data.settings).sanitized as Partial<StoreSettings>)
+        : undefined,
       exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : undefined,
     },
   };
@@ -1525,6 +1616,48 @@ export function getTopFastMoverIds(
   return new Set(ranked.map((r) => r.productId));
 }
 
+export function getLastVoidableSale(sales: SaleRecord[]): SaleRecord | null {
+  let latest: SaleRecord | null = null;
+  let latestMs = -Infinity;
 
+  for (const s of sales) {
+    if (s.voided) continue;
+    const t = Date.parse(s.dateIso);
+    const ms = Number.isFinite(t) ? t : 0;
+    if (!latest || ms >= latestMs) {
+      latest = s;
+      latestMs = ms;
+    }
+  }
 
+  return latest;
+}
+
+export type QuickActionsDock = 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right';
+
+export const DEFAULT_QUICK_ACTIONS_DOCK: QuickActionsDock = 'bottom-left';
+
+export function isQuickActionsDock(value: unknown): value is QuickActionsDock {
+  return (
+    value === 'bottom-left' ||
+    value === 'bottom-right' ||
+    value === 'top-left' ||
+    value === 'top-right'
+  );
+}
+
+export function resolveNearestQuickActionsDock(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; width: number; height: number },
+): QuickActionsDock {
+  const w = Math.max(1, rect.width);
+  const h = Math.max(1, rect.height);
+  const relX = (clientX - rect.left) / w;
+  const relY = (clientY - rect.top) / h;
+  const isRight = relX >= 0.5;
+  const isBottom = relY >= 0.5;
+  if (isBottom) return isRight ? 'bottom-right' : 'bottom-left';
+  return isRight ? 'top-right' : 'top-left';
+}
 

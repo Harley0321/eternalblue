@@ -471,8 +471,8 @@ export class OfflineAssistant {
     return {
       text:
         lang === 'tl'
-          ? 'Kumusta! Ako ang upgraded OmniMart Store AI. Handa akong magbigay ng store briefing, hula kung kelan mauubos ang stock, madalas magkasamang paninda, tubo at margin audit, cart wholesale check, resibo lookup, at instant na pagbukas ng mga tools—nang hindi binabago ang kahit anong naka-save mong data offline.\n\nSubukan: "Kamusta ang tindahan?", "Kelan mauubos ang stock?", o "Magkano ang Milo?"'
-          : 'Hi! I\'m your upgraded OmniMart Store AI. I can generate executive briefings, stockout forecasts, bundle affinities, margin audits, category breakdowns, cart wholesale checks, and receipt lookups—strictly read-only and 100% offline so your saved mobile & tablet data is always safe.\n\nTry: "Store briefing", "Stockout forecast", or "Magkano ang Milo?"',
+          ? 'Kumusta! Ako ang EternalBlue Store AI. Handa akong magbigay ng store briefing, hula kung kelan mauubos ang stock, madalas magkasamang paninda, tubo at margin audit, cart wholesale check, resibo lookup, at instant na pagbukas ng mga tools—nang hindi binabago ang kahit anong naka-save mong data offline.\n\nSubukan: "Kamusta ang tindahan?", "Kelan mauubos ang stock?", o "Magkano ang Milo?"'
+          : 'Hi! I\'m your EternalBlue Store AI. I can generate executive briefings, stockout forecasts, bundle affinities, margin audits, category breakdowns, cart wholesale checks, and receipt lookups—strictly read-only and 100% offline so your saved mobile & tablet data is always safe.\n\nTry: "Store briefing", "Stockout forecast", or "Magkano ang Milo?"',
       lang: this.lang,
       intent: '',
       chips: CHIPS[this.lang],

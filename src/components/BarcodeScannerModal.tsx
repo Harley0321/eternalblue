@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   CheckCircle2,
@@ -10,13 +10,16 @@ import {
   RotateCcw,
   ScanBarcode,
   X,
+  Zap,
   ZoomIn,
 } from 'lucide-react';
 import type { CartLine, Product, ScannerMode } from '../types';
 import {
+  buildBarcodeIndex,
   createScanConsensusState,
   evaluateScanCandidate,
-  findProductByBarcode,
+  extractScanPayload,
+  findProductByBarcodeIndexed,
   formatPeso,
   normalizeBarcodeFormat,
 } from '../utils/posMath';
@@ -33,13 +36,14 @@ import type { WorkerPoint } from '../workers/barcodeWorker';
 interface BarcodeScannerModalProps {
   open: boolean;
   mode: ScannerMode;
+  initialContinuous?: boolean;
   products: Product[];
   cart: CartLine[];
   cartTotal: number;
   beepEnabled: boolean;
   vibrateEnabled: boolean;
   onClose: () => void;
-  onScanProduct: (product: Product) => void;
+  onScanProduct: (product: Product, qty?: number) => void;
   onUnknownBarcode: (barcode: string, mode: ScannerMode) => void;
   onPopulateFormBarcode: (barcode: string) => void;
   onChangeCartQty: (productId: string, delta: number) => void;
@@ -60,9 +64,12 @@ function pickBestRearCamera(devices: MediaDeviceInfo[]): string | undefined {
   return (main || rear[0]).deviceId;
 }
 
+const SCAN_MULTIPLIERS = [1, 2, 5, 6, 12] as const;
+
 export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   open,
   mode,
+  initialContinuous,
   products,
   cart,
   cartTotal,
@@ -76,6 +83,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onProceedCheckout,
 }) => {
   const [continuous, setContinuous] = useState(() => loadScanPrefs().continuous);
+  const [scanMultiplier, setScanMultiplier] = useState<number>(1);
   const [statusMsg, setStatusMsg] = useState('Initializing scanner…');
   const [cameraError, setCameraError] = useState('');
   const [torchOn, setTorchOn] = useState(false);
@@ -92,7 +100,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     format?: string;
   } | null>(null);
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
-  const [sessionHistory, setSessionHistory] = useState<string[]>([]);
+  const [sessionHistory, setSessionHistory] = useState<Array<{ id: string; qty: number }>>([]);
   const [lockFlash, setLockFlash] = useState(false);
   const [cameras, setCameras] = useState<CameraDeviceOption[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
@@ -109,6 +117,12 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const photoInputRef = useRef<HTMLInputElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const overlayClearTimerRef = useRef<number | null>(null);
+
+  const barcodeIndex = useMemo(() => buildBarcodeIndex(products), [products]);
+  const continuousRef = useRef(continuous);
+  continuousRef.current = continuous;
+  const scanMultiplierRef = useRef(scanMultiplier);
+  scanMultiplierRef.current = scanMultiplier;
 
   const playFeedback = useCallback(() => {
     if (vibrateEnabled && typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -212,13 +226,18 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       options: {
         format?: string;
         source: 'camera' | 'photo' | 'manual';
+        decodeMs?: number;
         cornerPoints?: WorkerPoint[];
         cropRect?: { sx: number; sy: number; sw: number; sh: number; cw: number; ch: number };
       },
     ) => {
-      const verdict = evaluateScanCandidate(consensusRef.current, raw, {
+      const payload = extractScanPayload(raw);
+      const effectiveCode = payload.code || raw;
+
+      const verdict = evaluateScanCandidate(consensusRef.current, effectiveCode, {
         format: options.format,
         source: options.source,
+        cooldownMs: continuousRef.current ? 650 : 1200,
       });
 
       if (!verdict.accept) return false;
@@ -227,7 +246,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         drawDetectedBox(options.cornerPoints, options.cropRect);
       }
       setLockFlash(true);
-      window.setTimeout(() => setLockFlash(false), 320);
+      window.setTimeout(() => setLockFlash(false), 260);
 
       playFeedback();
       const fmtLabel = normalizeBarcodeFormat(options.format).replace('_', '-').toUpperCase();
@@ -237,18 +256,38 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         return true;
       }
 
-      const found = findProductByBarcode(verdict.code, products);
+      let found = findProductByBarcodeIndexed(verdict.code, barcodeIndex);
+      if (!found && options.source === 'manual' && payload.rawQuery.length >= 2) {
+        const lower = payload.rawQuery.toLowerCase();
+        found = products.find((p) => p.name.toLowerCase() === lower);
+        if (!found) {
+          const nameMatches = products.filter((p) => p.name.toLowerCase().includes(lower));
+          if (nameMatches.length === 1) {
+            found = nameMatches[0];
+          }
+        }
+      }
+
       if (found) {
+        const activeMult = scanMultiplierRef.current;
+        const effectiveQty = Number(
+          (payload.qty !== 1 ? payload.qty : activeMult).toFixed(3),
+        );
         setUnknownCode(null);
         setLastScanned({
-          code: verdict.code,
+          code: found.barcode || verdict.code,
           name: found.name,
           productId: found.id,
           format: fmtLabel || undefined,
         });
-        setSessionHistory((prev) => [found.id, ...prev.slice(0, 19)]);
-        onScanProduct(found);
-        setStatusMsg(`Added ${found.name}`);
+        setSessionHistory((prev) => [{ id: found.id, qty: effectiveQty }, ...prev.slice(0, 19)]);
+        onScanProduct(found, effectiveQty);
+        if (activeMult !== 1) {
+          setScanMultiplier(1);
+        }
+        const qtyPrefix = effectiveQty !== 1 ? `${effectiveQty}× ` : '';
+        const speedSuffix = options.decodeMs !== undefined ? ` (${options.decodeMs}ms)` : '';
+        setStatusMsg(`Added ${qtyPrefix}${found.name}${speedSuffix}`);
         if (!continuous || mode === 'inventory') {
           onClose();
         }
@@ -263,6 +302,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       return true;
     },
     [
+      barcodeIndex,
       continuous,
       drawDetectedBox,
       mode,
@@ -298,6 +338,30 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     setZoomLevel(1);
     setDarkAlert(false);
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    if (initialContinuous !== undefined) {
+      setContinuous(initialContinuous);
+    } else {
+      setContinuous(loadScanPrefs().continuous);
+    }
+    setScanMultiplier(1);
+    setManualCode('');
+  }, [open, initialContinuous]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [open, onClose]);
 
   useEffect(() => {
     if (!open) {
@@ -451,17 +515,25 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             try {
               const vw = vid.videoWidth;
               const vh = vid.videoHeight;
-              const isDeepCycle = cycle % 4 === 3;
+              const phase = cycle % 4;
+              const isFast1d = phase === 0 || phase === 1;
+              const isDeepCycle = phase === 3;
               cycle += 1;
 
-              // Center ROI (~76% wide x ~46% tall) for speed & background-clutter rejection;
-              // every 4th cycle scans wider full frame with denoising + inverted pass
-              const sx = isDeepCycle ? 0 : Math.round(vw * 0.12);
-              const sy = isDeepCycle ? 0 : Math.round(vh * 0.27);
-              const sw = isDeepCycle ? vw : Math.round(vw * 0.76);
-              const sh = isDeepCycle ? vh : Math.round(vh * 0.46);
+              // Tiered scan crop:
+              // - fast-1d (cycles 0,1): tight center strip (68% x 36%, max 560px) for laser-like retail 1D speed
+              // - fast (cycle 2): wider ROI (76% x 46%, max 680px) with rotation/invert & 2D support
+              // - deep (cycle 3): full frame (max 960px) with denoising & inverted fallback
+              const sx = isDeepCycle ? 0 : Math.round(vw * (isFast1d ? 0.16 : 0.12));
+              const sy = isDeepCycle ? 0 : Math.round(vh * (isFast1d ? 0.32 : 0.27));
+              const sw = isDeepCycle ? vw : Math.round(vw * (isFast1d ? 0.68 : 0.76));
+              const sh = isDeepCycle ? vh : Math.round(vh * (isFast1d ? 0.36 : 0.46));
 
-              const targetW = isDeepCycle ? Math.min(960, sw) : Math.min(720, sw);
+              const targetW = isDeepCycle
+                ? Math.min(960, sw)
+                : isFast1d
+                  ? Math.min(560, sw)
+                  : Math.min(680, sw);
               const targetH = Math.max(1, Math.round((sh * targetW) / sw));
 
               const targetCanvas = isDeepCycle ? deepCanvas : roiCanvas;
@@ -471,6 +543,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               if (targetCanvas.height !== targetH) targetCanvas.height = targetH;
 
               if (targetCtx) {
+                const tStart = performance.now();
                 targetCtx.drawImage(vid, sx, sy, sw, sh, 0, 0, targetW, targetH);
 
                 // 1. Hardware BarcodeDetector pass (sub-10ms when available)
@@ -481,24 +554,23 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     handled = processBarcodeRef.current(nativeHits[0].rawValue, {
                       format: nativeHits[0].format,
                       source: 'camera',
+                      decodeMs: Math.round(performance.now() - tStart),
                       cornerPoints: nativeHits[0].cornerPoints,
                       cropRect: { sx, sy, sw, sh, cw: targetW, ch: targetH },
                     });
                   }
                 }
 
-                // 2. ZXing-C++ WASM Web Worker pass (always runs when native absent,
-                //    or on every 2nd/deep pass so inverted/GS1-DataBar/damaged codes never miss)
-                if (!handled && (!hasNative || isDeepCycle || cycle % 2 === 0)) {
+                // 2. ZXing-C++ WASM Web Worker pass (fast-1d first, escalating to full 2D & deep passes)
+                if (!handled && (!hasNative || isDeepCycle || phase === 2)) {
                   const imgData = targetCtx.getImageData(0, 0, targetW, targetH);
-                  const wasmHits = await detectImageDataWithWasm(
-                    imgData,
-                    isDeepCycle ? 'deep' : 'fast',
-                  );
+                  const wasmMode = isDeepCycle ? 'deep' : isFast1d ? 'fast-1d' : 'fast';
+                  const wasmHits = await detectImageDataWithWasm(imgData, wasmMode);
                   if (!cancelled && wasmHits.length > 0) {
                     processBarcodeRef.current(wasmHits[0].rawValue, {
                       format: wasmHits[0].format,
                       source: 'camera',
+                      decodeMs: Math.round(performance.now() - tStart),
                       cornerPoints: wasmHits[0].cornerPoints,
                       cropRect: { sx, sy, sw, sh, cw: targetW, ch: targetH },
                     });
@@ -528,8 +600,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           }
 
           if (!cancelled) {
-            // Pace smoothly (~25–30 scans/sec) without choking device CPU or battery
-            timerRef.current = window.setTimeout(runCycle, 34);
+            // Adaptive pacing: faster 18ms cadence in Rapid Multi mode, smooth 28ms default
+            timerRef.current = window.setTimeout(runCycle, continuousRef.current ? 18 : 28);
           }
         };
 
@@ -634,15 +706,35 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   const handleUndoLast = () => {
-    const lastId = sessionHistory[0];
-    if (!lastId) return;
-    onChangeCartQty(lastId, -1);
+    const lastEntry = sessionHistory[0];
+    if (!lastEntry) return;
+    const prod = products.find((p) => p.id === lastEntry.id);
+    if (prod && prod.unit === 'kg') {
+      // Weight items step by 0.25kg on handleChangeCartQty; undo whole unit steps if integer
+      const steps = Math.max(1, Math.round(lastEntry.qty / 0.25));
+      for (let i = 0; i < steps; i++) onChangeCartQty(lastEntry.id, -1);
+    } else {
+      onChangeCartQty(lastEntry.id, -lastEntry.qty);
+    }
     setSessionHistory((prev) => prev.slice(1));
   };
 
   if (!open) return null;
 
   const totalQty = cart.reduce((s, l) => s + (l.unit === 'kg' ? 1 : l.qty), 0);
+  const manualPayload = extractScanPayload(manualCode);
+  const manualQuickMatches =
+    mode === 'pos' && manualPayload.rawQuery.length >= 2
+      ? products
+          .filter((p) => {
+            const q = manualPayload.rawQuery.toLowerCase();
+            return (
+              p.stock > 0 &&
+              (p.name.toLowerCase().includes(q) || p.barcode.toLowerCase().includes(q))
+            );
+          })
+          .slice(0, 3)
+      : [];
 
   return (
     <div
@@ -876,7 +968,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
         {/* Live in-camera scan session strip (POS mode) */}
         {mode === 'pos' && (lastScanned?.productId || cart.length > 0) && (
-          <div className="px-4 py-2.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-2 text-xs">
+          <div className="px-4 py-2 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-2 text-xs">
             <div className="min-w-0">
               <div className="font-bold text-emerald-300 truncate">
                 {lastScanned?.name || `${totalQty} item(s) in basket`}
@@ -894,7 +986,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     type="button"
                     onClick={() => onChangeCartQty(lastScanned.productId!, -1)}
                     aria-label="Decrease last scanned"
-                    className="w-10 h-10 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center cursor-pointer"
+                    className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center cursor-pointer"
                   >
                     <Minus className="w-3.5 h-3.5" />
                   </button>
@@ -902,7 +994,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     type="button"
                     onClick={() => onChangeCartQty(lastScanned.productId!, 1)}
                     aria-label="Increase last scanned"
-                    className="w-10 h-10 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center cursor-pointer"
+                    className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
                   </button>
@@ -913,7 +1005,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                   type="button"
                   onClick={handleUndoLast}
                   title="Undo last scan"
-                  className="px-3 h-10 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 inline-flex items-center gap-1 font-bold whitespace-nowrap cursor-pointer"
+                  className="px-2.5 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 inline-flex items-center gap-1 font-bold whitespace-nowrap cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Undo</span>
@@ -922,7 +1014,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               <button
                 type="button"
                 onClick={onProceedCheckout}
-                className="px-3.5 h-10 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                className="px-3 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Checkout</span>
@@ -931,7 +1023,63 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           </div>
         )}
 
-        {/* Manual barcode input fallback */}
+        {/* Quick-Scan Qty Multiplier Bar (POS mode) */}
+        {mode === 'pos' && (
+          <div className="px-4 py-1.5 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-slate-400 font-semibold flex items-center gap-1 shrink-0">
+              <Zap className="w-3 h-3 text-emerald-400" />
+              <span>Scan Qty</span>
+            </span>
+            <div className="flex items-center gap-1" role="group" aria-label="Scan quantity multiplier">
+              {SCAN_MULTIPLIERS.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  data-testid={`scanner-mult-${m}`}
+                  aria-pressed={scanMultiplier === m}
+                  onClick={() => setScanMultiplier(m)}
+                  className={`px-2.5 py-1 min-h-[28px] rounded-lg font-mono-num font-extrabold cursor-pointer transition-colors ${
+                    scanMultiplier === m
+                      ? 'bg-emerald-500 text-slate-950'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  ×{m}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Instant name/barcode quick-pick chips while typing */}
+        {manualQuickMatches.length > 0 && (
+          <div className="px-4 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            {manualQuickMatches.map((prod) => (
+              <button
+                key={prod.id}
+                type="button"
+                data-testid={`scanner-quick-match-${prod.id}`}
+                onClick={() => {
+                  const targetCode = prod.barcode || prod.name;
+                  const commandInput =
+                    manualPayload.qty !== 1 ? `${manualPayload.qty}*${targetCode}` : targetCode;
+                  processBarcode(commandInput, { source: 'manual' });
+                  setManualCode('');
+                }}
+                className="px-2.5 py-1 min-h-[30px] rounded-lg bg-slate-800 hover:bg-emerald-900/60 border border-slate-700 hover:border-emerald-500/60 text-left flex items-center gap-2 shrink-0 cursor-pointer"
+              >
+                <span className="text-[11px] font-bold text-white truncate max-w-[160px]">
+                  {prod.name}
+                </span>
+                <span className="text-[10px] font-mono-num font-bold text-emerald-400">
+                  {formatPeso(prod.retailPrice)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Manual barcode / qty*code / name fallback */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -946,13 +1094,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             type="text"
             value={manualCode}
             onChange={(e) => setManualCode(e.target.value)}
-            placeholder="Or type / paste barcode number…"
+            placeholder="Barcode, 5*code, or item name…"
             aria-label="Manual barcode entry"
-            className="flex-1 min-h-[42px] px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white font-mono-num placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none"
+            className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white font-mono-num placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none"
           />
           <button
             type="submit"
-            className="px-4 py-2 min-h-[42px] rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold whitespace-nowrap cursor-pointer"
+            className="px-4 py-2 min-h-[40px] rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold whitespace-nowrap cursor-pointer"
           >
             Enter
           </button>

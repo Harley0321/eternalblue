@@ -7,6 +7,7 @@ import {
   computeReorderList,
   computeSalesStats,
   DEFAULT_SETTINGS,
+  DEFAULT_STORE_NAME,
   eanCheckOk,
   escapeCsvCell,
   expiryInfo,
@@ -25,6 +26,7 @@ import {
   scSuggest,
   sumPeso,
   toCents,
+  upgradeLegacyDefaultStoreName,
   validateBackupPayload,
   wholesaleBlock,
 } from './posMath';
@@ -1374,4 +1376,153 @@ test('Store AI handles Closing/EOD report and safe POS/Stock quick actions witho
   assert.equal(JSON.stringify(products), snapP);
   assert.equal(JSON.stringify(sales), snapS);
   assert.equal(JSON.stringify(cart), snapC);
+});
+
+test('getLastVoidableSale selects most recent non-voided sale cleanly', async () => {
+  const { getLastVoidableSale } = await import('./posMath');
+
+  assert.equal(getLastVoidableSale([]), null);
+
+  const mkSale = (receiptNo: string, dateIso: string, voided = false): SaleRecord => ({
+    receiptNo,
+    dateIso,
+    dateFormatted: 'now',
+    items: [],
+    retailSubtotal: 100,
+    wholesaleSavings: 0,
+    seniorDiscount: 0,
+    grandTotal: 100,
+    paymentMethod: 'Cash',
+    tendered: 100,
+    change: 0,
+    voided,
+  });
+
+  // All voided -> null
+  assert.equal(
+    getLastVoidableSale([
+      mkSale('OR-1', '2026-11-18T08:00:00.000Z', true),
+      mkSale('OR-2', '2026-11-18T09:00:00.000Z', true),
+    ]),
+    null,
+  );
+
+  // Latest sale is voided -> falls back to most recent valid sale
+  const validOlder = mkSale('OR-1', '2026-11-18T08:00:00.000Z', false);
+  const validNewer = mkSale('OR-2', '2026-11-18T09:00:00.000Z', false);
+  const voidedNewest = mkSale('OR-3', '2026-11-18T10:00:00.000Z', true);
+  assert.equal(getLastVoidableSale([validOlder, validNewer, voidedNewest])?.receiptNo, 'OR-2');
+
+  // Out-of-order timestamps pick chronologically newest valid sale
+  assert.equal(getLastVoidableSale([validNewer, validOlder])?.receiptNo, 'OR-2');
+
+  // Tied timestamps break in favor of later entry
+  const tieA = mkSale('OR-TIE-1', '2026-11-18T11:00:00.000Z', false);
+  const tieB = mkSale('OR-TIE-2', '2026-11-18T11:00:00.000Z', false);
+  assert.equal(getLastVoidableSale([tieA, tieB])?.receiptNo, 'OR-TIE-2');
+});
+
+test('QuickActionsDock helpers validate corners and resolve nearest quadrant cleanly', async () => {
+  const {
+    DEFAULT_QUICK_ACTIONS_DOCK,
+    isQuickActionsDock,
+    resolveNearestQuickActionsDock,
+  } = await import('./posMath');
+
+  assert.equal(DEFAULT_QUICK_ACTIONS_DOCK, 'bottom-left');
+  assert.equal(isQuickActionsDock('bottom-left'), true);
+  assert.equal(isQuickActionsDock('top-right'), true);
+  assert.equal(isQuickActionsDock('center'), false);
+  assert.equal(isQuickActionsDock(null), false);
+
+  const rect = { left: 100, top: 200, width: 800, height: 600 };
+  assert.equal(resolveNearestQuickActionsDock(150, 250, rect), 'top-left');
+  assert.equal(resolveNearestQuickActionsDock(850, 250, rect), 'top-right');
+  assert.equal(resolveNearestQuickActionsDock(150, 750, rect), 'bottom-left');
+  assert.equal(resolveNearestQuickActionsDock(850, 750, rect), 'bottom-right');
+  // Midpoint boundary resolves deterministically
+  assert.equal(resolveNearestQuickActionsDock(500, 500, rect), 'bottom-right');
+});
+
+test('O(1) barcode index, extractScanPayload multiplier/GS1 parsing, and rapid cooldown work accurately', async () => {
+  const {
+    buildBarcodeIndex,
+    createScanConsensusState,
+    evaluateScanCandidate,
+    extractScanPayload,
+    findProductByBarcodeIndexed,
+  } = await import('./posMath');
+
+  const catalog = buildDefaultCatalog();
+  const upcaItem: Product = {
+    ...catalog[0],
+    id: 'SKU-UPCA',
+    barcode: '012000000133', // UPC-E 01201303 expands to 012000000133
+    name: 'Test Soda 12oz',
+  };
+  const index = buildBarcodeIndex([...catalog, upcaItem]);
+
+  assert.equal(findProductByBarcodeIndexed(catalog[2].barcode, index)?.id, catalog[2].id);
+  assert.equal(findProductByBarcodeIndexed('000' + catalog[2].barcode, index)?.id, catalog[2].id);
+  assert.equal(findProductByBarcodeIndexed('01201303', index)?.id, 'SKU-UPCA');
+  assert.equal(findProductByBarcodeIndexed('9999999999999', index), undefined);
+
+  assert.deepEqual(extractScanPayload('5*4800016644801'), {
+    qty: 5,
+    code: '4800016644801',
+    rawQuery: '4800016644801',
+  });
+  assert.deepEqual(extractScanPayload('6*(01)04800016644801(17)271231'), {
+    qty: 6,
+    code: '4800016644801',
+    rawQuery: '(01)04800016644801(17)271231',
+  });
+
+  const consensus = createScanConsensusState();
+  const first = evaluateScanCandidate(consensus, '4800016644801', {
+    format: 'ean_13',
+    source: 'camera',
+    nowMs: 1000,
+    cooldownMs: 650,
+  });
+  assert.equal(first.accept, true);
+
+  const blocked = evaluateScanCandidate(consensus, '4800016644801', {
+    format: 'ean_13',
+    source: 'camera',
+    nowMs: 1400,
+    cooldownMs: 650,
+  });
+  assert.equal(blocked.accept, false);
+  assert.equal(blocked.reason, 'cooldown');
+
+  const rapidNext = evaluateScanCandidate(consensus, '4800016644801', {
+    format: 'ean_13',
+    source: 'camera',
+    nowMs: 1700,
+    cooldownMs: 650,
+  });
+  assert.equal(rapidNext.accept, true);
+});
+
+test('DEFAULT_STORE_NAME upgrades untouched legacy placeholder without touching custom store names', () => {
+  assert.equal(DEFAULT_STORE_NAME, 'EternalBlue Mart');
+  assert.equal(DEFAULT_SETTINGS.storeName, 'EternalBlue Mart');
+
+  assert.deepEqual(upgradeLegacyDefaultStoreName('OmniMart PH Supermarket'), {
+    storeName: 'EternalBlue Mart',
+    upgraded: true,
+  });
+  assert.deepEqual(upgradeLegacyDefaultStoreName('  '), {
+    storeName: 'EternalBlue Mart',
+    upgraded: true,
+  });
+  assert.deepEqual(upgradeLegacyDefaultStoreName('Manila Branch #7 Test Store'), {
+    storeName: 'Manila Branch #7 Test Store',
+    upgraded: false,
+  });
+  assert.deepEqual(upgradeLegacyDefaultStoreName('Tindahan ni Aling Nena'), {
+    storeName: 'Tindahan ni Aling Nena',
+    upgraded: false,
+  });
 });

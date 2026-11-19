@@ -54,7 +54,7 @@ export function resolveStoreIconOption(iconId?: string): StoreIconOption {
 
 const MINOR_WORDS = new Set(['ni', 'ng', 'sa', 'at', 'of', 'the', 'and', 'for', 'in', 'on', 'by']);
 
-export function normalizeStoreNameInput(raw: string, fallback = 'OmniMart PH Supermarket'): string {
+export function normalizeStoreNameInput(raw: string, fallback = 'EternalBlue Mart'): string {
   const collapsed = String(raw || '').replace(/\s+/g, ' ').trim();
   return collapsed || fallback;
 }
@@ -81,13 +81,13 @@ export function formatStoreTitleCase(raw: string): string {
 }
 
 export function getStoreMonogram(storeName: string): string {
-  const clean = normalizeStoreNameInput(storeName, 'OM');
+  const clean = normalizeStoreNameInput(storeName, 'EB');
   const words = clean
     .replace(/[^a-zA-Z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(Boolean);
 
-  if (words.length === 0) return 'OM';
+  if (words.length === 0) return 'EB';
   const significant = words.filter((w) => !MINOR_WORDS.has(w.toLowerCase()));
   const pool = significant.length > 0 ? significant : words;
   if (pool.length === 1) {

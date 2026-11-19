@@ -20,6 +20,73 @@
   font-variant-numeric: tabular-nums;
 }
 
+@keyframes store-name-aura-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+.store-name-glow {
+  background-image: linear-gradient(
+    175deg,
+    #ecfdf5 0%,
+    #a7f3d0 28%,
+    #34d399 60%,
+    #10b981 86%,
+    #059669 100%
+  );
+  background-origin: content-box;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: 0.55px rgba(2, 6, 23, 0.88);
+  paint-order: stroke fill;
+  transform: translateZ(0);
+  filter:
+    drop-shadow(0 1px 1px rgba(2, 6, 23, 0.98))
+    drop-shadow(0 0 1px rgba(2, 6, 23, 0.95))
+    drop-shadow(0 0 2px rgba(16, 185, 129, 0.42));
+}
+
+.store-name-aura {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  text-shadow:
+    0 0 8px rgba(16, 185, 129, 0.55),
+    0 0 18px rgba(52, 211, 153, 0.36);
+  will-change: opacity;
+  transform: translateZ(0);
+  animation: store-name-aura-pulse 3.6s ease-in-out infinite;
+}
+
+@media (min-width: 640px) {
+  .store-name-glow {
+    -webkit-text-stroke: 0.65px rgba(2, 6, 23, 0.85);
+    filter:
+      drop-shadow(0 1px 1.25px rgba(2, 6, 23, 0.98))
+      drop-shadow(0 0 1px rgba(2, 6, 23, 0.92))
+      drop-shadow(0 0 2.5px rgba(52, 211, 153, 0.48));
+  }
+
+  .store-name-aura {
+    text-shadow:
+      0 0 10px rgba(16, 185, 129, 0.6),
+      0 0 22px rgba(52, 211, 153, 0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .store-name-aura {
+    animation: none;
+    opacity: 0.65;
+  }
+}
+
 .scroll-contain {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;

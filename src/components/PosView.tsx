@@ -14,7 +14,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import type { CartLine, CartTotals, PriceType, Product } from '../types';
+import type { CartLine, CartTotals, PriceType, Product, SaleRecord } from '../types';
 import {
   buildProductMap,
   expiryInfo,
@@ -26,8 +26,14 @@ import {
   lineTotalPeso,
   scEligibleLine,
   wholesaleBlock,
+  type QuickActionsDock,
 } from '../utils/posMath';
+import {
+  loadQuickActionsDockFromStorage,
+  saveQuickActionsDockToStorage,
+} from '../utils/storage';
 import { CategoryBar } from './CategoryBar';
+import { PosQuickActions } from './PosQuickActions';
 import { ProductIconBadge } from './ProductIconBadge';
 
 interface PosViewProps {
@@ -43,12 +49,16 @@ interface PosViewProps {
   isSeniorPwd: boolean;
   mobileCartOpen: boolean;
   fastMoverIds?: Set<string>;
+  lastVoidableSale: SaleRecord | null;
   onSetSearchQuery: (q: string) => void;
   onSearchEnter: (q: string) => void;
   onSetPriceMode: (mode: PriceType) => void;
   onSelectCategory: (cat: string) => void;
   onOpenCategorySheet: () => void;
   onOpenScanner: () => void;
+  onOpenRapidScanner: () => void;
+  onReprintLastSale: () => void;
+  onVoidLastSale: () => void;
   onProductClick: (productId: string) => void;
   onChangeCartQty: (productId: string, delta: number) => void;
   onSetCartQty: (productId: string, rawValue: string) => void;
@@ -164,12 +174,16 @@ export const PosView: React.FC<PosViewProps> = ({
   isSeniorPwd,
   mobileCartOpen,
   fastMoverIds,
+  lastVoidableSale,
   onSetSearchQuery,
   onSearchEnter,
   onSetPriceMode,
   onSelectCategory,
   onOpenCategorySheet,
   onOpenScanner,
+  onOpenRapidScanner,
+  onReprintLastSale,
+  onVoidLastSale,
   onProductClick,
   onChangeCartQty,
   onSetCartQty,
@@ -185,8 +199,17 @@ export const PosView: React.FC<PosViewProps> = ({
   onCloseMobileCart,
 }) => {
   const searchRef = useRef<HTMLInputElement>(null);
+  const gridBoundsRef = useRef<HTMLDivElement>(null);
   const [inStockOnly, setInStockOnly] = useState(false);
   const [fastMoversOnly, setFastMoversOnly] = useState(false);
+  const [quickActionsDock, setQuickActionsDock] = useState<QuickActionsDock>(() =>
+    loadQuickActionsDockFromStorage(),
+  );
+
+  const handleChangeQuickActionsDock = (nextDock: QuickActionsDock) => {
+    setQuickActionsDock(nextDock);
+    saveQuickActionsDockToStorage(nextDock);
+  };
 
   // Focus search with `/` or `Ctrl+K` / `Cmd+K` when not typing in another field
   useEffect(() => {
@@ -380,39 +403,69 @@ export const PosView: React.FC<PosViewProps> = ({
           onOpenSheet={onOpenCategorySheet}
         />
 
-        {/* Responsive Product Grid */}
-        <div className="flex-1 overflow-y-auto scroll-contain grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-2.5 pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-3 content-start">
-          {filteredProducts.length === 0 ? (
-            <div className="col-span-full py-12 text-center text-xs text-slate-500 space-y-2">
-              <p>No matching products found.</p>
-              {(searchQuery || selectedCategory !== 'All' || inStockOnly || fastMoversOnly) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSetSearchQuery('');
-                    onSelectCategory('All');
-                    setInStockOnly(false);
-                    setFastMoversOnly(false);
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs cursor-pointer"
-                >
-                  Reset Filters
-                </button>
-              )}
-            </div>
-          ) : (
-            filteredProducts.map((p) => (
-              <ProductTile
-                key={p.id}
-                product={p}
-                inCartQty={cartQtyMap.get(p.id) || 0}
-                priceMode={priceMode}
-                lowStockThreshold={lowStockThreshold}
-                expiryWarnDays={expiryWarnDays}
-                onProductClick={onProductClick}
-              />
-            ))
-          )}
+        {/* Responsive Product Grid + Floating Quick Actions Dock */}
+        <div ref={gridBoundsRef} className="relative flex-1 min-h-0 flex flex-col">
+          <div
+            className={`flex-1 overflow-y-auto scroll-contain grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-2.5 content-start ${
+              quickActionsDock.startsWith('top-')
+                ? 'pt-11 pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-3'
+                : 'pb-[calc(6.25rem+env(safe-area-inset-bottom))] md:pb-11'
+            }`}
+          >
+            {filteredProducts.length === 0 ? (
+              <div className="col-span-full py-12 text-center text-xs text-slate-500 space-y-2">
+                <p>No matching products found.</p>
+                {(searchQuery || selectedCategory !== 'All' || inStockOnly || fastMoversOnly) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSetSearchQuery('');
+                      onSelectCategory('All');
+                      setInStockOnly(false);
+                      setFastMoversOnly(false);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs cursor-pointer"
+                  >
+                    Reset Filters
+                  </button>
+                )}
+              </div>
+            ) : (
+              filteredProducts.map((p) => (
+                <ProductTile
+                  key={p.id}
+                  product={p}
+                  inCartQty={cartQtyMap.get(p.id) || 0}
+                  priceMode={priceMode}
+                  lowStockThreshold={lowStockThreshold}
+                  expiryWarnDays={expiryWarnDays}
+                  onProductClick={onProductClick}
+                />
+              ))
+            )}
+          </div>
+
+          <PosQuickActions
+            dock={quickActionsDock}
+            boundsRef={gridBoundsRef}
+            priceMode={priceMode}
+            isSeniorPwd={isSeniorPwd}
+            lastVoidableSale={lastVoidableSale}
+            cartCount={cart.length}
+            heldCount={heldCount}
+            hidden={mobileCartOpen}
+            onChangeDock={handleChangeQuickActionsDock}
+            onQuickScan={onOpenScanner}
+            onRapidScan={onOpenRapidScanner}
+            onTogglePriceMode={() => onSetPriceMode(priceMode === 'retail' ? 'wholesale' : 'retail')}
+            onToggleSeniorPwd={() => onToggleSeniorPwd(!isSeniorPwd)}
+            onReprintLastSale={onReprintLastSale}
+            onVoidLastSale={onVoidLastSale}
+            onHoldCart={onHoldCart}
+            onOpenHeldModal={onOpenHeldModal}
+            onClearCart={onClearCart}
+            onOpenCheckout={onOpenCheckout}
+          />
         </div>
       </div>
 

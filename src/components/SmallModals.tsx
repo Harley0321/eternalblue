@@ -455,7 +455,7 @@ export const PinModal: React.FC<PinModalProps> = ({
           <div className="px-4 py-2.5 bg-slate-900 text-white flex items-center gap-2.5 border-b border-slate-800">
             <StoreEmblem storeName={settings.storeName} storeIcon={settings.storeIcon} size="sm" />
             <div className="min-w-0">
-              <div className="font-extrabold text-xs text-white truncate">{settings.storeName}</div>
+              <div className="font-extrabold text-xs store-name-glow truncate py-2 -my-2 px-2 -mx-2">{settings.storeName}</div>
               {settings.storeTagline && (
                 <div className="text-[10px] text-slate-400 truncate">{settings.storeTagline}</div>
               )}
