@@ -30,27 +30,43 @@ import androidx.core.content.FileProvider
 import androidx.fragment.app.FragmentActivity
 import com.example.R
 import com.example.domain.StockAlertNotificationPayload
+import com.google.mlkit.vision.common.InputImage
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.multi.GenericMultipleBarcodeReader
 import com.google.zxing.qrcode.QRCodeWriter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.coroutines.resume
 
 object AndroidDeviceBridge {
     private const val STOCK_CHANNEL_ID = "eternalblue_stock_alerts"
+    private var lastBeepMs = 0L
+    private var lastVibrateMs = 0L
+    private val toneGenerator by lazy {
+        runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75) }.getOrNull()
+    }
 
     fun playBeep() {
+        val now = System.currentTimeMillis()
+        if (now - lastBeepMs < 95L) return
+        lastBeepMs = now
         runCatching {
-            val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75)
-            tg.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 85)
         }
     }
 
     fun vibrateShort(context: Context) {
+        val now = System.currentTimeMillis()
+        if (now - lastVibrateMs < 95L) return
+        lastVibrateMs = now
         runCatching {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
@@ -167,6 +183,60 @@ object AndroidDeviceBridge {
         val stream = context.contentResolver.openInputStream(uri) ?: return null
         val bmp = stream.use { BitmapFactory.decodeStream(it) } ?: return null
         return decodeQrOrBarcodeFromBitmap(bmp)
+    }
+
+    suspend fun decodeAllBarcodesFromUri(
+        context: Context,
+        uri: Uri,
+        symbologies: Set<BarcodeSymbology> = BarcodeSymbology.ALL_10
+    ): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        val mlKitResults: List<Pair<String, String>> = runCatching {
+            val image = InputImage.fromFilePath(context, uri)
+            val scanner = BarcodeScannerEngine.buildClient(
+                symbologies = symbologies,
+                enableAutoZoom = false
+            )
+            try {
+                suspendCancellableCoroutine { cont ->
+                    scanner.process(image)
+                        .addOnSuccessListener { list ->
+                            val found = list.mapNotNull { b ->
+                                val raw = b.rawValue?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                                raw to BarcodeSymbology.labelForMlKitFormat(b.format)
+                            }
+                            if (cont.isActive) cont.resume(found)
+                        }
+                        .addOnFailureListener {
+                            if (cont.isActive) cont.resume(emptyList())
+                        }
+                }
+            } finally {
+                runCatching { scanner.close() }
+            }
+        }.getOrDefault(emptyList())
+
+        if (mlKitResults.isNotEmpty()) return@withContext mlKitResults.distinctBy { it.first }
+
+        // ZXing GenericMultipleBarcodeReader fallback
+        runCatching {
+            val stream = context.contentResolver.openInputStream(uri) ?: return@runCatching emptyList()
+            val bmp = stream.use { BitmapFactory.decodeStream(it) } ?: return@runCatching emptyList()
+            val scaled = scaleDownBitmap(bmp, 1600)
+            val w = scaled.width
+            val h = scaled.height
+            val pixels = IntArray(w * h)
+            scaled.getPixels(pixels, 0, w, 0, 0, w, h)
+            val source = RGBLuminanceSource(w, h, pixels)
+            val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
+            val hints = mapOf(DecodeHintType.TRY_HARDER to true)
+            GenericMultipleBarcodeReader(MultiFormatReader()).decodeMultiple(binaryBitmap, hints)
+                .mapNotNull { res ->
+                    res.text?.trim()?.takeIf { it.isNotEmpty() }?.let { txt ->
+                        txt to res.barcodeFormat.name.replace('_', '-')
+                    }
+                }
+                .distinctBy { it.first }
+        }.getOrDefault(emptyList())
     }
 
     private fun scaleDownBitmap(src: Bitmap, maxDim: Int): Bitmap {

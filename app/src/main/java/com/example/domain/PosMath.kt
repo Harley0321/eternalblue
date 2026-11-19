@@ -316,10 +316,11 @@ object PosMath {
     }
 
     private val GS1_REGEX = Regex("""^(?:\][A-Za-z]\d)?\(?01\)?(\d{14})(?:$|[^\d]|\(\d{2}\)|\d{2})""")
+    private val GS1_DIGITAL_LINK_REGEX = Regex("""https?://[^/]+/(?:[^?#]*/)?01/(\d{14})(?:[/?#]|$)""", RegexOption.IGNORE_CASE)
 
     fun extractGs1Gtin(raw: String): String {
         val s = raw.trim()
-        val m = GS1_REGEX.find(s) ?: return ""
+        val m = GS1_REGEX.find(s) ?: GS1_DIGITAL_LINK_REGEX.find(s) ?: return ""
         val g = m.groupValues[1]
         if (!eanCheckOk(g)) return ""
         return if (g.startsWith('0')) g.substring(1) else g
