@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Trash2, UserPlus } from 'lucide-react';
+import { CheckCircle2, Copy, Download, EyeOff, FileCheck2, Trash2, UserPlus } from 'lucide-react';
 import { KpiCard } from '../components/CommonGraphics';
 import { OpsMath } from '../domain/opsMath';
 import { PosMath } from '../domain/posMath';
@@ -255,13 +255,24 @@ export const RepackSubTab: React.FC = () => {
 };
 
 export const ShiftSubTab: React.FC = () => {
-  const { state, startShift, addCashierAccount, deleteCashierAccount, recordDrawerEvent } = usePos();
+  const { state, startShift, addCashierAccount, deleteCashierAccount, recordDrawerEvent, updateSettings, toast } =
+    usePos();
   const [evType, setEvType] = useState('expense');
   const [evAmt, setEvAmt] = useState('');
   const [evNote, setEvNote] = useState('');
   const [staffName, setStaffName] = useState('');
   const [staffRole, setStaffRole] = useState<'owner' | 'cashier'>('cashier');
   const [confirmDeleteStaff, setConfirmDeleteStaff] = useState<CashierAccount | null>(null);
+
+  // Blind Shift Close & Z-Read Reconciliation state
+  const [blindOpen, setBlindOpen] = useState(false);
+  const [blindSubmitted, setBlindSubmitted] = useState(false);
+  const [blindFinalized, setBlindFinalized] = useState(false);
+  const [countedCashInput, setCountedCashInput] = useState('');
+  const [showDenoms, setShowDenoms] = useState(false);
+  const [denomCounts, setDenomCounts] = useState<Record<number, number>>({});
+  const [zCloseNote, setZCloseNote] = useState('');
+  const [logClosingDrop, setLogClosingDrop] = useState(false);
 
   const startToday = PosMath.startOfDayMs();
   const endToday = startToday + PosMath.DAY_MS;
@@ -278,6 +289,78 @@ export const ShiftSubTab: React.FC = () => {
     [state.sales, state.drawerEvents, state.utangTransactions, state.digitalServices, startToday, endToday]
   );
 
+  const denomTotal = useMemo(
+    () =>
+      PosMath.fromCents(
+        PosMath.PH_DENOMINATIONS.reduce(
+          (acc, d) => acc + PosMath.toCents(d * Math.max(0, Math.floor(denomCounts[d] ?? 0))),
+          0
+        )
+      ),
+    [denomCounts]
+  );
+
+  const countedCash = useMemo(() => {
+    const parsed = parseFloat(countedCashInput);
+    if (Number.isFinite(parsed) && parsed >= 0) return PosMath.round2(parsed);
+    return showDenoms ? denomTotal : 0;
+  }, [countedCashInput, denomTotal, showDenoms]);
+
+  const variance = useMemo(
+    () => PosMath.round2(countedCash - ledger.expectedDrawerCash),
+    [countedCash, ledger.expectedDrawerCash]
+  );
+
+  const todaySalesStats = useMemo(() => {
+    const active = state.sales.filter((s) => {
+      if (s.voided === true) return false;
+      const ms = PosMath.parseIsoMs(s.dateIso);
+      return ms >= startToday && ms < endToday;
+    });
+    const voided = state.sales.filter((s) => {
+      if (s.voided !== true) return false;
+      const ms = PosMath.parseIsoMs(s.dateIso);
+      return ms >= startToday && ms < endToday;
+    }).length;
+    const gross = PosMath.fromCents(active.reduce((acc, s) => acc + PosMath.toCents(s.grandTotal), 0));
+    return { txCount: active.length, voidedCount: voided, grossTotal: gross };
+  }, [state.sales, startToday, endToday]);
+
+  const nextZNo = (state.settings.zCount ?? 0) + 1;
+
+  const buildZReadReport = (zNumber: number) => {
+    const cashier = state.activeShift?.cashierName ?? 'Cashier';
+    const varianceTag =
+      Math.abs(variance) < 0.01
+        ? 'BALANCED'
+        : variance > 0
+        ? `OVER +${PosMath.formatPeso(variance)}`
+        : `SHORT -${PosMath.formatPeso(Math.abs(variance))}`;
+    return [
+      `${state.settings.storeName.toUpperCase()} - Z-READ #${zNumber}`,
+      `Date: ${PosMath.formatDateTime(new Date().toISOString())}`,
+      `Cashier: ${cashier} (${state.activeShift?.cashierRole ?? 'cashier'})`,
+      `Transactions: ${todaySalesStats.txCount} (Voided: ${todaySalesStats.voidedCount})`,
+      `Gross Net Sales: ${PosMath.formatPeso(todaySalesStats.grossTotal)}`,
+      `--------------------------------`,
+      `Opening Float:      ${PosMath.formatPeso(ledger.openingFloat)}`,
+      `Cash Top-ups:       ${PosMath.formatPeso(ledger.cashTopUps)}`,
+      `Cash Sales:         ${PosMath.formatPeso(ledger.cashSales)}`,
+      `Digital (GCash/CD): ${PosMath.formatPeso(ledger.digitalSales)}`,
+      `Utang Cash Paid:    ${PosMath.formatPeso(ledger.utangCollectedCash)}`,
+      `Service Fees:       ${PosMath.formatPeso(ledger.serviceFees)}`,
+      `Expenses / Gastos:  -${PosMath.formatPeso(ledger.expenses)}`,
+      `Vault Drops:        -${PosMath.formatPeso(ledger.cashDrops)}`,
+      `--------------------------------`,
+      `Expected Drawer:    ${PosMath.formatPeso(ledger.expectedDrawerCash)}`,
+      `Blind Cash Counted: ${PosMath.formatPeso(countedCash)}`,
+      `Variance Status:    ${varianceTag}`,
+      zCloseNote.trim() ? `Note: ${zCloseNote.trim()}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  };
+
   const handleAddStaff = () => {
     const clean = staffName.trim();
     if (!clean) return;
@@ -285,11 +368,307 @@ export const ShiftSubTab: React.FC = () => {
     setStaffName('');
   };
 
+  const isBlindMasked = blindOpen && !blindSubmitted;
+
   return (
     <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
       <div className="grid grid-cols-2 gap-2">
-        <KpiCard title="Expected Drawer" value={PosMath.formatPeso(ledger.expectedDrawerCash)} valueClass="text-[#047857]" />
+        <KpiCard
+          title={isBlindMasked ? 'Expected Drawer (Blind)' : 'Expected Drawer'}
+          value={isBlindMasked ? '₱ ••••••' : PosMath.formatPeso(ledger.expectedDrawerCash)}
+          sub={isBlindMasked ? 'Submit blind count to reveal' : undefined}
+          valueClass={isBlindMasked ? 'text-[#4F46E5]' : 'text-[#047857]'}
+        />
         <KpiCard title="Expenses / Gastos" value={PosMath.formatPeso(ledger.expenses)} valueClass="text-[#E11D48]" />
+      </div>
+
+      {/* Blind Shift Close & Z-Read Reconciliation */}
+      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="font-bold text-sm text-[#0F172A] flex items-center gap-1.5">
+              <FileCheck2 size={16} className="text-[#4F46E5]" />
+              <span>Blind Shift Close & Z-Read</span>
+            </div>
+            <div className="text-[11px] text-[#64748B]">
+              Next Z-Read #{nextZNo} · {state.activeShift?.cashierName ?? 'Active Cashier'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setBlindOpen((prev) => {
+                const next = !prev;
+                if (!next) {
+                  setBlindSubmitted(false);
+                  setBlindFinalized(false);
+                }
+                return next;
+              });
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+              blindOpen
+                ? 'bg-slate-100 text-[#0F172A] border border-[#E2E8F0]'
+                : 'bg-[#4F46E5] hover:bg-[#4338CA] text-white'
+            }`}
+          >
+            {blindOpen ? 'Hide' : 'Start Blind Close'}
+          </button>
+        </div>
+
+        {blindOpen && (
+          <div className="space-y-2.5 pt-1 border-t border-[#E2E8F0]">
+            {!blindSubmitted ? (
+              <>
+                <div className="rounded-xl bg-[#EEF2FF] border border-[#4F46E5]/20 px-3 py-2 flex items-center gap-2 text-[11px] text-[#4F46E5] font-semibold">
+                  <EyeOff size={14} className="shrink-0" />
+                  <span>
+                    Blind Mode active: Expected cash is hidden until you submit your physical drawer count.
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-[#0F172A]">Counted Cash in Drawer (₱)</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowDenoms((v) => !v)}
+                      className="text-[11px] font-bold text-[#4F46E5] hover:underline cursor-pointer"
+                    >
+                      {showDenoms ? 'Hide Bill Counter' : 'Use PH Bill Counter'}
+                    </button>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={countedCashInput}
+                    onChange={(e) => setCountedCashInput(e.target.value)}
+                    placeholder="Enter actual counted drawer cash (₱)"
+                    className="w-full px-3 py-2 text-sm font-mono font-bold rounded-xl border border-[#E2E8F0] focus:outline-none focus:border-[#4F46E5]"
+                  />
+                </div>
+
+                {showDenoms && (
+                  <div className="rounded-xl bg-slate-50 border border-[#E2E8F0] p-2.5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-[#0F172A]">PH Cash Denomination Tally</span>
+                      <span className="text-xs font-mono font-extrabold text-[#047857]">
+                        {PosMath.formatPeso(denomTotal)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {PosMath.PH_DENOMINATIONS.map((denom) => (
+                        <div key={denom} className="bg-white rounded-lg border border-[#E2E8F0] px-2 py-1 flex items-center justify-between gap-1">
+                          <span className="text-[11px] font-mono font-bold text-[#0F172A]">₱{denom}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={denomCounts[denom] ?? ''}
+                            onChange={(e) => {
+                              const qty = Math.max(0, parseInt(e.target.value || '0', 10) || 0);
+                              const nextMap = { ...denomCounts, [denom]: qty };
+                              setDenomCounts(nextMap);
+                              const nextSum = PosMath.fromCents(
+                                PosMath.PH_DENOMINATIONS.reduce(
+                                  (acc, d) => acc + PosMath.toCents(d * Math.max(0, Math.floor(nextMap[d] ?? 0))),
+                                  0
+                                )
+                              );
+                              setCountedCashInput(String(nextSum));
+                            }}
+                            placeholder="0"
+                            className="w-12 text-right text-xs font-mono font-bold border-b border-[#E2E8F0] focus:outline-none focus:border-[#4F46E5]"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <input
+                  type="text"
+                  value={zCloseNote}
+                  onChange={(e) => setZCloseNote(e.target.value)}
+                  placeholder="Shift close note (optional)"
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-[#E2E8F0]"
+                />
+
+                <label className="flex items-center gap-2 text-xs text-[#0F172A] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={logClosingDrop}
+                    onChange={(e) => setLogClosingDrop(e.target.checked)}
+                    className="accent-[#059669]"
+                  />
+                  <span>Also record closing vault drop for counted cash upon finalize</span>
+                </label>
+
+                <button
+                  type="button"
+                  disabled={!countedCashInput.trim() && !showDenoms}
+                  onClick={() => {
+                    setBlindSubmitted(true);
+                    setBlindFinalized(false);
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:bg-slate-300 text-white text-xs font-bold cursor-pointer disabled:cursor-not-allowed"
+                >
+                  Submit Blind Count & Reveal Z-Read
+                </button>
+              </>
+            ) : (
+              <div className="space-y-2.5">
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="rounded-xl bg-slate-50 border border-[#E2E8F0] p-2">
+                    <div className="text-[10px] font-semibold text-[#64748B]">Counted</div>
+                    <div className="font-mono font-extrabold text-xs text-[#0F172A]">
+                      {PosMath.formatPeso(countedCash)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 border border-[#E2E8F0] p-2">
+                    <div className="text-[10px] font-semibold text-[#64748B]">Expected</div>
+                    <div className="font-mono font-extrabold text-xs text-[#0F172A]">
+                      {PosMath.formatPeso(ledger.expectedDrawerCash)}
+                    </div>
+                  </div>
+                  <div
+                    className={`rounded-xl border p-2 ${
+                      Math.abs(variance) < 0.01
+                        ? 'bg-[#ECFDF5] border-[#059669]/30'
+                        : variance > 0
+                        ? 'bg-[#EEF2FF] border-[#4F46E5]/30'
+                        : 'bg-[#FFF1F2] border-[#E11D48]/30'
+                    }`}
+                  >
+                    <div className="text-[10px] font-semibold text-[#64748B]">Variance</div>
+                    <div
+                      className={`font-mono font-extrabold text-xs ${
+                        Math.abs(variance) < 0.01
+                          ? 'text-[#047857]'
+                          : variance > 0
+                          ? 'text-[#4F46E5]'
+                          : 'text-[#E11D48]'
+                      }`}
+                    >
+                      {Math.abs(variance) < 0.01
+                        ? 'Balanced'
+                        : `${variance > 0 ? '+' : '-'}${PosMath.formatPeso(Math.abs(variance))}`}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-slate-50 border border-[#E2E8F0] p-2.5 text-[11px] space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-[#64748B]">Opening Float + Top-ups</span>
+                    <span className="font-mono font-bold text-[#0F172A]">
+                      {PosMath.formatPeso(PosMath.round2(ledger.openingFloat + ledger.cashTopUps))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#64748B]">Cash Sales + Utang Paid</span>
+                    <span className="font-mono font-bold text-[#047857]">
+                      +{PosMath.formatPeso(PosMath.round2(ledger.cashSales + ledger.utangCollectedCash))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#64748B]">Digital Sales (GCash / Card)</span>
+                    <span className="font-mono font-bold text-[#4F46E5]">
+                      {PosMath.formatPeso(ledger.digitalSales)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#64748B]">Gastos & Vault Drops</span>
+                    <span className="font-mono font-bold text-[#E11D48]">
+                      -{PosMath.formatPeso(PosMath.round2(ledger.expenses + ledger.cashDrops))}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const zNo = blindFinalized ? state.settings.zCount : nextZNo;
+                      await DeviceBridge.copyText(buildZReadReport(zNo));
+                      toast(`Copied Z-Read #${zNo}`);
+                    }}
+                    className="py-2 rounded-xl border border-[#E2E8F0] text-xs font-semibold text-[#0F172A] hover:bg-slate-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Copy size={13} />
+                    <span>Copy Z-Read</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const zNo = blindFinalized ? state.settings.zCount : nextZNo;
+                      void DeviceBridge.shareOrDownloadTextFile(
+                        `z_read_${zNo}_${PosMath.todayYmd()}.txt`,
+                        buildZReadReport(zNo),
+                        'text/plain'
+                      );
+                      toast(`Exported Z-Read #${zNo}`);
+                    }}
+                    className="py-2 rounded-xl border border-[#E2E8F0] text-xs font-semibold text-[#0F172A] hover:bg-slate-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Download size={13} />
+                    <span>Export TXT</span>
+                  </button>
+                </div>
+
+                {!blindFinalized ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBlindSubmitted(false)}
+                      className="px-3 py-2 rounded-xl border border-[#E2E8F0] text-xs font-semibold text-[#64748B] cursor-pointer"
+                    >
+                      Recount
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const finalizedZ = nextZNo;
+                        updateSettings((s) => ({ ...s, zCount: finalizedZ }));
+                        if (logClosingDrop && countedCash > 0) {
+                          recordDrawerEvent(
+                            'drop',
+                            `Z-Read #${finalizedZ} Close`,
+                            countedCash,
+                            zCloseNote.trim() || `Blind close (${Math.abs(variance) < 0.01 ? 'Balanced' : `Var ${variance}`})`
+                          );
+                        }
+                        setBlindFinalized(true);
+                        toast(`Z-Read #${finalizedZ} finalized`);
+                      }}
+                      className="flex-1 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <CheckCircle2 size={14} />
+                      <span>Finalize Z-Read #{nextZNo}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-[#ECFDF5] border border-[#059669]/30 px-3 py-2 flex items-center justify-between text-xs font-bold text-[#047857]">
+                    <span>Z-Read #{state.settings.zCount} Finalized</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBlindOpen(false);
+                        setBlindSubmitted(false);
+                        setBlindFinalized(false);
+                        setCountedCashInput('');
+                        setDenomCounts({});
+                        setZCloseNote('');
+                      }}
+                      className="underline cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3 space-y-2.5">

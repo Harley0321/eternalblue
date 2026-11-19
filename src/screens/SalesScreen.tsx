@@ -1,10 +1,22 @@
 import React, { useMemo, useState } from 'react';
+import { Download, FileText } from 'lucide-react';
 import { KpiCard } from '../components/CommonGraphics';
 import { PosMath } from '../domain/posMath';
+import { DeviceBridge } from '../hardware/deviceBridge';
 import { usePos } from '../state/PosContext';
 
+function safeCsvCell(raw: string): string {
+  const clean = raw.replace(/\r/g, ' ').replace(/\n/g, ' ');
+  const trimmed = clean.trimStart();
+  const neutralized =
+    trimmed.startsWith('=') || trimmed.startsWith('+') || trimmed.startsWith('-') || trimmed.startsWith('@')
+      ? `'${clean}`
+      : clean;
+  return `"${neutralized.replace(/"/g, '""')}"`;
+}
+
 export const SalesScreen: React.FC = () => {
-  const { state, productMap, openReceipt } = usePos();
+  const { state, productMap, openReceipt, toast } = usePos();
   const [periodDays, setPeriodDays] = useState<number>(7);
   const [denomOpen, setDenomOpen] = useState(false);
   const [counts, setCounts] = useState<Record<number, string>>({});
@@ -27,6 +39,44 @@ export const SalesScreen: React.FC = () => {
     [state.sales, fromMs, endToday]
   );
 
+  const tenderBreakdown = useMemo(() => {
+    const map: Record<string, { label: string; totalCents: number; count: number }> = {
+      Cash: { label: 'Cash', totalCents: 0, count: 0 },
+      GCash: { label: 'GCash / QR Ph', totalCents: 0, count: 0 },
+      Card: { label: 'Card', totalCents: 0, count: 0 },
+      Split: { label: 'Split', totalCents: 0, count: 0 },
+      Utang: { label: 'Utang', totalCents: 0, count: 0 },
+    };
+    for (const s of filteredSales) {
+      if (s.voided === true) continue;
+      const key = map[s.paymentMethod] ? s.paymentMethod : 'Cash';
+      map[key].totalCents += PosMath.toCents(s.grandTotal);
+      map[key].count += 1;
+    }
+    return Object.values(map);
+  }, [filteredSales]);
+
+  const topSkus = useMemo(() => {
+    const agg = new Map<string, { name: string; qty: number; revCents: number; profitCents: number }>();
+    for (const s of filteredSales) {
+      if (s.voided === true) continue;
+      for (const it of s.items) {
+        const key = it.productId || it.name;
+        const cur = agg.get(key) ?? { name: it.name, qty: 0, revCents: 0, profitCents: 0 };
+        const revC = PosMath.toCents(it.lineTotal);
+        const cap = it.capital ?? (it.productId ? productMap.get(it.productId)?.capital : undefined) ?? 0;
+        const costC = cap > 0 ? PosMath.lineCents(cap, it.qty) : 0;
+        cur.qty = PosMath.round3(cur.qty + it.qty);
+        cur.revCents += revC;
+        cur.profitCents += revC - costC;
+        agg.set(key, cur);
+      }
+    }
+    return Array.from(agg.values())
+      .sort((a, b) => b.revCents - a.revCents)
+      .slice(0, 5);
+  }, [filteredSales, productMap]);
+
   const dayBuckets = useMemo(() => {
     const arr: Array<{ label: string; amount: number }> = [];
     for (let offset = 6; offset >= 0; offset--) {
@@ -45,9 +95,43 @@ export const SalesScreen: React.FC = () => {
     0
   );
 
+  const handleExportSalesCsv = () => {
+    const header = 'ReceiptNo,Date,Cashier,Customer,PaymentMethod,GrandTotal,Voided';
+    const rows = filteredSales.map((s) =>
+      [
+        safeCsvCell(s.receiptNo),
+        safeCsvCell(s.dateFormatted),
+        safeCsvCell(s.cashierName ?? ''),
+        safeCsvCell(s.customerName ?? 'Walk-in'),
+        safeCsvCell(s.paymentMethod),
+        s.grandTotal.toFixed(2),
+        s.voided ? 'YES' : 'NO',
+      ].join(',')
+    );
+    void DeviceBridge.shareOrDownloadTextFile('eternalblue_sales.csv', [header, ...rows].join('\n'), 'text/csv');
+    toast(`Exported ${filteredSales.length} receipts CSV`);
+  };
+
+  const handleCopyXRead = async () => {
+    const lines = [
+      `${state.settings.storeName} — X-READ SUMMARY`,
+      `Period: ${periodDays === 1 ? 'Today' : periodDays === 0 ? 'All Time' : `Last ${periodDays} Days`}`,
+      `Cashier: ${state.activeShift?.cashierName ?? 'Active'}`,
+      `Orders: ${stats.orders} | Avg Basket: ${PosMath.formatPeso(stats.avgTicket)}`,
+      `Net Revenue: ${PosMath.formatPeso(stats.revenue)}`,
+      `Est. Profit: ${PosMath.formatPeso(stats.profit)} (${stats.marginPct}%)`,
+      '--- Tenders ---',
+      ...tenderBreakdown
+        .filter((t) => t.count > 0)
+        .map((t) => `${t.label}: ${PosMath.formatPeso(PosMath.fromCents(t.totalCents))} (${t.count})`),
+    ];
+    await DeviceBridge.copyText(lines.join('\n'));
+    toast('X-Read summary copied to clipboard');
+  };
+
   return (
     <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
-      {/* Period Filters & Cash Counter */}
+      {/* Period Filters & Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {[
           [1, 'Today'],
@@ -74,6 +158,22 @@ export const SalesScreen: React.FC = () => {
         <div className="flex-1" />
         <button
           type="button"
+          onClick={() => void handleCopyXRead()}
+          className="px-2.5 py-1.5 rounded-[10px] bg-white border border-[#E2E8F0] text-xs font-bold text-[#4F46E5] hover:bg-indigo-50 inline-flex items-center gap-1 cursor-pointer"
+        >
+          <FileText size={13} />
+          <span>X-Read</span>
+        </button>
+        <button
+          type="button"
+          onClick={handleExportSalesCsv}
+          className="px-2.5 py-1.5 rounded-[10px] bg-white border border-[#E2E8F0] text-xs font-bold text-[#047857] hover:bg-emerald-50 inline-flex items-center gap-1 cursor-pointer"
+        >
+          <Download size={13} />
+          <span>CSV</span>
+        </button>
+        <button
+          type="button"
           onClick={() => setDenomOpen(true)}
           className="px-3 py-1.5 rounded-[10px] bg-white border border-[#E2E8F0] text-xs font-bold text-[#0F172A] hover:bg-slate-50 cursor-pointer"
         >
@@ -86,15 +186,31 @@ export const SalesScreen: React.FC = () => {
         <KpiCard
           title="Net Revenue"
           value={PosMath.formatPeso(stats.revenue)}
-          sub={`${stats.orders} orders`}
+          sub={`${stats.orders} orders · Avg ${PosMath.formatPeso(stats.avgTicket)}`}
           valueClass="text-[#047857]"
         />
         <KpiCard
           title="Est. Profit"
           value={PosMath.formatPeso(stats.profit)}
-          sub={`${stats.marginPct}% margin`}
+          sub={`${stats.marginPct}% margin · ${PosMath.formatQty(stats.itemsCount)} units`}
           valueClass="text-[#4F46E5]"
         />
+      </div>
+
+      {/* Tender Mix */}
+      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3 space-y-2">
+        <div className="font-bold text-sm text-[#0F172A]">Payment Tender Breakdown</div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+          {tenderBreakdown.map((t) => (
+            <div key={t.label} className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-2">
+              <div className="text-[10px] font-bold text-[#64748B] truncate">{t.label}</div>
+              <div className="font-mono font-extrabold text-xs text-[#0F172A] mt-0.5">
+                {PosMath.formatPeso(PosMath.fromCents(t.totalCents))}
+              </div>
+              <div className="text-[10px] text-[#64748B]">{t.count} orders</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* 7-Day Sales Bar Chart */}
@@ -116,6 +232,32 @@ export const SalesScreen: React.FC = () => {
           })}
         </div>
       </div>
+
+      {/* Top Selling SKUs */}
+      {topSkus.length > 0 && (
+        <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3 space-y-1.5">
+          <div className="font-bold text-sm text-[#0F172A]">Top Performing SKUs</div>
+          <div className="divide-y divide-[#E2E8F0]">
+            {topSkus.map((sku, idx) => (
+              <div key={sku.name} className="py-1.5 flex items-center justify-between gap-2 text-xs">
+                <div className="min-w-0">
+                  <span className="font-mono font-bold text-[#64748B] mr-1.5">#{idx + 1}</span>
+                  <span className="font-bold text-[#0F172A] truncate">{sku.name}</span>
+                  <span className="text-[11px] text-[#64748B] ml-1.5">({PosMath.formatQty(sku.qty)} sold)</span>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-mono font-extrabold text-[#047857]">
+                    {PosMath.formatPeso(PosMath.fromCents(sku.revCents))}
+                  </div>
+                  <div className="text-[10px] font-mono text-[#4F46E5]">
+                    +{PosMath.formatPeso(PosMath.fromCents(sku.profitCents))} profit
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <h3 className="font-extrabold text-sm text-[#0F172A]">Receipts ({filteredSales.length})</h3>
 
