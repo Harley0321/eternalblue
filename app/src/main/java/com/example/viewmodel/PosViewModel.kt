@@ -290,11 +290,15 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private val _btPrinterName = MutableStateFlow(EscPosPrinter.getSession().deviceName)
     val btPrinterName: StateFlow<String> = _btPrinterName.asStateFlow()
 
+    private var lastUpdateCheckMs: Long = 0L
+    private var dismissedRemoteVersionCode: Int = 0
+
     private val _updateState = MutableStateFlow(
         AppUpdateUiState(
             currentVersionName = BuildConfig.VERSION_NAME,
             currentVersionCode = BuildConfig.VERSION_CODE,
-            effectiveRepo = resolveEffectiveGithubRepo(_settings.value)
+            effectiveRepo = resolveEffectiveGithubRepo(_settings.value),
+            hasGithubToken = AndroidDeviceBridge.getSavedGithubToken(appContext).isNotEmpty()
         )
     )
     val updateState: StateFlow<AppUpdateUiState> = _updateState.asStateFlow()
@@ -378,16 +382,59 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         toast(if (norm.isNotEmpty()) "Saved GitHub repo: $norm" else "Cleared custom GitHub repo")
     }
 
+    fun saveGithubToken(rawToken: String) {
+        val cleaned = rawToken.trim()
+        AndroidDeviceBridge.saveGithubToken(appContext, cleaned)
+        _updateState.value = _updateState.value.copy(
+            hasGithubToken = cleaned.isNotEmpty(),
+            errorMessage = null
+        )
+        toast(if (cleaned.isNotEmpty()) "GitHub read token saved on device" else "GitHub token cleared")
+    }
+
     fun toggleAutoCheckUpdates(enabled: Boolean) {
         val next = _settings.value.copy(autoCheckUpdates = enabled)
         updateSettings(next)
     }
 
     fun dismissUpdateBanner() {
+        val ver = _updateState.value.availableRelease?.remoteVersionCode ?: 0
+        if (ver > dismissedRemoteVersionCode) dismissedRemoteVersionCode = ver
         _updateState.value = _updateState.value.copy(bannerDismissed = true)
     }
 
-    fun checkForAppUpdate(silent: Boolean = false) {
+    fun onAppResumedCheckUpdates() {
+        val s = _settings.value
+        if (!s.autoCheckUpdates) return
+        val repoSlug = resolveEffectiveGithubRepo(s)
+        if (repoSlug.isEmpty()) return
+        checkForAppUpdate(silent = true, respectCooldown = true)
+    }
+
+    fun checkForAppUpdate(
+        silent: Boolean = false,
+        overrideRepoInput: String? = null,
+        respectCooldown: Boolean = false
+    ) {
+        if (respectCooldown && System.currentTimeMillis() - lastUpdateCheckMs < 180_000L) {
+            return
+        }
+        if (overrideRepoInput != null && overrideRepoInput.isNotBlank()) {
+            val typedNorm = GitHubUpdateChecker.normalizeRepo(overrideRepoInput)
+            if (typedNorm.isEmpty()) {
+                if (!silent) toast("Enter repo as username/repository", ToastType.WARNING)
+                _updateState.value = _updateState.value.copy(
+                    checking = false,
+                    errorMessage = if (silent) null else "Invalid GitHub repository format. Use owner/repo."
+                )
+                return
+            }
+            if (typedNorm != resolveEffectiveGithubRepo(_settings.value)) {
+                val next = _settings.value.copy(githubRepo = typedNorm)
+                updateSettings(next, "Updated GitHub update source")
+            }
+        }
+
         val repoSlug = resolveEffectiveGithubRepo(_settings.value)
         if (repoSlug.isEmpty()) {
             if (!silent) toast("Set your GitHub owner/repo in App Updates first", ToastType.WARNING)
@@ -399,21 +446,27 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (_updateState.value.checking) return
+        lastUpdateCheckMs = System.currentTimeMillis()
+        val token = AndroidDeviceBridge.getSavedGithubToken(appContext)
         _updateState.value = _updateState.value.copy(
             effectiveRepo = repoSlug,
+            hasGithubToken = token.isNotEmpty(),
             checking = true,
             errorMessage = null,
             upToDateMessage = null
         )
         viewModelScope.launch {
-            when (val res = GitHubUpdateChecker.checkLatestRelease(repoSlug, BuildConfig.VERSION_CODE)) {
+            val checkedAt = PosMath.formatTimeOnly()
+            when (val res = GitHubUpdateChecker.checkLatestRelease(repoSlug, BuildConfig.VERSION_CODE, token)) {
                 is GitHubUpdateChecker.Outcome.UpdateAvailable -> {
+                    val isAlreadyDismissed = res.release.remoteVersionCode <= dismissedRemoteVersionCode
                     _updateState.value = _updateState.value.copy(
                         checking = false,
                         availableRelease = res.release,
                         upToDateMessage = null,
                         errorMessage = null,
-                        bannerDismissed = false
+                        lastCheckedLabel = checkedAt,
+                        bannerDismissed = if (silent) isAlreadyDismissed else false
                     )
                     if (!silent) toast("Update available: ${res.release.title}")
                 }
@@ -422,13 +475,15 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                         checking = false,
                         availableRelease = null,
                         upToDateMessage = "Up to date (${res.title})",
-                        errorMessage = null
+                        errorMessage = null,
+                        lastCheckedLabel = checkedAt
                     )
                     if (!silent) toast("You're on the latest build (${BuildConfig.VERSION_NAME})")
                 }
                 is GitHubUpdateChecker.Outcome.Error -> {
                     _updateState.value = _updateState.value.copy(
                         checking = false,
+                        lastCheckedLabel = checkedAt,
                         errorMessage = if (silent) null else res.message
                     )
                     if (!silent) toast(res.message, ToastType.WARNING)

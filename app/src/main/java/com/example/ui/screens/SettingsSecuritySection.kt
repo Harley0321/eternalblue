@@ -235,13 +235,19 @@ fun SettingsSecurityAndBackupSection(vm: PosViewModel) {
         // App Updates (GitHub Releases)
         Surface(shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
             var repoInput by remember(updateState.effectiveRepo) { mutableStateOf(updateState.effectiveRepo) }
+            var tokenInput by remember { mutableStateOf("") }
+            var showTokenInput by remember { mutableStateOf(false) }
+
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Rounded.SystemUpdate, contentDescription = null, tint = PosColors.Emerald600)
                     Column {
                         Text("App Updates (GitHub Releases)", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Installed: v${updateState.currentVersionName} (Build #${updateState.currentVersionCode})",
+                            buildString {
+                                append("Installed: v${updateState.currentVersionName} (Build #${updateState.currentVersionCode})")
+                                updateState.lastCheckedLabel?.let { append(" • Checked $it") }
+                            },
                             fontSize = 11.sp,
                             color = PosColors.Slate500
                         )
@@ -251,9 +257,20 @@ fun SettingsSecurityAndBackupSection(vm: PosViewModel) {
                 updateState.availableRelease?.let { rel ->
                     Surface(shape = RoundedCornerShape(10.dp), color = PosColors.Emerald50, border = BorderStroke(1.dp, PosColors.Emerald500)) {
                         Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("New update ready: ${rel.title}", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = PosColors.Emerald700)
+                            Text(
+                                "New update ready: ${rel.title} (Build #${rel.remoteVersionCode})",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = PosColors.Emerald700
+                            )
                             Button(
-                                onClick = { AndroidDeviceBridge.openUrl(context, rel.apkDownloadUrl) },
+                                onClick = {
+                                    AndroidDeviceBridge.openApkDownloadInBrowser(
+                                        context = context,
+                                        apkUrl = rel.apkDownloadUrl,
+                                        fallbackReleasePageUrl = rel.releasePageUrl
+                                    )
+                                },
                                 colors = ButtonDefaults.buttonColors(containerColor = PosColors.Emerald600),
                                 modifier = Modifier.fillMaxWidth().testTag("settings_download_update_btn")
                             ) {
@@ -291,7 +308,52 @@ fun SettingsSecurityAndBackupSection(vm: PosViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Auto-check GitHub on launch", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (updateState.hasGithubToken) "Private repo token: Saved on device"
+                        else "Private repo? Add optional GitHub Read Token",
+                        fontSize = 11.sp,
+                        color = if (updateState.hasGithubToken) PosColors.Emerald700 else PosColors.Slate500
+                    )
+                    TextButton(onClick = { showTokenInput = !showTokenInput }) {
+                        Text(if (showTokenInput) "Hide" else if (updateState.hasGithubToken) "Change" else "Add Token", fontSize = 11.sp)
+                    }
+                }
+
+                if (showTokenInput) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = tokenInput,
+                            onValueChange = { tokenInput = it },
+                            label = { Text("GitHub Read Token (PAT)") },
+                            placeholder = { Text("github_pat_... or ghp_...") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                vm.saveGithubToken(tokenInput)
+                                tokenInput = ""
+                                showTokenInput = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PosColors.Slate900)
+                        ) { Text("Save") }
+                        if (updateState.hasGithubToken) {
+                            TextButton(onClick = {
+                                vm.saveGithubToken("")
+                                tokenInput = ""
+                                showTokenInput = false
+                            }) { Text("Clear", color = PosColors.Rose700) }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Auto-check GitHub on launch & resume", style = MaterialTheme.typography.bodyMedium)
                     Switch(
                         checked = settings.autoCheckUpdates,
                         onCheckedChange = { vm.toggleAutoCheckUpdates(it) }
@@ -300,7 +362,7 @@ fun SettingsSecurityAndBackupSection(vm: PosViewModel) {
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = { vm.checkForAppUpdate(silent = false) },
+                        onClick = { vm.checkForAppUpdate(silent = false, overrideRepoInput = repoInput) },
                         enabled = !updateState.checking,
                         colors = ButtonDefaults.buttonColors(containerColor = PosColors.Indigo600),
                         modifier = Modifier.weight(1f).testTag("settings_check_update_btn")
@@ -310,7 +372,10 @@ fun SettingsSecurityAndBackupSection(vm: PosViewModel) {
                     OutlinedButton(
                         onClick = {
                             val targetRepo = repoInput.ifBlank { updateState.effectiveRepo }
-                            AndroidDeviceBridge.openUrl(context, GitHubUpdateChecker.releasesUrlForRepo(targetRepo))
+                            AndroidDeviceBridge.openApkDownloadInBrowser(
+                                context = context,
+                                apkUrl = GitHubUpdateChecker.releasesUrlForRepo(targetRepo)
+                            )
                         },
                         enabled = repoInput.isNotBlank() || updateState.effectiveRepo.isNotBlank(),
                         modifier = Modifier.weight(1f).testTag("settings_open_releases_btn")

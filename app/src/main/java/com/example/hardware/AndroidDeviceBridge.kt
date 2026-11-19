@@ -279,6 +279,26 @@ object AndroidDeviceBridge {
         prompt.authenticate(info)
     }
 
+    private const val UPDATE_PREFS = "eternalblue_update_auth"
+    private const val KEY_GH_TOKEN = "github_read_token"
+
+    fun getSavedGithubToken(context: Context): String {
+        return context.getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_GH_TOKEN, "")
+            .orEmpty()
+            .trim()
+    }
+
+    fun saveGithubToken(context: Context, token: String) {
+        val cleaned = token.trim()
+        context.getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .apply {
+                if (cleaned.isEmpty()) remove(KEY_GH_TOKEN) else putString(KEY_GH_TOKEN, cleaned)
+            }
+            .apply()
+    }
+
     fun openUrl(context: Context, url: String) {
         runCatching {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
@@ -289,6 +309,57 @@ object AndroidDeviceBridge {
             context.startActivity(intent)
         }.onFailure {
             Toast.makeText(context, "Could not open link: ${it.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Opens direct GitHub .apk release asset URLs in a web browser rather than letting the GitHub
+     * Android app intercept github.com links (the GitHub app often fails to download .apk assets).
+     */
+    fun openApkDownloadInBrowser(context: Context, apkUrl: String, fallbackReleasePageUrl: String? = null) {
+        val targetUri = Uri.parse(apkUrl)
+        val launchedInBrowser = runCatching {
+            val probeIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+            val browsers = context.packageManager.queryIntentActivities(probeIntent, 0)
+                .mapNotNull { it.activityInfo?.packageName }
+                .filter { pkg ->
+                    !pkg.contains("github", ignoreCase = true) &&
+                        !pkg.contains("resolver", ignoreCase = true)
+                }
+                .distinct()
+
+            val preferredPkg = browsers.firstOrNull { it.contains("chrome", ignoreCase = true) }
+                ?: browsers.firstOrNull()
+
+            if (preferredPkg != null) {
+                val browserIntent = Intent(Intent.ACTION_VIEW, targetUri).apply {
+                    `package` = preferredPkg
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                    if (context !is FragmentActivity) {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                }
+                context.startActivity(browserIntent)
+                true
+            } else {
+                false
+            }
+        }.getOrDefault(false)
+
+        if (!launchedInBrowser) {
+            runCatching {
+                val fallbackIntent = Intent(Intent.ACTION_VIEW, targetUri).apply {
+                    if (context !is FragmentActivity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(fallbackIntent)
+            }.onFailure {
+                val pageUrl = fallbackReleasePageUrl?.takeIf { u -> u.isNotBlank() }
+                if (pageUrl != null) {
+                    openUrl(context, pageUrl)
+                } else {
+                    Toast.makeText(context, "Could not start APK download: ${it.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 }

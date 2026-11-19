@@ -52,8 +52,17 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Prepare EternalBluePOS.apk
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/EternalBluePOS.apk
+      - name: Prepare EternalBluePOS APK & version.json
+        run: |
+          VER_CODE="${{ github.run_number }}"
+          VER_NAME="2.3.${{ github.run_number }}"
+          VERSIONED_APK="app/build/outputs/apk/debug/EternalBluePOS-v${VER_NAME}.apk"
+          LATEST_APK="app/build/outputs/apk/debug/EternalBluePOS.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$LATEST_APK"
+          cp app/build/outputs/apk/debug/app-debug.apk "$VERSIONED_APK"
+          printf '{"versionCode":%s,"versionName":"%s","apkName":"EternalBluePOS-v%s.apk","tag":"v%s","sha":"%s"}\n' \
+            "$VER_CODE" "$VER_NAME" "$VER_NAME" "$VER_NAME" "${{ github.sha }}" \
+            > app/build/outputs/apk/debug/version.json
 
       - name: Upload EternalBluePOS APK Artifact
         uses: actions/upload-artifact@v7
@@ -66,13 +75,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="latest"
-          TITLE="EternalBlue POS v2.3.${{ github.run_number }}"
-          NOTES="Automated Android APK build #${{ github.run_number }} from commit ${{ github.sha }} [versionCode:${{ github.run_number }}]"
-          APK="app/build/outputs/apk/debug/EternalBluePOS.apk"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --clobber
-            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+          VER_CODE="${{ github.run_number }}"
+          VER_NAME="2.3.${{ github.run_number }}"
+          VERSIONED_TAG="v${VER_NAME}"
+          TITLE="EternalBlue POS v${VER_NAME}"
+          NOTES="Automated Android APK build #${VER_CODE} from commit ${{ github.sha }} [versionCode:${VER_CODE}]"
+          LATEST_APK="app/build/outputs/apk/debug/EternalBluePOS.apk"
+          VERSIONED_APK="app/build/outputs/apk/debug/EternalBluePOS-v${VER_NAME}.apk"
+          MANIFEST="app/build/outputs/apk/debug/version.json"
+
+          # Keep rolling 'latest' tag updated for earlier app builds
+          if gh release view "latest" >/dev/null 2>&1; then
+            gh release upload "latest" "$LATEST_APK" "$VERSIONED_APK" "$MANIFEST" --clobber
+            gh release edit "latest" --title "$TITLE" --notes "$NOTES"
           else
-            gh release create "$TAG" "$APK" --target "${{ github.sha }}" --title "$TITLE" --notes "$NOTES"
+            gh release create "latest" "$LATEST_APK" "$VERSIONED_APK" "$MANIFEST" --target "${{ github.sha }}" --title "$TITLE" --notes "$NOTES"
+          fi
+
+          # Publish immutable versioned release marked --latest (bypasses browser/CDN caching)
+          if gh release view "$VERSIONED_TAG" >/dev/null 2>&1; then
+            gh release upload "$VERSIONED_TAG" "$VERSIONED_APK" "$MANIFEST" --clobber
+            gh release edit "$VERSIONED_TAG" --title "$TITLE" --notes "$NOTES" --latest
+          else
+            gh release create "$VERSIONED_TAG" "$VERSIONED_APK" "$MANIFEST" --target "${{ github.sha }}" --title "$TITLE" --notes "$NOTES" --latest
           fi

@@ -518,9 +518,11 @@ data class AppUpdateUiState(
     val currentVersionName: String = "2.3.0",
     val currentVersionCode: Int = 1,
     val effectiveRepo: String = "",
+    val hasGithubToken: Boolean = false,
     val checking: Boolean = false,
     val availableRelease: GitHubReleaseInfo? = null,
     val upToDateMessage: String? = null,
     val errorMessage: String? = null,
+    val lastCheckedLabel: String? = null,
     val bannerDismissed: Boolean = false
 )

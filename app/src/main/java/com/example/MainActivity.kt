@@ -21,6 +21,7 @@ import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSiz
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +29,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.hardware.AndroidDeviceBridge
@@ -94,6 +98,17 @@ private fun EternalBluePosApp(
     val toasts by vm.toasts.collectAsStateWithLifecycle()
     val updateState by vm.updateState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.onAppResumedCheckUpdates()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val isWideLayout = widthSizeClass != WindowWidthSizeClass.Compact
     val hasPin = vm.security.pinIsSet(settings)
@@ -195,13 +210,20 @@ private fun EternalBluePosApp(
                 onDismissRequest = { vm.dismissUpdateBanner() },
                 title = { Text("App Update Available") },
                 text = {
-                    Text("A newer GitHub build (${rel.title}) is ready. Download and tap the APK to update while keeping all your store data.")
+                    Text(
+                        "A newer GitHub build (${rel.title}, Build #${rel.remoteVersionCode}) is ready. " +
+                            "Download and tap the APK in your browser to update while keeping all your store data."
+                    )
                 },
                 confirmButton = {
                     Button(
                         onClick = {
                             vm.dismissUpdateBanner()
-                            AndroidDeviceBridge.openUrl(context, rel.apkDownloadUrl)
+                            AndroidDeviceBridge.openApkDownloadInBrowser(
+                                context = context,
+                                apkUrl = rel.apkDownloadUrl,
+                                fallbackReleasePageUrl = rel.releasePageUrl
+                            )
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = PosColors.Emerald600),
                         modifier = Modifier.testTag("update_dialog_download_btn")
@@ -210,11 +232,21 @@ private fun EternalBluePosApp(
                     }
                 },
                 dismissButton = {
-                    TextButton(
-                        onClick = { vm.dismissUpdateBanner() },
-                        modifier = Modifier.testTag("update_dialog_later_btn")
-                    ) {
-                        Text("Later")
+                    Row {
+                        TextButton(
+                            onClick = {
+                                vm.dismissUpdateBanner()
+                                AndroidDeviceBridge.openApkDownloadInBrowser(context, rel.releasePageUrl)
+                            }
+                        ) {
+                            Text("Release Page")
+                        }
+                        TextButton(
+                            onClick = { vm.dismissUpdateBanner() },
+                            modifier = Modifier.testTag("update_dialog_later_btn")
+                        ) {
+                            Text("Later")
+                        }
                     }
                 }
             )
