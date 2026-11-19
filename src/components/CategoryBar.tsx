@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { LayoutGrid } from 'lucide-react';
 import type { Product } from '../types';
 import { getCategoryIcon } from '../utils/categoryIcons';
+import { getEffectiveLowStockThreshold } from '../utils/stockAlerts';
 
 interface CategoryBarProps {
   products: Product[];
@@ -29,7 +30,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
 
     for (const p of products) {
       const cat = p.category;
-      const isLow = p.stock <= lowStockThreshold;
+      const isLow = p.stock <= getEffectiveLowStockThreshold(p, lowStockThreshold);
       if (isLow) totalLow++;
       if (!cat) continue;
       counts.set(cat, (counts.get(cat) || 0) + 1);
@@ -63,7 +64,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
         onClick={onOpenSheet}
         title="All categories"
         aria-label="Open category picker"
-        className="shrink-0 w-11 h-11 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center justify-center active:scale-95 transition cursor-pointer"
+        className="shrink-0 w-10 h-10 rounded-xl bg-white border border-slate-200/90 hover:border-slate-300 hover:bg-slate-50 text-slate-700 flex items-center justify-center active:scale-95 transition pos-ease cursor-pointer"
       >
         <LayoutGrid className="w-4 h-4" />
       </button>
@@ -82,17 +83,23 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
               type="button"
               data-active={isActive ? 'true' : 'false'}
               onClick={() => onSelectCategory(cat)}
-              className={`snap-start shrink-0 inline-flex items-center gap-1.5 px-3.5 min-h-[42px] rounded-xl text-xs font-bold whitespace-nowrap transition active:scale-95 cursor-pointer ${
+              className={`snap-start shrink-0 inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-xl text-xs font-semibold whitespace-nowrap transition pos-ease active:scale-95 cursor-pointer ${
                 isActive
-                  ? 'bg-slate-900 text-emerald-400 shadow-xs'
-                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  ? 'bg-slate-900 text-white border border-slate-900'
+                  : 'bg-white text-slate-700 border border-slate-200/90 hover:border-slate-300 hover:bg-slate-50'
               }`}
             >
               <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-400' : 'text-slate-400'}`} />
               <span>{cat}</span>
-              <span className="opacity-65 font-mono-num">{total}</span>
+              <span
+                className={`font-mono-num text-[11px] ${
+                  isActive ? 'text-slate-300' : 'text-slate-400'
+                }`}
+              >
+                {total}
+              </span>
               {mode === 'inventory' && low > 0 && (
-                <span className="ml-0.5 px-1.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold font-mono-num">
+                <span className="ml-0.5 px-1.5 py-0.5 rounded-md bg-amber-400 text-slate-950 text-[10px] font-extrabold font-mono-num leading-none">
                   {low}
                 </span>
               )}

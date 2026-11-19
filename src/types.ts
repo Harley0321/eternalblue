@@ -15,6 +15,7 @@ export interface Product {
   wholesalePrice: number;
   wholesaleMinQty: number;
   stock: number;
+  lowStockThreshold?: number;
   expiry?: string;
   scEligible?: boolean;
   icon?: string;
@@ -106,6 +107,7 @@ export interface StoreSettings {
   reorderSafetyDays: number;
   beep: boolean;
   vibrate: boolean;
+  stockAlertNotifications?: boolean;
   lastBackup: string;
   scDiscountCap: number;
   receiptWidth?: '80mm' | '58mm';
@@ -125,6 +127,13 @@ export interface StoreSettings {
   passkeyPubKeySpki?: string;
   passkeyLabel?: string;
   passkeyRegisteredAt?: string;
+  // Instant Checkout Payment QR & 2nd-Screen Customer Display settings
+  qrPayLabel?: string;
+  qrMerchantName?: string;
+  qrAccountNumber?: string;
+  qrEmvPayload?: string;
+  qrImageDataUrl?: string;
+  customerDisplayGreeting?: string;
   [key: string]: unknown;
 }
 
@@ -333,8 +342,14 @@ export interface ConfigSnapshot {
     reorderSafetyDays: number;
     beep: boolean;
     vibrate: boolean;
+    stockAlertNotifications?: boolean;
     scDiscountCap: number;
     receiptWidth: '80mm' | '58mm';
+    qrPayLabel?: string;
+    qrMerchantName?: string;
+    qrAccountNumber?: string;
+    qrEmvPayload?: string;
+    customerDisplayGreeting?: string;
   };
 }
 

@@ -4,10 +4,10 @@ import type { Product, StockLogEntry } from '../types';
 import {
   computeWeightedAverageCapital,
   formatPeso,
-  normBarcode,
   round2,
   type BatchStockAdjustmentInput,
 } from '../utils/posMath';
+import { matchesInventorySearch } from '../utils/inventoryFilter';
 
 export interface BatchPrefillItem {
   productId: string;
@@ -73,7 +73,7 @@ export const BatchStockModal: React.FC<BatchStockModalProps> = ({
       setOnlyChanged(false);
     }
     setDrafts(initDrafts);
-  }, [open, initialMode, prefill]);
+  }, [open, initialMode, initialReason, prefill]);
 
   const handleSwitchMode = (nextMode: 'delta' | 'set') => {
     setMode(nextMode);
@@ -174,17 +174,11 @@ export const BatchStockModal: React.FC<BatchStockModalProps> = ({
   }, [adjustments, products]);
 
   const visibleProducts = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const normQ = normBarcode(q);
+    const q = search.trim();
     return products.filter((p) => {
       if (onlyChanged && !changedIds.has(p.id)) return false;
       if (!q) return true;
-      return (
-        p.name.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q) ||
-        p.barcode.toLowerCase().includes(q) ||
-        (normQ !== '' && normBarcode(p.barcode) === normQ)
-      );
+      return matchesInventorySearch(p, q);
     });
   }, [products, search, onlyChanged, changedIds]);
 
@@ -322,7 +316,7 @@ export const BatchStockModal: React.FC<BatchStockModalProps> = ({
                 isValid && mode === 'set'
                   ? parsed
                   : isValid && mode === 'delta'
-                    ? round2(p.stock + parsed)
+                    ? Number((p.stock + parsed).toFixed(3))
                     : p.stock;
               const delta = isValid ? Number((nextStk - p.stock).toFixed(3)) : 0;
               const isModified = isValid && (mode === 'delta' ? parsed > 0 : delta !== 0);

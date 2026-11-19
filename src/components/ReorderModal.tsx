@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Copy, PackagePlus, X } from 'lucide-react';
 import type { Product, SaleRecord, StoreSettings } from '../types';
 import { computeReorderList, formatPeso, reorderSettingNum } from '../utils/posMath';
@@ -27,11 +27,47 @@ export const ReorderModal: React.FC<ReorderModalProps> = ({
   onClose,
   onToast,
 }) => {
-  if (!open) return null;
-
   const lead = reorderSettingNum(settings.reorderLeadDays, 3);
   const safety = reorderSettingNum(settings.reorderSafetyDays, 2);
-  const { rows, days, hasSales } = computeReorderList(products, sales, settings);
+
+  const [leadStr, setLeadStr] = useState(String(lead));
+  const [safetyStr, setSafetyStr] = useState(String(safety));
+
+  useEffect(() => {
+    if (!open) return;
+    setLeadStr(String(lead));
+    setSafetyStr(String(safety));
+  }, [open, lead, safety]);
+
+  const draftLead = leadStr.trim() === '' ? lead : reorderSettingNum(leadStr, lead);
+  const draftSafety = safetyStr.trim() === '' ? safety : reorderSettingNum(safetyStr, safety);
+
+  const effectiveSettings = useMemo(
+    () => ({
+      ...settings,
+      reorderLeadDays: draftLead,
+      reorderSafetyDays: draftSafety,
+    }),
+    [settings, draftLead, draftSafety],
+  );
+
+  const { rows, days, hasSales } = useMemo(
+    () => computeReorderList(products, sales, effectiveSettings),
+    [products, sales, effectiveSettings],
+  );
+
+  if (!open) return null;
+
+  const commitDays = (nextLeadRaw = leadStr, nextSafetyRaw = safetyStr) => {
+    const resolvedLead = reorderSettingNum(nextLeadRaw, lead);
+    const resolvedSafety = reorderSettingNum(nextSafetyRaw, safety);
+    setLeadStr(String(resolvedLead));
+    setSafetyStr(String(resolvedSafety));
+    if (resolvedLead !== lead || resolvedSafety !== safety) {
+      onUpdateDays(resolvedLead, resolvedSafety);
+    }
+  };
+
   const totalCost = rows.reduce((a, r) => a + (r.cost || 0), 0);
   const noCap = rows.filter((r) => r.cost === null).length;
 
@@ -78,24 +114,44 @@ export const ReorderModal: React.FC<ReorderModalProps> = ({
 
         <div className="grid grid-cols-2 gap-2 text-xs shrink-0">
           <div>
-            <label className="font-bold text-slate-600 block mb-1">Supplier lead time (days)</label>
+            <label htmlFor="reorder-lead-days" className="font-bold text-slate-600 block mb-1">
+              Supplier lead time (days)
+            </label>
             <input
+              id="reorder-lead-days"
               type="number"
               min="0"
               step="1"
-              value={lead}
-              onChange={(e) => onUpdateDays(reorderSettingNum(e.target.value, 3), safety)}
+              value={leadStr}
+              onChange={(e) => setLeadStr(e.target.value)}
+              onBlur={() => commitDays()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitDays();
+                }
+              }}
               className="w-full px-3 min-h-[44px] border border-slate-200 rounded-xl font-mono-num"
             />
           </div>
           <div>
-            <label className="font-bold text-slate-600 block mb-1">Safety stock (days of sales)</label>
+            <label htmlFor="reorder-safety-days" className="font-bold text-slate-600 block mb-1">
+              Safety stock (days of sales)
+            </label>
             <input
+              id="reorder-safety-days"
               type="number"
               min="0"
               step="1"
-              value={safety}
-              onChange={(e) => onUpdateDays(lead, reorderSettingNum(e.target.value, 2))}
+              value={safetyStr}
+              onChange={(e) => setSafetyStr(e.target.value)}
+              onBlur={() => commitDays()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitDays();
+                }
+              }}
               className="w-full px-3 min-h-[44px] border border-slate-200 rounded-xl font-mono-num"
             />
           </div>

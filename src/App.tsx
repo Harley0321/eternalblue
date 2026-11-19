@@ -67,6 +67,14 @@ import {
 } from './utils/opsMath';
 import { warmUpScannerEngine } from './utils/scannerEngine';
 import { initPwaAutoUpdater, shouldAutoApplyAppUpdate } from './utils/pwaUpdater';
+import {
+  buildStockAlertNotificationPayload,
+  computeLowStockAlerts,
+  detectNewlyLowStockProducts,
+  dispatchBrowserStockNotification,
+  normalizeThreshold,
+} from './utils/stockAlerts';
+import { applyCsvImportToCatalog } from './utils/inventoryFilter';
 import { APP_VERSION } from './version';
 import { pinIsSet, setCashierPinFields, verifyCashierPin } from './utils/pinSecurity';
 import {
@@ -135,7 +143,15 @@ import {
   WeightModal,
 } from './components/SmallModals';
 import { AssistantWidget } from './components/AssistantWidget';
+import { CustomerDisplayView } from './components/CustomerDisplayView';
+import { CustomerDisplayHubModal } from './components/CustomerDisplayHubModal';
 import type { AssistantAction } from './utils/assistantEngine';
+import {
+  buildCustomerDisplaySnapshot,
+  isCustomerDisplayMode,
+  publishCustomerDisplaySnapshot,
+  type CheckoutLiveDraft,
+} from './utils/customerDisplaySync';
 
 export default function App() {
   // Core persistent state — preserves 100% of existing mobile/tablet data
@@ -239,6 +255,16 @@ export default function App() {
   const [voidTargetSale, setVoidTargetSale] = useState<SaleRecord | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [salesCashDrawerSignal, setSalesCashDrawerSignal] = useState(0);
+  const [customerDisplayHubOpen, setCustomerDisplayHubOpen] = useState(false);
+  const [flipCustomerDisplay, setFlipCustomerDisplay] = useState(false);
+  const [checkoutLiveDraft, setCheckoutLiveDraft] = useState<CheckoutLiveDraft | null>(null);
+  const [lastCompletedDisplaySale, setLastCompletedDisplaySale] = useState<SaleRecord | null>(null);
+  const isStandaloneCustomerDisplay = useMemo(
+    () =>
+      typeof window !== 'undefined' &&
+      isCustomerDisplayMode(window.location.search, window.location.hash),
+    [],
+  );
   const [confirmState, setConfirmState] = useState<{
     open: boolean;
     type: 'delete-product' | 'clear-cart' | 'clear-sales' | 'factory-reset' | 'replace-restore';
@@ -279,7 +305,9 @@ export default function App() {
     Boolean(voidTargetSale) ||
     Boolean(confirmState?.open) ||
     scReviewOpen ||
-    scannerState.open;
+    scannerState.open ||
+    customerDisplayHubOpen ||
+    flipCustomerDisplay;
   const hasBlockingUiRef = useRef(hasBlockingUi);
   hasBlockingUiRef.current = hasBlockingUi;
 
@@ -393,10 +421,35 @@ export default function App() {
     [cart, productMap, isSeniorPwd, settings],
   );
 
-  const lowStockCount = useMemo(() => {
-    const th = Number(settings.lowStockThreshold) || 10;
-    return products.filter((p) => p.stock <= th).length;
-  }, [products, settings.lowStockThreshold]);
+  const globalLowThreshold = normalizeThreshold(settings.lowStockThreshold, 10);
+
+  const lowStockSummary = useMemo(
+    () => computeLowStockAlerts(products, globalLowThreshold),
+    [products, globalLowThreshold],
+  );
+  const lowStockCount = lowStockSummary.totalAlertCount;
+
+  const prevProductsForAlertRef = useRef<Product[]>(products);
+  const prevThresholdForAlertRef = useRef<number>(globalLowThreshold);
+  useEffect(() => {
+    const prevProds = prevProductsForAlertRef.current;
+    const prevTh = prevThresholdForAlertRef.current;
+    prevProductsForAlertRef.current = products;
+    prevThresholdForAlertRef.current = globalLowThreshold;
+
+    if (prevProds === products && prevTh === globalLowThreshold) return;
+    if (!settings.stockAlertNotifications) return;
+
+    const newlyLow = detectNewlyLowStockProducts(prevProds, products, globalLowThreshold, prevTh);
+    if (newlyLow.length > 0) {
+      const payload = buildStockAlertNotificationPayload(
+        newlyLow,
+        globalLowThreshold,
+        settings.storeName,
+      );
+      void dispatchBrowserStockNotification(payload);
+    }
+  }, [products, globalLowThreshold, settings.stockAlertNotifications, settings.storeName]);
 
   const overdueUtangCount = useMemo(
     () => customers.filter((c) => isCustomerOverdue(c)).length,
@@ -857,6 +910,8 @@ export default function App() {
     setVoidTargetSale(null);
     setConfirmState(null);
     setAssistantOpen(false);
+    setCustomerDisplayHubOpen(false);
+    setFlipCustomerDisplay(false);
   }, []);
 
   const handleLockTerminal = useCallback(() => {
@@ -1204,6 +1259,8 @@ export default function App() {
         setVoidTargetSale(null);
         setConfirmState(null);
         setPinModal((p) => ({ ...p, open: false }));
+        setCustomerDisplayHubOpen(false);
+        setFlipCustomerDisplay(false);
         return;
       }
 
@@ -1466,6 +1523,7 @@ export default function App() {
     setMobileCartOpen(false);
     setReceiptReading(null);
     setReceiptSale(record);
+    setLastCompletedDisplaySale(record);
     toast(`Sale ${receiptNo} completed (${formatPeso(record.grandTotal)})`, 'success');
   };
 
@@ -1636,13 +1694,43 @@ export default function App() {
   const handleSaveProduct = (data: Omit<Product, 'id'>, editId?: string) => {
     const nowIso = new Date().toISOString();
     if (editId) {
+      const existing = productMap.get(editId);
       updateProducts((prev) =>
         prev.map((p) => (p.id === editId ? { ...p, ...data, updatedAt: nowIso } : p)),
       );
+      if (existing) {
+        const delta = Number((data.stock - existing.stock).toFixed(3));
+        if (delta !== 0) {
+          appendStockLog({
+            id: 'LOG-' + Date.now().toString(36),
+            dateIso: nowIso,
+            productId: existing.id,
+            productName: data.name,
+            delta,
+            prevStock: existing.stock,
+            newStock: data.stock,
+            reason: 'Count Correction',
+            note: 'Edited in product form',
+          });
+        }
+      }
       toast(`Updated ${data.name}`, 'success');
     } else {
       const id = 'SKU-' + Date.now().toString(36).toUpperCase();
       updateProducts((prev) => [{ id, ...data, updatedAt: nowIso }, ...prev]);
+      if (data.stock > 0) {
+        appendStockLog({
+          id: 'LOG-' + Date.now().toString(36),
+          dateIso: nowIso,
+          productId: id,
+          productName: data.name,
+          delta: data.stock,
+          prevStock: 0,
+          newStock: data.stock,
+          reason: 'Restock',
+          note: 'Initial product stock',
+        });
+      }
       toast(`Added ${data.name}`, 'success');
     }
     setProductModal({ open: false, editingId: null, initialBarcode: '' });
@@ -1757,57 +1845,13 @@ export default function App() {
   };
 
   const handleApplyCsvImport = (rows: CsvImportRowPreview[], mode: 'merge' | 'new-only') => {
-    const nowIso = new Date().toISOString();
-    const newLogs: StockLogEntry[] = [];
-    let created = 0;
-    let updated = 0;
+    const { nextProducts, newLogs, created, updated } = applyCsvImportToCatalog(
+      products,
+      rows,
+      mode,
+    );
 
-    updateProducts((prev) => {
-      const next = [...prev];
-      const indexById = new Map(next.map((p, i) => [p.id, i]));
-
-      for (const row of rows) {
-        if (row.action === 'update' && mode === 'merge' && row.existing && row.data) {
-          const idx = indexById.get(row.existing.id);
-          if (idx === undefined) continue;
-          const oldProd = next[idx];
-          next[idx] = { ...oldProd, ...row.data };
-          updated++;
-          const delta = Number((row.data.stock - oldProd.stock).toFixed(3));
-          if (delta !== 0) {
-            newLogs.push({
-              id: `LOG-${Date.now().toString(36)}-${row.rowNum}`,
-              dateIso: nowIso,
-              productId: oldProd.id,
-              productName: row.data.name,
-              delta,
-              prevStock: oldProd.stock,
-              newStock: row.data.stock,
-              reason: delta > 0 ? 'Restock' : 'Count Correction',
-              note: 'CSV Import',
-            });
-          }
-        } else if (row.action === 'create' && row.data) {
-          const id = `SKU-${Date.now().toString(36).toUpperCase()}-${row.rowNum}`;
-          next.unshift({ id, ...row.data });
-          created++;
-          if (row.data.stock > 0) {
-            newLogs.push({
-              id: `LOG-${Date.now().toString(36)}-C${row.rowNum}`,
-              dateIso: nowIso,
-              productId: id,
-              productName: row.data.name,
-              delta: row.data.stock,
-              prevStock: 0,
-              newStock: row.data.stock,
-              reason: 'Restock',
-              note: 'CSV Import (new SKU)',
-            });
-          }
-        }
-      }
-      return next;
-    });
+    updateProducts(() => nextProducts);
 
     if (newLogs.length > 0) {
       setStockLog((prev) => {
@@ -1846,27 +1890,27 @@ export default function App() {
     const voidLogs: StockLogEntry[] = [];
 
     // Restore stock for all matching lines (summed across lines) and record audit entries
-    updateProducts((prev) =>
-      prev.map((p) => {
-        const restoreQty = target.items
-          .filter((it) => it.productId === p.id || (!it.productId && it.name === p.name))
-          .reduce((acc, it) => acc + (Number(it.qty) || 0), 0);
-        if (!(restoreQty > 0)) return p;
-        const nextStock = Number((p.stock + restoreQty).toFixed(3));
-        voidLogs.push({
-          id: `LOG-${Date.now().toString(36)}-${p.id}`,
-          dateIso: nowIso,
-          productId: p.id,
-          productName: p.name,
-          delta: restoreQty,
-          prevStock: p.stock,
-          newStock: nextStock,
-          reason: 'Count Correction',
-          note: `Void ${receiptNo}: ${reason}`,
-        });
-        return { ...p, stock: nextStock };
-      }),
-    );
+    const nextProducts = products.map((p) => {
+      const restoreQty = target.items
+        .filter((it) => it.productId === p.id || (!it.productId && it.name === p.name))
+        .reduce((acc, it) => acc + (Number(it.qty) || 0), 0);
+      if (!(restoreQty > 0)) return p;
+      const nextStock = Number((p.stock + restoreQty).toFixed(3));
+      voidLogs.push({
+        id: `LOG-${Date.now().toString(36)}-${p.id}`,
+        dateIso: nowIso,
+        productId: p.id,
+        productName: p.name,
+        delta: restoreQty,
+        prevStock: p.stock,
+        newStock: nextStock,
+        reason: 'Count Correction',
+        note: `Void ${receiptNo}: ${reason}`,
+      });
+      return { ...p, stock: nextStock };
+    });
+
+    updateProducts(() => nextProducts);
 
     if (voidLogs.length > 0) {
       setStockLog((prev) => {
@@ -2175,12 +2219,76 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (cart.length > 0) {
+      setLastCompletedDisplaySale(null);
+      return;
+    }
+    if (!lastCompletedDisplaySale || receiptSale) return;
+    const tid = window.setTimeout(() => {
+      setLastCompletedDisplaySale(null);
+    }, 20000);
+    return () => window.clearTimeout(tid);
+  }, [cart.length, lastCompletedDisplaySale, receiptSale]);
+
+  const customerDisplaySnapshot = useMemo(
+    () =>
+      buildCustomerDisplaySnapshot({
+        storeName: settings.storeName,
+        storeTagline: settings.storeTagline,
+        settings,
+        cashierName: activeShift?.cashierName,
+        priceMode,
+        isSeniorPwd,
+        cart,
+        productMap,
+        totals: cartTotals,
+        checkoutDraft: checkoutLiveDraft,
+        lastCompletedSale: lastCompletedDisplaySale,
+      }),
+    [
+      settings,
+      activeShift?.cashierName,
+      priceMode,
+      isSeniorPwd,
+      cart,
+      productMap,
+      cartTotals,
+      checkoutLiveDraft,
+      lastCompletedDisplaySale,
+    ],
+  );
+
+  useEffect(() => {
+    if (isStandaloneCustomerDisplay) return;
+    publishCustomerDisplaySnapshot(customerDisplaySnapshot);
+  }, [isStandaloneCustomerDisplay, customerDisplaySnapshot]);
+
+  if (isStandaloneCustomerDisplay) {
+    return <CustomerDisplayView fallbackSettings={settings} />;
+  }
+
   return (
-    <div className="h-[100dvh] flex flex-col bg-slate-50 text-slate-900 overflow-hidden">
+    <>
+      {flipCustomerDisplay && (
+        <CustomerDisplayView
+          liveSnapshot={customerDisplaySnapshot}
+          fallbackSettings={settings}
+          onExitFlipMode={() => setFlipCustomerDisplay(false)}
+        />
+      )}
+      <div
+        className={
+          flipCustomerDisplay
+            ? 'hidden'
+            : 'h-[100dvh] flex flex-col bg-slate-50 text-slate-900 overflow-hidden'
+        }
+      >
       <TopBar
         storeName={settings.storeName}
         activeTab={activeTab}
         lowStockCount={lowStockCount}
+        outOfStockCount={lowStockSummary.outCount}
         overdueUtangCount={overdueUtangCount}
         activeCashierName={activeShift?.cashierName}
         hasPin={pinIsSet(settings)}
@@ -2198,7 +2306,7 @@ export default function App() {
           priceMode={priceMode}
           selectedCategory={posCategory}
           searchQuery={posSearch}
-          lowStockThreshold={Number(settings.lowStockThreshold) || 10}
+          lowStockThreshold={globalLowThreshold}
           expiryWarnDays={Number(settings.expiryWarnDays) || 30}
           heldCount={heldOrders.length}
           isSeniorPwd={isSeniorPwd}
@@ -2251,6 +2359,7 @@ export default function App() {
           onOpenCheckout={() => setCheckoutOpen(true)}
           onOpenMobileCart={() => setMobileCartOpen(true)}
           onCloseMobileCart={() => setMobileCartOpen(false)}
+          onOpenCustomerDisplay={() => setCustomerDisplayHubOpen(true)}
         />
       )}
 
@@ -2262,7 +2371,7 @@ export default function App() {
           selectedCategory={invCategory}
           activeStockFilter={invStockFilter}
           onChangeStockFilter={setInvStockFilter}
-          lowStockThreshold={Number(settings.lowStockThreshold) || 10}
+          lowStockThreshold={globalLowThreshold}
           expiryWarnDays={Number(settings.expiryWarnDays) || 30}
           stockLogCount={stockLog.length}
           searchQuery={invSearch}
@@ -2415,7 +2524,7 @@ export default function App() {
         open={categorySheetOpen}
         products={products}
         selectedCategory={activeCategoryForSheet}
-        lowStockThreshold={Number(settings.lowStockThreshold) || 10}
+        lowStockThreshold={globalLowThreshold}
         onSelectCategory={(cat) => {
           if (activeTab === 'inventory') setInvCategory(cat);
           else setPosCategory(cat);
@@ -2428,6 +2537,7 @@ export default function App() {
         editingProduct={editingProduct}
         initialBarcode={productModal.initialBarcode}
         allProducts={products}
+        globalLowStockThreshold={globalLowThreshold}
         onOpenScanner={() => setScannerState({ open: true, mode: 'product-form' })}
         onSave={handleSaveProduct}
         onClose={() => setProductModal({ open: false, editingId: null, initialBarcode: '' })}
@@ -2498,6 +2608,12 @@ export default function App() {
         itemCount={cart.length}
         customers={customers}
         settings={settings}
+        onUpdateSettings={(next) => {
+          updateSettings(next);
+          toast('Store payment QR updated', 'success');
+        }}
+        onFlipToCustomerScreen={() => setFlipCustomerDisplay(true)}
+        onLiveDraftChange={setCheckoutLiveDraft}
         onQuickAddCustomer={handleAddCustomer}
         onClose={() => setCheckoutOpen(false)}
         onCompleteSale={handleCompleteSale}
@@ -2527,6 +2643,8 @@ export default function App() {
         onClose={() => setScannerState((s) => ({ ...s, open: false, initialContinuous: undefined }))}
         onScanProduct={(prod, qty = 1) => {
           if (scannerState.mode === 'inventory') {
+            setInvCategory('All');
+            setInvStockFilter('ALL');
             setInvSearch(prod.barcode || prod.name);
             setScannerState((s) => ({ ...s, open: false, initialContinuous: undefined }));
             toast(`Found ${prod.name}`, 'success');
@@ -2700,7 +2818,16 @@ export default function App() {
         onClose={() => setAssistantOpen(false)}
       />
 
+      <CustomerDisplayHubModal
+        open={customerDisplayHubOpen}
+        settings={settings}
+        onFlipToCustomerView={() => setFlipCustomerDisplay(true)}
+        onOpenSettingsQr={openSettingsTab}
+        onClose={() => setCustomerDisplayHubOpen(false)}
+      />
+
       <ToastContainer toasts={toasts} scannerOpen={scannerState.open} />
     </div>
+    </>
   );
 }

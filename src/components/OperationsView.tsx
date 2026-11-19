@@ -432,7 +432,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
       className="h-full flex flex-col overflow-hidden p-3 sm:p-4 lg:p-6 gap-3"
     >
       {/* Store Ops Sub-Tab Strip */}
-      <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+      <div className="bg-white p-1.5 rounded-xl border border-slate-200/90 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
         {subTabs.map(({ id, label, Icon, badge, badgeTone }) => {
           const active = subTab === id;
           return (
@@ -442,17 +442,17 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
               data-testid={`ops-subtab-${id}`}
               onClick={() => setSubTab(id)}
               aria-pressed={active}
-              className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition ${
+              className={`px-3 py-2 min-h-[38px] rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition pos-ease ${
                 active
-                  ? 'bg-slate-900 text-emerald-400 shadow-xs'
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'bg-slate-900 text-white'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
-              <Icon className="w-3.5 h-3.5 shrink-0" />
+              <Icon className={`w-3.5 h-3.5 shrink-0 ${active ? 'text-emerald-400' : 'text-slate-400'}`} />
               <span>{label}</span>
               {badge && (
                 <span
-                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono-num font-extrabold ${
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono-num font-bold leading-none ${
                     active ? 'bg-slate-800 text-emerald-300' : badgeTone || 'bg-slate-200 text-slate-700'
                   }`}
                 >
@@ -473,52 +473,52 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
           <div className="space-y-3" data-testid="ops-panel-utang">
             {/* KPI Strip */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-              <div className="bg-white p-3.5 rounded-2xl border border-slate-200">
-                <div className="text-[11px] font-bold text-slate-500 uppercase">Total Receivables</div>
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200/90">
+                <div className="text-[11px] font-semibold text-slate-500">Total Receivables</div>
                 <div
                   data-testid="utang-total-receivable"
                   className="font-mono-num font-extrabold text-xl text-amber-600 mt-0.5"
                 >
                   {formatPeso(utangSummary.totalReceivable)}
                 </div>
-                <div className="text-[10px] font-semibold text-slate-500 mt-0.5">
+                <div className="text-[11px] font-medium text-slate-500 mt-0.5">
                   {utangSummary.activeDebtors} Suki account(s) with balance
                 </div>
               </div>
 
-              <div className="bg-white p-3.5 rounded-2xl border border-slate-200">
-                <div className="text-[11px] font-bold text-slate-500 uppercase">Overdue Balance</div>
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200/90">
+                <div className="text-[11px] font-semibold text-slate-500">Overdue Balance</div>
                 <div className="font-mono-num font-extrabold text-xl text-rose-600 mt-0.5">
                   {formatPeso(utangSummary.overdueAmount)}
                 </div>
-                <div className="text-[10px] font-semibold text-slate-500 mt-0.5">
+                <div className="text-[11px] font-medium text-slate-500 mt-0.5">
                   {utangSummary.overdueCount} overdue notice(s)
                 </div>
               </div>
 
-              <div className="bg-white p-3.5 rounded-2xl border border-slate-200">
-                <div className="text-[11px] font-bold text-slate-500 uppercase">Collected Today</div>
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200/90">
+                <div className="text-[11px] font-semibold text-slate-500">Collected Today</div>
                 <div className="font-mono-num font-extrabold text-xl text-emerald-700 mt-0.5">
                   {formatPeso(utangSummary.collectedToday)}
                 </div>
-                <div className="text-[10px] font-semibold text-slate-500 mt-0.5">
+                <div className="text-[11px] font-medium text-slate-500 mt-0.5">
                   Charged today: {formatPeso(utangSummary.chargedToday)}
                 </div>
               </div>
 
-              <div className="bg-white p-3.5 rounded-2xl border border-slate-200">
-                <div className="text-[11px] font-bold text-slate-500 uppercase">Suki Loyalty Pool</div>
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200/90">
+                <div className="text-[11px] font-semibold text-slate-500">Suki Loyalty Pool</div>
                 <div className="font-mono-num font-extrabold text-xl text-indigo-700 mt-0.5">
                   {utangSummary.totalPoints.toLocaleString('en-PH')} pts
                 </div>
-                <div className="text-[10px] font-semibold text-slate-500 mt-0.5">
+                <div className="text-[11px] font-medium text-slate-500 mt-0.5">
                   ₱{settings.loyaltyPesoPerPoint ?? 50} spend = 1 pt · 1 pt = ₱{settings.loyaltyPointValue ?? 1}
                 </div>
               </div>
             </div>
 
             {/* Loyalty Rate & Search Toolbar */}
-            <div className="bg-white p-3 rounded-2xl border border-slate-200 flex flex-col lg:flex-row lg:items-center gap-2.5 justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-200/90 flex flex-col lg:flex-row lg:items-center gap-2.5 justify-between">
               <div className="flex flex-wrap items-center gap-2 flex-1">
                 <div className="relative flex-1 min-w-[180px]">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -527,13 +527,13 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                     value={sukiQuery}
                     onChange={(e) => setSukiQuery(e.target.value)}
                     placeholder="Search Suki name, phone, or purok..."
-                    className="w-full pl-9 pr-3 py-2 min-h-[40px] rounded-xl bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full pl-9 pr-3 py-2 min-h-[40px] rounded-lg bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-colors"
                   />
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowOnlyDebtors((v) => !v)}
-                  className={`px-3 py-2 min-h-[40px] rounded-xl border text-xs font-bold cursor-pointer ${
+                  className={`px-3 py-2 min-h-[40px] rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
                     showOnlyDebtors
                       ? 'bg-amber-600 text-white border-amber-600'
                       : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -545,9 +545,9 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                   type="button"
                   data-testid="add-suki-toggle-btn"
                   onClick={() => setNewSukiOpen((v) => !v)}
-                  className="px-3.5 py-2 min-h-[40px] rounded-xl bg-slate-900 hover:bg-slate-800 text-emerald-400 text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-2 min-h-[40px] rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
+                  <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
                   <span>{newSukiOpen ? 'Close Form' : '+ Add Suki'}</span>
                 </button>
               </div>
@@ -848,7 +848,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
             )}
 
             {/* Customers List */}
-            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="bg-white rounded-xl border border-slate-200/90 overflow-hidden">
               {filteredCustomers.length === 0 ? (
                 <div className="p-8 text-center text-xs text-slate-400">
                   No Suki customers yet. Click <strong>+ Add Suki</strong> or add one directly during POS Checkout!

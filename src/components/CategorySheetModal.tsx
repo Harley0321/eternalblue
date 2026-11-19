@@ -2,6 +2,7 @@ import React from 'react';
 import { X } from 'lucide-react';
 import type { Product } from '../types';
 import { getCategoryIcon } from '../utils/categoryIcons';
+import { getEffectiveLowStockThreshold } from '../utils/stockAlerts';
 
 interface CategorySheetModalProps {
   open: boolean;
@@ -48,7 +49,9 @@ export const CategorySheetModal: React.FC<CategorySheetModalProps> = ({
           {categories.map((cat) => {
             const on = cat === selectedCategory;
             const list = cat === 'All' ? products : products.filter((p) => p.category === cat);
-            const low = list.filter((p) => p.stock <= lowStockThreshold).length;
+            const low = list.filter(
+              (p) => p.stock <= getEffectiveLowStockThreshold(p, lowStockThreshold),
+            ).length;
             const Icon = getCategoryIcon(cat);
 
             return (

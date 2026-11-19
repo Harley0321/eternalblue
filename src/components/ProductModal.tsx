@@ -14,6 +14,7 @@ interface ProductModalProps {
   editingProduct: Product | null;
   initialBarcode?: string;
   allProducts: Product[];
+  globalLowStockThreshold?: number;
   onOpenScanner: () => void;
   onSave: (productData: Omit<Product, 'id'>, editId?: string) => void;
   onClose: () => void;
@@ -25,6 +26,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   editingProduct,
   initialBarcode,
   allProducts,
+  globalLowStockThreshold = 10,
   onOpenScanner,
   onSave,
   onClose,
@@ -40,6 +42,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [wholesale, setWholesale] = useState('');
   const [minQty, setMinQty] = useState('10');
   const [stock, setStock] = useState('20');
+  const [lowStockThreshold, setLowStockThreshold] = useState('');
   const [expiry, setExpiry] = useState('');
   const [scEligible, setScEligible] = useState(false);
   const [scTouched, setScTouched] = useState(false);
@@ -61,6 +64,12 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setWholesale(String(editingProduct.wholesalePrice));
       setMinQty(String(editingProduct.wholesaleMinQty > 0 ? editingProduct.wholesaleMinQty : 10));
       setStock(String(editingProduct.stock));
+      setLowStockThreshold(
+        editingProduct.lowStockThreshold !== undefined &&
+          Number.isFinite(Number(editingProduct.lowStockThreshold))
+          ? String(editingProduct.lowStockThreshold)
+          : '',
+      );
       setExpiry(editingProduct.expiry || '');
       setScEligible(scEligibleProduct(editingProduct));
       setScTouched(true);
@@ -77,6 +86,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setWholesale('');
       setMinQty('10');
       setStock('20');
+      setLowStockThreshold('');
       setExpiry('');
       setScEligible(false);
       setScTouched(false);
@@ -163,6 +173,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     const rawWhs = wholesale.trim() !== '' ? parseFloat(wholesale) : rawRet;
     const rawMin = parseInt(minQty, 10);
     const rawStk = stock.trim() !== '' ? parseFloat(stock) : 0;
+    const rawCustomLow =
+      lowStockThreshold.trim() !== '' ? parseFloat(lowStockThreshold) : undefined;
 
     if (!cleanName || !Number.isFinite(rawRet) || rawRet <= 0 || rawRet > 100000000) {
       onToast('Please enter product name and a valid selling price above zero', 'warning');
@@ -177,9 +189,10 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       rawWhs > 100000000 ||
       rawStk < 0 ||
       !Number.isFinite(rawStk) ||
-      rawStk > 100000000
+      rawStk > 100000000 ||
+      (rawCustomLow !== undefined && (!Number.isFinite(rawCustomLow) || rawCustomLow < 0 || rawCustomLow > 100000000))
     ) {
-      onToast('Capital, wholesale price and stock must be valid non-negative numbers', 'warning');
+      onToast('Capital, wholesale price, stock, and threshold must be valid non-negative numbers', 'warning');
       return;
     }
     if (!Number.isInteger(rawMin) || rawMin < 1 || rawMin > 100000) {
@@ -211,6 +224,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         wholesalePrice: round2(rawWhs),
         wholesaleMinQty: rawMin,
         stock: Number(rawStk.toFixed(3)),
+        lowStockThreshold: rawCustomLow !== undefined ? Number(rawCustomLow.toFixed(3)) : undefined,
         expiry: cleanExpiry || '',
         scEligible,
         icon: icon !== 'auto' ? icon : undefined,
@@ -534,9 +548,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="font-bold text-slate-600 block mb-1">Wholesale Min Qty</label>
+              <label className="font-bold text-slate-600 block mb-1">Whls Min Qty</label>
               <input
                 type="number"
                 value={minQty}
@@ -551,6 +565,25 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 step="0.01"
                 value={stock}
                 onChange={(e) => setStock(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl font-mono-num"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="product-low-stock-threshold"
+                className="font-bold text-slate-600 block mb-1"
+                title="Leave blank to use store default threshold"
+              >
+                Low Alert ≤
+              </label>
+              <input
+                id="product-low-stock-threshold"
+                type="number"
+                min="0"
+                step="1"
+                value={lowStockThreshold}
+                onChange={(e) => setLowStockThreshold(e.target.value)}
+                placeholder={`Global (${globalLowStockThreshold})`}
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-xl font-mono-num"
               />
             </div>

@@ -5,14 +5,20 @@ import {
   BookOpen,
   CheckCircle2,
   CreditCard,
+  Monitor,
+  QrCode,
   Smartphone,
   Split,
   UserPlus,
   X,
 } from 'lucide-react';
 import type { CartTotals, PaymentMethod, StoreSettings, SukiCustomer } from '../types';
+import type { CheckoutLiveDraft } from '../utils/customerDisplaySync';
 import { computeLoyaltyPointsEarned, computePointsRedemption } from '../utils/opsMath';
+import { resolveCheckoutQrState } from '../utils/paymentQr';
 import { formatPeso, round2 } from '../utils/posMath';
+import { MerchantQrCard } from './MerchantQrCard';
+import { MerchantQrConfigPanel } from './MerchantQrConfigPanel';
 
 interface CheckoutModalProps {
   open: boolean;
@@ -20,6 +26,9 @@ interface CheckoutModalProps {
   itemCount: number;
   customers: SukiCustomer[];
   settings: StoreSettings;
+  onUpdateSettings?: (next: StoreSettings) => void;
+  onFlipToCustomerScreen?: () => void;
+  onLiveDraftChange?: (draft: CheckoutLiveDraft | null) => void;
   onQuickAddCustomer: (data: {
     name: string;
     phone?: string;
@@ -51,6 +60,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   itemCount,
   customers,
   settings,
+  onUpdateSettings,
+  onFlipToCustomerScreen,
+  onLiveDraftChange,
   onQuickAddCustomer,
   onClose,
   onCompleteSale,
@@ -61,6 +73,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [seniorId, setSeniorId] = useState('');
   const [splitCashStr, setSplitCashStr] = useState('');
   const [splitDigitalMethod, setSplitDigitalMethod] = useState<'GCash' | 'Card'>('GCash');
+  const [showQrOnCounter, setShowQrOnCounter] = useState(false);
+  const [qrSetupOpen, setQrSetupOpen] = useState(false);
+  const [qrDraft, setQrDraft] = useState<StoreSettings>(() => ({ ...settings }));
 
   // Suki & Utang state
   const [customerId, setCustomerId] = useState('');
@@ -114,7 +129,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setRefNo('');
     setSeniorId('');
     setSplitCashStr('');
-    setSplitDigitalMethod('GCash');
+    setShowQrOnCounter(false);
+    setQrSetupOpen(false);
+    setQrDraft({ ...settings });
     setCustomerId('');
     setRedeemPoints(false);
     setUtangDueDate(defDue);
@@ -125,6 +142,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setQuickLimitStr('1000');
     setError('');
   }, [open, totals.grandTotal]);
+
+  useEffect(() => {
+    setQrDraft({ ...settings });
+  }, [settings]);
 
   useEffect(() => {
     return () => {
@@ -142,6 +163,44 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setTenderedStr(finalDue > 0 ? finalDue.toFixed(2) : '0.00');
     }
   }, [finalDue, method, open]);
+
+  // Publish live checkout state to 2nd-Screen Customer Display as cashier updates method/tender/QR
+  useEffect(() => {
+    if (!onLiveDraftChange) return;
+    if (!open) {
+      onLiveDraftChange(null);
+      return;
+    }
+    const parsedT = parseFloat(tenderedStr);
+    const safeT = Number.isFinite(parsedT) ? round2(parsedT) : 0;
+    const parsedSplit = parseFloat(splitCashStr);
+    const safeSplit = Number.isFinite(parsedSplit) ? round2(parsedSplit) : 0;
+    const remDigital = round2(Math.max(0, finalDue - safeSplit));
+    onLiveDraftChange({
+      open: true,
+      method,
+      finalDue,
+      cashTendered: safeT,
+      cashChange: round2(safeT - finalDue),
+      splitCash: safeSplit,
+      splitDigital: remDigital,
+      splitDigitalMethod,
+      customerName: selectedCustomer?.name,
+      pointsDiscount: redemption.discountPeso,
+      forceShowQr: showQrOnCounter,
+    });
+  }, [
+    open,
+    method,
+    finalDue,
+    tenderedStr,
+    splitCashStr,
+    splitDigitalMethod,
+    selectedCustomer?.name,
+    redemption.discountPeso,
+    showQrOnCounter,
+    onLiveDraftChange,
+  ]);
 
   const quickAmounts = useMemo(() => {
     const g = finalDue;
@@ -166,6 +225,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const splitCash = Number.isFinite(parsedSplitCash) ? round2(parsedSplitCash) : NaN;
   const safeSplitCashDisplay = Number.isFinite(splitCash) ? splitCash : 0;
   const splitDigital = round2(Math.max(0, finalDue - safeSplitCashDisplay));
+
+  const qrAmountForDisplay = method === 'Split' ? splitDigital : finalDue;
+  const resolvedQr = resolveCheckoutQrState(settings, qrAmountForDisplay);
+  const autoShowQr =
+    method === 'GCash' || (method === 'Split' && splitDigitalMethod === 'GCash');
+  const shouldShowQrPanel = autoShowQr || showQrOnCounter;
 
   const addBillToTendered = (bill: number) => {
     const parsed = parseFloat(tenderedStr);
@@ -315,24 +380,38 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         className="w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-xl border border-slate-200 overflow-hidden max-h-[92vh] flex flex-col"
       >
         {/* Header */}
-        <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-          <div>
-            <h3 className="text-base font-extrabold text-slate-900">Complete Payment</h3>
-            <p className="text-[11px] text-slate-500">{itemCount} line item(s) in basket</p>
+        <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-2 bg-white">
+          <div className="min-w-0">
+            <h3 className="text-base font-bold text-slate-900">Complete Payment</h3>
+            <p className="text-xs text-slate-500">{itemCount} line item(s) in basket</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close checkout"
-            className="w-9 h-9 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-600 cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onFlipToCustomerScreen && (
+              <button
+                type="button"
+                data-testid="checkout-header-flip-btn"
+                onClick={onFlipToCustomerScreen}
+                title="Flip screen to Customer View"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 min-h-[36px] rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer whitespace-nowrap"
+              >
+                <Monitor className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="hidden sm:inline">Customer Screen</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close checkout"
+              className="w-9 h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-4 space-y-3.5 overflow-y-auto">
-          {/* Totals summary box */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1 text-xs">
+          {/* Totals summary band */}
+          <div className="bg-slate-50/90 border border-slate-200/80 rounded-xl p-3 space-y-1 text-xs">
             <div className="flex justify-between text-slate-600">
               <span>Retail Subtotal</span>
               <span className="font-mono-num">{formatPeso(totals.retailSubtotal)}</span>
@@ -355,8 +434,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <span className="font-mono-num">−{formatPeso(redemption.discountPeso)}</span>
               </div>
             )}
-            <div className="flex justify-between items-baseline pt-1.5 border-t border-slate-200">
-              <span className="text-sm font-extrabold text-slate-900">Amount Due</span>
+            <div className="flex justify-between items-baseline pt-2 border-t border-slate-200">
+              <span className="text-sm font-bold text-slate-900">Amount Due</span>
               <span className="text-2xl font-extrabold font-mono-num text-emerald-700" data-testid="checkout-grand-total">
                 {formatPeso(finalDue)}
               </span>
@@ -569,18 +648,31 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
           {/* GCash / Card */}
           {(method === 'GCash' || method === 'Card') && (
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                {method} Reference / Approval # (optional)
-              </label>
-              <input
-                type="text"
-                autoFocus
-                value={refNo}
-                onChange={(e) => setRefNo(e.target.value)}
-                placeholder={method === 'GCash' ? 'e.g. 1002348912' : 'e.g. APPR-4421'}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-mono-num focus:border-emerald-600 focus:outline-none"
-              />
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {method} Reference / Approval # (optional)
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={refNo}
+                  onChange={(e) => setRefNo(e.target.value)}
+                  placeholder={method === 'GCash' ? 'e.g. 1002348912' : 'e.g. APPR-4421'}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-mono-num focus:border-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              {method === 'Card' && (
+                <button
+                  type="button"
+                  onClick={() => setShowQrOnCounter((v) => !v)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                >
+                  <QrCode className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>{showQrOnCounter ? 'Hide Store Payment QR' : 'Show Store Payment QR'}</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -636,6 +728,53 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 placeholder={`${splitDigitalMethod} Reference # (optional)`}
                 className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs font-mono-num bg-white"
               />
+            </div>
+          )}
+
+          {/* Instant Payment QR Panel + Quick Counter Flip + Inline Setup */}
+          {shouldShowQrPanel && (
+            <div data-testid="checkout-qr-section" className="space-y-2.5 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-extrabold text-slate-800 inline-flex items-center gap-1.5">
+                  <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Instant Customer Payment QR</span>
+                </span>
+                {onFlipToCustomerScreen && (
+                  <button
+                    type="button"
+                    data-testid="checkout-flip-customer-btn"
+                    onClick={onFlipToCustomerScreen}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-emerald-400 text-[11px] font-bold cursor-pointer"
+                  >
+                    <Monitor className="w-3 h-3" />
+                    <span>Flip to Customer Screen</span>
+                  </button>
+                )}
+              </div>
+
+              {qrSetupOpen && onUpdateSettings ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <MerchantQrConfigPanel
+                    draft={qrDraft}
+                    compact
+                    onChangeDraft={(patch) => setQrDraft((d) => ({ ...d, ...patch }))}
+                    onCancel={() => {
+                      setQrDraft({ ...settings });
+                      setQrSetupOpen(false);
+                    }}
+                    onSaveAndClose={(patched) => {
+                      onUpdateSettings(patched);
+                      setQrSetupOpen(false);
+                    }}
+                  />
+                </div>
+              ) : (
+                <MerchantQrCard
+                  qr={resolvedQr}
+                  size="compact"
+                  onOpenSetup={onUpdateSettings ? () => setQrSetupOpen(true) : undefined}
+                />
+              )}
             </div>
           )}
 
@@ -700,11 +839,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-3 pb-safe border-t border-slate-200 bg-white flex gap-2">
+        <div className="px-4 py-3 pb-safe border-t border-slate-200 bg-white flex gap-2.5">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2.5 min-h-[44px] rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+            className="px-4 py-2.5 min-h-[48px] rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
           >
             Cancel
           </button>
@@ -712,7 +851,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             type="submit"
             disabled={submitting}
             data-testid="confirm-complete-sale"
-            className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-extrabold cursor-pointer disabled:opacity-60 transition-colors"
+            className="flex-1 min-h-[48px] inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-extrabold cursor-pointer disabled:opacity-60 transition-colors pos-ease"
           >
             <CheckCircle2 className="w-4 h-4" />
             {submitting ? 'Completing…' : `Complete Sale (${formatPeso(finalDue)})`}

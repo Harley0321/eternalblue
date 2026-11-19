@@ -10,6 +10,7 @@ import type {
   StoreSettings,
 } from '../types';
 import { stripLegacySyncFields } from './pwaUpdateRules';
+import { getEffectiveLowStockThreshold, normalizeThreshold } from './stockAlerts';
 
 export const STORAGE_KEYS = {
   PRODUCTS: 'omnimart_ph_products_v1',
@@ -79,6 +80,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   reorderSafetyDays: 2,
   beep: true,
   vibrate: true,
+  stockAlertNotifications: false,
   lastBackup: '',
   scDiscountCap: 125,
   receiptWidth: '80mm',
@@ -909,6 +911,11 @@ export function computeReorderList(
   const cutoff = nowMs - 30 * DAY_MS;
   const sold: Record<string, number> = {};
   let earliest = nowMs;
+  const prodById = new Map(products.map((p) => [p.id, p]));
+  const prodByName = new Map<string, Product>();
+  for (const p of products) {
+    if (!prodByName.has(p.name)) prodByName.set(p.name, p);
+  }
 
   for (const s of sales) {
     if (s.voided) continue;
@@ -916,7 +923,7 @@ export function computeReorderList(
     if (!(t >= cutoff)) continue;
     if (t < earliest) earliest = t;
     for (const it of s.items || []) {
-      const prod = products.find((x) => (it.productId && x.id === it.productId) || x.name === it.name);
+      const prod = (it.productId && prodById.get(it.productId)) || prodByName.get(it.name);
       if (!prod) continue;
       sold[prod.id] = (sold[prod.id] || 0) + (Number(it.qty) || 0);
     }
@@ -1039,6 +1046,7 @@ export function validateBackupPayload(data: unknown): { ok: true; data: { produc
     if (p.retailPrice !== undefined && (!isFiniteNonNeg(p.retailPrice) || p.retailPrice <= 0)) return false;
     if (p.wholesalePrice !== undefined && !isFiniteNonNeg(p.wholesalePrice)) return false;
     if (p.stock !== undefined && !isFiniteNonNeg(p.stock)) return false;
+    if (p.lowStockThreshold !== undefined && !isFiniteNonNeg(p.lowStockThreshold)) return false;
     if (p.capital !== undefined && !isFiniteNonNeg(p.capital)) return false;
     if (p.wholesaleMinQty !== undefined && (!isFiniteNonNeg(p.wholesaleMinQty) || p.wholesaleMinQty < 1)) return false;
     return true;
@@ -1124,8 +1132,14 @@ export function sanitizeConfigForSnapshot(settings: StoreSettings): ConfigSnapsh
     reorderSafetyDays: Number(settings.reorderSafetyDays ?? DEFAULT_SETTINGS.reorderSafetyDays),
     beep: Boolean(settings.beep),
     vibrate: Boolean(settings.vibrate),
+    stockAlertNotifications: Boolean(settings.stockAlertNotifications),
     scDiscountCap: Number(settings.scDiscountCap ?? DEFAULT_SETTINGS.scDiscountCap),
     receiptWidth: settings.receiptWidth === '58mm' ? '58mm' : '80mm',
+    qrPayLabel: settings.qrPayLabel ? String(settings.qrPayLabel) : undefined,
+    qrMerchantName: settings.qrMerchantName ? String(settings.qrMerchantName) : undefined,
+    qrAccountNumber: settings.qrAccountNumber ? String(settings.qrAccountNumber) : undefined,
+    qrEmvPayload: settings.qrEmvPayload ? String(settings.qrEmvPayload) : undefined,
+    customerDisplayGreeting: settings.customerDisplayGreeting ? String(settings.customerDisplayGreeting) : undefined,
   };
 }
 
@@ -1222,13 +1236,15 @@ export function computeStockHealthSummary(
   sales: SaleRecord[],
   settings: Pick<StoreSettings, 'lowStockThreshold' | 'expiryWarnDays' | 'reorderLeadDays' | 'reorderSafetyDays'>,
   nowDate: Date = new Date(),
+  precomputedVelocities?: ReturnType<typeof computeProductVelocities>,
 ): StockHealthSummary {
-  const lowTh = Number(settings.lowStockThreshold) || 10;
+  const lowTh = normalizeThreshold(settings.lowStockThreshold, 10);
   const warnDays = Number(settings.expiryWarnDays) || 30;
   const coverWarnDays =
     reorderSettingNum(settings.reorderLeadDays, 3) + reorderSettingNum(settings.reorderSafetyDays, 2);
   const nowMs = nowDate.getTime();
-  const { byId: velMap } = computeProductVelocities(products, sales, nowMs);
+  const { byId: velMap } =
+    precomputedVelocities ?? computeProductVelocities(products, sales, nowMs);
 
   let retailC = 0;
   let capitalC = 0;
@@ -1258,8 +1274,9 @@ export function computeStockHealthSummary(
       missingCapitalCount++;
     }
 
+    const effLowTh = getEffectiveLowStockThreshold(p, lowTh);
     if (stk <= 0) outCount++;
-    else if (stk <= lowTh) lowCount++;
+    else if (stk <= effLowTh) lowCount++;
 
     const ex = expiryInfo(p, warnDays, nowDate);
     if (ex.status === 'expired') expiredCount++;
@@ -1464,6 +1481,7 @@ export function parseInventoryCsv(
   const idxWhs = col('wholesaleprice', 'wholesale');
   const idxWhsMin = col('wholesalemin', 'wholesaleminqty', 'minqty');
   const idxStock = col('stock', 'qty', 'quantity', 'onhand');
+  const idxLowAlert = col('lowalert', 'lowstockthreshold', 'minstock', 'alertlevel');
   const idxExpiry = col('expiry', 'expirydate', 'exp');
   const idxSc = col('scpwd', 'sceligible', 'sc');
 
@@ -1475,6 +1493,7 @@ export function parseInventoryCsv(
   }
 
   const byId = new Map(existingProducts.map((p) => [p.id, p]));
+  const barcodeIdx = buildBarcodeIndex(existingProducts);
   const rows: CsvImportRowPreview[] = [];
 
   for (let r = 1; r < matrix.length; r++) {
@@ -1486,7 +1505,7 @@ export function parseInventoryCsv(
     const rawName = get(idxName);
     const matched =
       (rawId && byId.get(rawId)) ||
-      (rawBarcode ? findProductByBarcode(rawBarcode, existingProducts) : undefined);
+      (rawBarcode ? findProductByBarcodeIndexed(rawBarcode, barcodeIdx) : undefined);
 
     const parseNum = (s: string) => {
       const cleaned = s.replace(/[₱,\s]/g, '');
@@ -1500,6 +1519,7 @@ export function parseInventoryCsv(
     const whsNum = parseNum(get(idxWhs));
     const whsMinNum = parseNum(get(idxWhsMin));
     const stockNum = parseNum(get(idxStock));
+    const lowAlertNum = parseNum(get(idxLowAlert));
     const rawExp = get(idxExpiry);
     const rawSc = get(idxSc).toLowerCase();
     const scVal =
@@ -1509,7 +1529,11 @@ export function parseInventoryCsv(
           ? false
           : undefined;
 
-    if ([retailNum, capNum, whsNum, whsMinNum, stockNum].some((x) => x !== undefined && Number.isNaN(x))) {
+    if (
+      [retailNum, capNum, whsNum, whsMinNum, stockNum, lowAlertNum].some(
+        (x) => x !== undefined && Number.isNaN(x),
+      )
+    ) {
       rows.push({ rowNum: r + 1, action: 'skip', reason: 'Invalid number format' });
       continue;
     }
@@ -1520,8 +1544,20 @@ export function parseInventoryCsv(
       const nextWhs = whsNum !== undefined ? round2(whsNum) : matched.wholesalePrice;
       const nextMin = whsMinNum !== undefined && whsMinNum > 0 ? Math.round(whsMinNum) : matched.wholesaleMinQty;
       const nextStock = stockNum !== undefined ? Math.max(0, Number(stockNum.toFixed(3))) : matched.stock;
-      if (nextRetail <= 0 || nextStock < 0 || (nextCap !== undefined && nextCap < 0) || nextWhs < 0) {
-        rows.push({ rowNum: r + 1, action: 'skip', reason: 'Negative stock/cost or non-positive price', existing: matched });
+      const nextLowAlert =
+        lowAlertNum !== undefined
+          ? lowAlertNum >= 0
+            ? Number(lowAlertNum.toFixed(3))
+            : undefined
+          : matched.lowStockThreshold;
+      if (
+        nextRetail <= 0 ||
+        nextStock < 0 ||
+        (nextCap !== undefined && nextCap < 0) ||
+        nextWhs < 0 ||
+        (lowAlertNum !== undefined && lowAlertNum < 0)
+      ) {
+        rows.push({ rowNum: r + 1, action: 'skip', reason: 'Negative stock/cost/threshold or non-positive price', existing: matched });
         continue;
       }
       rows.push({
@@ -1538,6 +1574,7 @@ export function parseInventoryCsv(
           wholesalePrice: nextWhs,
           wholesaleMinQty: nextMin,
           stock: nextStock,
+          lowStockThreshold: nextLowAlert,
           expiry: rawExp !== '' ? (/^\d{4}-\d{2}-\d{2}$/.test(rawExp) ? rawExp : matched.expiry) : matched.expiry,
           scEligible: scVal !== undefined ? scVal : matched.scEligible,
         },
@@ -1551,6 +1588,8 @@ export function parseInventoryCsv(
       const cleanCap = capNum !== undefined && capNum >= 0 ? Number(capNum.toFixed(4)) : 0;
       const cleanWhs = whsNum !== undefined && whsNum >= 0 ? round2(whsNum) : round2(retailNum);
       const cleanMin = whsMinNum !== undefined && whsMinNum > 0 ? Math.round(whsMinNum) : 10;
+      const cleanLowAlert =
+        lowAlertNum !== undefined && lowAlertNum >= 0 ? Number(lowAlertNum.toFixed(3)) : undefined;
       rows.push({
         rowNum: r + 1,
         action: 'create',
@@ -1564,6 +1603,7 @@ export function parseInventoryCsv(
           wholesalePrice: cleanWhs,
           wholesaleMinQty: cleanMin,
           stock: cleanStock,
+          lowStockThreshold: cleanLowAlert,
           expiry: /^\d{4}-\d{2}-\d{2}$/.test(rawExp) ? rawExp : '',
           scEligible: scVal,
         },

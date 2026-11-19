@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Download, History, Search, X } from 'lucide-react';
 import type { StockLogEntry } from '../types';
 import { escapeCsvCell } from '../utils/posMath';
@@ -18,6 +18,11 @@ export const StockLogModal: React.FC<StockLogModalProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const [reasonFilter, setReasonFilter] = useState<'ALL' | StockLogEntry['reason']>('ALL');
+  const [shownCount, setShownCount] = useState(80);
+
+  useEffect(() => {
+    setShownCount(80);
+  }, [query, reasonFilter, open]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -143,35 +148,48 @@ export const StockLogModal: React.FC<StockLogModalProps> = ({
               No stock movement entries found.
             </div>
           ) : (
-            filtered.map((entry) => (
-              <div key={entry.id} className="p-3 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="font-bold text-slate-900 truncate">{entry.productName}</div>
-                  <div className="text-[11px] text-slate-500">
-                    {entry.reason}
-                    {entry.note ? ` · ${entry.note}` : ''} ·{' '}
-                    {new Date(entry.dateIso).toLocaleString('en-PH', {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: 'numeric',
-                      minute: '2-digit',
-                    })}
+            <>
+              {filtered.slice(0, shownCount).map((entry) => (
+                <div key={entry.id} className="p-3 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-900 truncate">{entry.productName}</div>
+                    <div className="text-[11px] text-slate-500">
+                      {entry.reason}
+                      {entry.note ? ` · ${entry.note}` : ''} ·{' '}
+                      {new Date(entry.dateIso).toLocaleString('en-PH', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                  <div className="text-right font-mono-num shrink-0">
+                    <div
+                      className={`font-extrabold ${
+                        entry.delta >= 0 ? 'text-emerald-700' : 'text-rose-600'
+                      }`}
+                    >
+                      {entry.delta > 0 ? `+${entry.delta}` : entry.delta}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {entry.prevStock} → {entry.newStock}
+                    </div>
                   </div>
                 </div>
-                <div className="text-right font-mono-num shrink-0">
-                  <div
-                    className={`font-extrabold ${
-                      entry.delta >= 0 ? 'text-emerald-700' : 'text-rose-600'
-                    }`}
+              ))}
+              {filtered.length > shownCount && (
+                <div className="p-3">
+                  <button
+                    type="button"
+                    onClick={() => setShownCount((c) => c + 80)}
+                    className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
                   >
-                    {entry.delta > 0 ? `+${entry.delta}` : entry.delta}
-                  </div>
-                  <div className="text-[10px] text-slate-400">
-                    {entry.prevStock} → {entry.newStock}
-                  </div>
+                    Show more ({shownCount} of {filtered.length})
+                  </button>
                 </div>
-              </div>
-            ))
+              )}
+            </>
           )}
         </div>
       </div>

@@ -132,6 +132,14 @@ export function loadSettingsFromStorage(): StoreSettings {
         if (merged.loyaltyPointValue !== undefined) {
           merged.loyaltyPointValue = clampNum(merged.loyaltyPointValue, 1, 0.01);
         }
+        merged.stockAlertNotifications = Boolean(merged.stockAlertNotifications);
+        if (typeof merged.qrPayLabel === 'string') merged.qrPayLabel = merged.qrPayLabel.trim() || undefined;
+        if (typeof merged.qrMerchantName === 'string') merged.qrMerchantName = merged.qrMerchantName.trim() || undefined;
+        if (typeof merged.qrAccountNumber === 'string') merged.qrAccountNumber = merged.qrAccountNumber.trim() || undefined;
+        if (typeof merged.qrEmvPayload === 'string') merged.qrEmvPayload = merged.qrEmvPayload.trim() || undefined;
+        if (typeof merged.customerDisplayGreeting === 'string') {
+          merged.customerDisplayGreeting = merged.customerDisplayGreeting.trim() || undefined;
+        }
         const nameCheck = upgradeLegacyDefaultStoreName(merged.storeName);
         if (nameCheck.upgraded) {
           merged.storeName = nameCheck.storeName;

@@ -29,9 +29,9 @@ export const StoreEmblem: React.FC<StoreEmblemProps> = ({
       aria-hidden="true"
       data-store-icon={option.id}
       title={storeName}
-      className={`${dims.box} bg-gradient-to-br from-emerald-300 via-emerald-400 to-emerald-600 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.45)] ring-1 ring-emerald-200/60 inline-flex items-center justify-center shrink-0 ${className}`}
+      className={`${dims.box} bg-emerald-500 text-slate-950 ring-1 ring-emerald-300/40 inline-flex items-center justify-center shrink-0 ${className}`}
     >
-      <Icon className={`${dims.icon} stroke-[2.4]`} />
+      <Icon className={`${dims.icon} stroke-[2.25]`} />
     </span>
   );
 };

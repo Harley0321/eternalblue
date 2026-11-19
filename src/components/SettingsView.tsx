@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Archive,
+  Bell,
+  BellOff,
+  BellRing,
   CheckCircle2,
   Download,
   FileKey2,
@@ -10,7 +13,9 @@ import {
   History,
   KeyRound,
   Lock,
+  Monitor,
   Printer,
+  QrCode,
   RefreshCw,
   RotateCcw,
   ShieldAlert,
@@ -66,6 +71,17 @@ import { getStorageBreakdown, getUsedStorageBytes } from '../utils/storage';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { APP_VERSION, PRESERVED_DATA_KEYS, RELEASE_DATE, RELEASE_TAG } from '../version';
 import { checkForPwaUpdateNow } from '../utils/pwaUpdater';
+import {
+  buildStockAlertNotificationPayload,
+  computeLowStockAlerts,
+  dispatchBrowserStockNotification,
+  getBrowserNotificationPermission,
+  normalizeThreshold,
+  requestBrowserNotificationPermission,
+  type BrowserNotificationPermissionState,
+} from '../utils/stockAlerts';
+import { buildCustomerDisplayUrl } from '../utils/customerDisplaySync';
+import { MerchantQrConfigPanel } from './MerchantQrConfigPanel';
 
 interface SettingsViewProps {
   settings: StoreSettings;
@@ -165,6 +181,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [verifyingChain, setVerifyingChain] = useState(false);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
+  const [notifPermission, setNotifPermission] = useState<BrowserNotificationPermissionState>(() =>
+    getBrowserNotificationPermission(),
+  );
+  const [notifBusy, setNotifBusy] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
@@ -194,7 +214,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       Number(form.reorderLeadDays) !== Number(settings.reorderLeadDays) ||
       Number(form.reorderSafetyDays) !== Number(settings.reorderSafetyDays) ||
       Boolean(form.beep) !== Boolean(settings.beep) ||
-      Boolean(form.vibrate) !== Boolean(settings.vibrate),
+      Boolean(form.vibrate) !== Boolean(settings.vibrate) ||
+      Boolean(form.stockAlertNotifications) !== Boolean(settings.stockAlertNotifications) ||
+      String(form.qrPayLabel || '') !== String(settings.qrPayLabel || '') ||
+      String(form.qrMerchantName || '') !== String(settings.qrMerchantName || '') ||
+      String(form.qrAccountNumber || '') !== String(settings.qrAccountNumber || '') ||
+      String(form.qrEmvPayload || '') !== String(settings.qrEmvPayload || '') ||
+      String(form.qrImageDataUrl || '') !== String(settings.qrImageDataUrl || '') ||
+      String(form.customerDisplayGreeting || '') !== String(settings.customerDisplayGreeting || ''),
     [form, settings],
   );
 
@@ -269,7 +296,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       ...settings,
       ...form,
       storeName: form.storeName.trim() || DEFAULT_STORE_NAME,
-      lowStockThreshold: Math.max(0, Number(form.lowStockThreshold) || 10),
+      lowStockThreshold: normalizeThreshold(form.lowStockThreshold, 10),
       expiryWarnDays: Math.max(1, Number(form.expiryWarnDays) || 30),
       reorderLeadDays: Math.max(0, Number(form.reorderLeadDays) ?? 3),
       reorderSafetyDays: Math.max(0, Number(form.reorderSafetyDays) ?? 2),
@@ -277,10 +304,107 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       receiptWidth: form.receiptWidth === '58mm' ? '58mm' : '80mm',
       autoLockMinutes: Number(form.autoLockMinutes ?? 5),
       lockWholePos: Boolean(form.lockWholePos),
+      stockAlertNotifications: Boolean(form.stockAlertNotifications),
+      qrPayLabel: form.qrPayLabel?.trim() || undefined,
+      qrMerchantName: form.qrMerchantName?.trim() || undefined,
+      qrAccountNumber: form.qrAccountNumber?.trim() || undefined,
+      qrEmvPayload: form.qrEmvPayload?.trim() || undefined,
+      qrImageDataUrl: form.qrImageDataUrl?.trim() || undefined,
+      customerDisplayGreeting: form.customerDisplayGreeting?.trim() || undefined,
     };
     onSaveSettings(cleaned);
     setForm(cleaned);
     onToast('Store settings saved', 'success');
+  };
+
+  const handleToggleStockAlertNotifications = async () => {
+    const currentlyEnabled = Boolean(settings.stockAlertNotifications);
+    if (currentlyEnabled) {
+      const next: StoreSettings = { ...settings, stockAlertNotifications: false };
+      onSaveSettings(next);
+      setForm((f) => ({ ...f, stockAlertNotifications: false }));
+      onToast('Stock alert browser notifications disabled', 'warning');
+      return;
+    }
+
+    setNotifBusy(true);
+    try {
+      const currentPerm = getBrowserNotificationPermission();
+      let finalPerm = currentPerm;
+      if (currentPerm === 'default') {
+        finalPerm = await requestBrowserNotificationPermission();
+      }
+      setNotifPermission(finalPerm);
+
+      if (finalPerm === 'unsupported') {
+        onToast('This browser does not support desktop/push notifications', 'warning');
+        return;
+      }
+      if (finalPerm === 'denied') {
+        const next: StoreSettings = { ...settings, stockAlertNotifications: false };
+        onSaveSettings(next);
+        setForm((f) => ({ ...f, stockAlertNotifications: false }));
+        onToast(
+          'Browser notifications are blocked. Allow notifications for this site in browser settings.',
+          'warning',
+        );
+        return;
+      }
+
+      const next: StoreSettings = { ...settings, stockAlertNotifications: true };
+      onSaveSettings(next);
+      setForm((f) => ({ ...f, stockAlertNotifications: true }));
+
+      if (finalPerm === 'granted') {
+        const th = normalizeThreshold(settings.lowStockThreshold, 10);
+        const alertSummary = computeLowStockAlerts(products, th);
+        const lowItems = [...alertSummary.outOfStockItems, ...alertSummary.lowStockItems];
+        if (lowItems.length > 0) {
+          const payload = buildStockAlertNotificationPayload(lowItems, th, settings.storeName);
+          await dispatchBrowserStockNotification(payload);
+        } else {
+          await dispatchBrowserStockNotification({
+            title: `Stock Alerts Enabled · ${settings.storeName || 'EternalBlue Mart'}`,
+            body: 'You will receive browser alerts whenever products fall at or below their low-stock threshold.',
+            tag: 'eternalblue-stock-alert-enabled',
+          });
+        }
+        onToast('Push-like browser stock alerts enabled', 'success');
+      } else {
+        onToast('Stock alerts enabled — grant browser notification permission when prompted', 'warning');
+      }
+    } finally {
+      setNotifBusy(false);
+    }
+  };
+
+  const handleSendTestStockAlert = async () => {
+    const perm = getBrowserNotificationPermission();
+    setNotifPermission(perm);
+    if (perm === 'default') {
+      const requested = await requestBrowserNotificationPermission();
+      setNotifPermission(requested);
+    }
+    const th = normalizeThreshold(form.lowStockThreshold ?? settings.lowStockThreshold, 10);
+    const alertSummary = computeLowStockAlerts(products, th);
+    const sampleItems = [...alertSummary.outOfStockItems, ...alertSummary.lowStockItems];
+    const payload =
+      sampleItems.length > 0
+        ? buildStockAlertNotificationPayload(sampleItems, th, form.storeName || settings.storeName)
+        : {
+            title: `Test Stock Alert · ${form.storeName || settings.storeName}`,
+            body: `Sample alert: Low-stock items (≤${th}) will trigger a push-like notification like this.`,
+            tag: 'eternalblue-stock-alert-test',
+          };
+
+    const sent = await dispatchBrowserStockNotification(payload);
+    if (sent) {
+      onToast('Browser stock alert notification sent', 'success');
+    } else if (getBrowserNotificationPermission() === 'denied') {
+      onToast('Notifications are blocked in browser site settings — allow them to see popups', 'warning');
+    } else {
+      onToast(`${payload.title}: ${payload.body}`, 'warning');
+    }
   };
 
   const handleSaveSecurityPolicy = (patch: Partial<StoreSettings>, toastMsg: string) => {
@@ -981,6 +1105,132 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 />
                 Haptic Vibrate on Scan
               </label>
+            </div>
+
+            {/* Push-like Browser Stock Alert Notifications */}
+            <div
+              data-testid="stock-alert-notifications-card"
+              className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2.5 text-xs"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      settings.stockAlertNotifications
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {settings.stockAlertNotifications ? (
+                      <BellRing className="w-4 h-4" />
+                    ) : notifPermission === 'denied' ? (
+                      <BellOff className="w-4 h-4 text-rose-600" />
+                    ) : (
+                      <Bell className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        id="stock-alert-notif-label"
+                        className="font-bold text-slate-900"
+                      >
+                        Browser Stock Alert Notifications
+                      </span>
+                      <span
+                        data-testid="stock-alert-permission-badge"
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold ${
+                          notifPermission === 'granted'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : notifPermission === 'denied'
+                              ? 'bg-rose-100 text-rose-800'
+                              : notifPermission === 'unsupported'
+                                ? 'bg-slate-200 text-slate-700'
+                                : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {notifPermission === 'granted'
+                          ? 'Permission Granted'
+                          : notifPermission === 'denied'
+                            ? 'Blocked in Browser'
+                            : notifPermission === 'unsupported'
+                              ? 'Unsupported'
+                              : 'Permission Needed'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                      Send push-like browser notifications when any product drops at or below its low-stock threshold.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(settings.stockAlertNotifications)}
+                  aria-labelledby="stock-alert-notif-label"
+                  data-testid="stock-alert-notifications-toggle"
+                  disabled={notifBusy || notifPermission === 'unsupported'}
+                  onClick={handleToggleStockAlertNotifications}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors cursor-pointer disabled:opacity-50 ${
+                    settings.stockAlertNotifications ? 'bg-emerald-600' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+                      settings.stockAlertNotifications ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {settings.stockAlertNotifications && (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/80">
+                  <span className="text-[11px] text-emerald-800 font-semibold">
+                    Active · Alerts fire automatically when stock crosses threshold
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="test-stock-alert-btn"
+                    onClick={handleSendTestStockAlert}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-[11px] cursor-pointer"
+                  >
+                    Send Test Alert
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Instant Payment QR & 2nd-Screen Customer Display Configuration */}
+            <div
+              data-testid="settings-qr-display-card"
+              className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-3 text-xs"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-2">
+                <div className="flex items-start gap-2 flex-1 min-w-0">
+                  <QrCode className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <div className="font-extrabold text-slate-900">Instant Payment QR &amp; 2nd Screen</div>
+                    <div className="text-[11px] text-slate-500">
+                      Show dynamic exact-amount QR Ph / GCash / Maya at checkout &amp; counter display
+                    </div>
+                  </div>
+                </div>
+                <a
+                  href={typeof window !== 'undefined' ? buildCustomerDisplayUrl(window.location.href) : '?display=customer'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] whitespace-nowrap shrink-0"
+                >
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>Open 2nd Screen</span>
+                </a>
+              </div>
+
+              <MerchantQrConfigPanel
+                draft={form}
+                onChangeDraft={(patch) => setForm((f) => ({ ...f, ...patch }))}
+              />
             </div>
 
             <button

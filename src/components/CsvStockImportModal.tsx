@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FileSpreadsheet, Upload, X } from 'lucide-react';
 import type { Product } from '../types';
 import { formatPeso, parseInventoryCsv, type CsvImportRowPreview } from '../utils/posMath';
@@ -19,6 +19,13 @@ export const CsvStockImportModal: React.FC<CsvStockImportModalProps> = ({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [csvText, setCsvText] = useState('');
   const [importMode, setImportMode] = useState<'merge' | 'new-only'>('merge');
+
+  useEffect(() => {
+    if (!open) {
+      setCsvText('');
+      setImportMode('merge');
+    }
+  }, [open]);
 
   const preview = useMemo(() => {
     if (!csvText.trim()) return null;
@@ -114,13 +121,13 @@ export const CsvStockImportModal: React.FC<CsvStockImportModalProps> = ({
 
         <div className="text-xs shrink-0">
           <label className="font-bold text-slate-600 block mb-1">
-            Or paste CSV text (headers: Barcode, Name, Category, Unit, Capital, Retail Price, Stock)
+            Or paste CSV text (headers: Barcode, Name, Category, Unit, Capital, Retail Price, Stock, optional Low Alert)
           </label>
           <textarea
             rows={4}
             value={csvText}
             onChange={(e) => setCsvText(e.target.value)}
-            placeholder={'Barcode,Name,Category,Unit,Capital,Retail Price,Stock\n4800016644801,Lucky Me Pancit Canton,Canned & Noodles,pc,11.5,16,40'}
+            placeholder={'Barcode,Name,Category,Unit,Capital,Retail Price,Stock,Low Alert\n4800016644801,Lucky Me Pancit Canton,Canned & Noodles,pc,11.5,16,40,10'}
             className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono-num text-[11px] bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
         </div>
