@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -54,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -122,89 +124,105 @@ fun SalesScreen(vm: PosViewModel) {
         )
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Period selector + X-Read / Z-Read / Drawer
-        item {
-            Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        SalesPeriod.entries.forEach { p ->
-                            FilterChip(
-                                selected = period == p,
-                                onClick = { period = p },
-                                label = { Text(p.label, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = PosColors.Slate900,
-                                    selectedLabelColor = Color.White
-                                ),
-                                modifier = Modifier.testTag("sales_period_${p.name.lowercase()}")
-                            )
-                        }
-                    }
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isTablet = maxWidth >= 720.dp
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(
-                            onClick = { vm.openReadingReport(false) },
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(min = 44.dp)
-                                .testTag("sales_xread_btn")
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Period selector + X-Read / Z-Read / Drawer
+            item {
+                Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(Icons.Rounded.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("X-Read", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            SalesPeriod.entries.forEach { p ->
+                                FilterChip(
+                                    selected = period == p,
+                                    onClick = { period = p },
+                                    label = { Text(p.label, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = PosColors.Slate900,
+                                        selectedLabelColor = Color.White
+                                    ),
+                                    modifier = Modifier.testTag("sales_period_${p.name.lowercase()}")
+                                )
+                            }
                         }
-                        Button(
-                            onClick = { vm.openReadingReport(true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = PosColors.Slate900),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(min = 44.dp)
-                                .testTag("sales_zread_btn")
-                        ) {
-                            Text("Z-Read EOD", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                        OutlinedButton(
-                            onClick = { drawerOpen = !drawerOpen },
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(min = 44.dp)
-                                .testTag("sales_drawer_btn")
-                        ) {
-                            Icon(Icons.Rounded.Calculate, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Count Cash", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = { vm.openReadingReport(false) },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 44.dp)
+                                    .testTag("sales_xread_btn")
+                            ) {
+                                Icon(Icons.Rounded.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("X-Read", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Button(
+                                onClick = { vm.openReadingReport(true) },
+                                colors = ButtonDefaults.buttonColors(containerColor = PosColors.Slate900),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 44.dp)
+                                    .testTag("sales_zread_btn")
+                            ) {
+                                Text("Z-Read EOD", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = { drawerOpen = !drawerOpen },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 44.dp)
+                                    .testTag("sales_drawer_btn")
+                            ) {
+                                Icon(Icons.Rounded.Calculate, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Count Cash", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Primary Sales KPIs
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                SalesKpiCard("Net Sales", PosMath.formatPeso(stats.net), "${stats.count} orders", PosColors.Emerald700, Modifier.weight(1f))
-                SalesKpiCard("Est. Profit", PosMath.formatPeso(stats.profit), "Gross ${PosMath.formatPeso(stats.gross)}", PosColors.Indigo700, Modifier.weight(1f))
+            // Primary Sales KPIs (4-up on tablet, 2x2 on phone)
+            if (isTablet) {
+                item {
+                    val avgBasket = if (stats.count > 0) stats.net / stats.count else 0.0
+                    val discTotal = stats.seniorDisc + stats.wholesaleDisc
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        SalesKpiCard("Net Sales", PosMath.formatPeso(stats.net), "${stats.count} orders", PosColors.Emerald700, Modifier.weight(1f))
+                        SalesKpiCard("Est. Profit", PosMath.formatPeso(stats.profit), "Gross ${PosMath.formatPeso(stats.gross)}", PosColors.Indigo700, Modifier.weight(1f))
+                        SalesKpiCard("Avg Basket", PosMath.formatPeso(avgBasket), "${PosMath.formatQty(stats.items)} items sold", PosColors.Slate800, Modifier.weight(1f))
+                        SalesKpiCard("Discounts", PosMath.formatPeso(discTotal), "SC ${PosMath.formatPeso(stats.seniorDisc)} · Whs ${PosMath.formatPeso(stats.wholesaleDisc)}", PosColors.Amber700, Modifier.weight(1f))
+                    }
+                }
+            } else {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        SalesKpiCard("Net Sales", PosMath.formatPeso(stats.net), "${stats.count} orders", PosColors.Emerald700, Modifier.weight(1f))
+                        SalesKpiCard("Est. Profit", PosMath.formatPeso(stats.profit), "Gross ${PosMath.formatPeso(stats.gross)}", PosColors.Indigo700, Modifier.weight(1f))
+                    }
+                }
+                item {
+                    val avgBasket = if (stats.count > 0) stats.net / stats.count else 0.0
+                    val discTotal = stats.seniorDisc + stats.wholesaleDisc
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        SalesKpiCard("Avg Basket", PosMath.formatPeso(avgBasket), "${PosMath.formatQty(stats.items)} items sold", PosColors.Slate800, Modifier.weight(1f))
+                        SalesKpiCard("Discounts", PosMath.formatPeso(discTotal), "SC ${PosMath.formatPeso(stats.seniorDisc)} · Whs ${PosMath.formatPeso(stats.wholesaleDisc)}", PosColors.Amber700, Modifier.weight(1f))
+                    }
+                }
             }
-        }
-        item {
-            val avgBasket = if (stats.count > 0) stats.net / stats.count else 0.0
-            val discTotal = stats.seniorDisc + stats.wholesaleDisc
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                SalesKpiCard("Avg Basket", PosMath.formatPeso(avgBasket), "${PosMath.formatQty(stats.items)} items sold", PosColors.Slate800, Modifier.weight(1f))
-                SalesKpiCard("Discounts", PosMath.formatPeso(discTotal), "SC ${PosMath.formatPeso(stats.seniorDisc)} · Whs ${PosMath.formatPeso(stats.wholesaleDisc)}", PosColors.Amber700, Modifier.weight(1f))
-            }
-        }
 
         // PH Denomination Cash Drawer Counter
         if (drawerOpen) {
@@ -239,9 +257,10 @@ fun SalesScreen(vm: PosViewModel) {
                             }
                         }
 
-                        PosMath.PH_DENOMINATIONS.chunked(2).forEach { pair ->
+                        val colsPerRow = if (isTablet) 4 else 2
+                        PosMath.PH_DENOMINATIONS.chunked(colsPerRow).forEach { rowItems ->
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                pair.forEach { d ->
+                                rowItems.forEach { d ->
                                     val c = denomCounts[d] ?: 0
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
@@ -260,26 +279,114 @@ fun SalesScreen(vm: PosViewModel) {
                                                 fontSize = 13.sp
                                             )
                                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                Icon(
-                                                    Icons.Rounded.Remove,
-                                                    contentDescription = "Decrease denom",
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color.White,
+                                                    border = BorderStroke(1.dp, PosColors.Slate300),
                                                     modifier = Modifier
-                                                        .size(28.dp)
-                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .size(40.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
                                                         .clickable { if (c > 0) denomCounts[d] = c - 1 }
-                                                        .padding(4.dp)
-                                                )
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(Icons.Rounded.Remove, contentDescription = "Decrease denom", modifier = Modifier.size(16.dp))
+                                                    }
+                                                }
                                                 Text("$c", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                                Icon(
-                                                    Icons.Rounded.Add,
-                                                    contentDescription = "Increase denom",
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color.White,
+                                                    border = BorderStroke(1.dp, PosColors.Slate300),
                                                     modifier = Modifier
-                                                        .size(28.dp)
-                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .size(40.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
                                                         .clickable { denomCounts[d] = c + 1 }
-                                                        .padding(4.dp)
-                                                )
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(Icons.Rounded.Add, contentDescription = "Increase denom", modifier = Modifier.size(16.dp))
+                                                    }
+                                                }
                                             }
+                                        }
+                                    }
+                                }
+                                repeat(colsPerRow - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Charts & Analytics (Side-by-side on tablet)
+        if (isTablet) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200), modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("7-Day Net Sales Trend", style = MaterialTheme.typography.titleSmall)
+                                Text("7d Avg ${PosMath.formatPeso(trend7Summary.average)}/day", style = MaterialTheme.typography.bodySmall, color = PosColors.Slate500)
+                            }
+                            BarChartCanvas(
+                                labels = trend7.map { it.shortDay },
+                                values = trend7.map { it.netSales },
+                                barColor = PosColors.Emerald500
+                            )
+                        }
+                    }
+                    if (hourlySeries.isNotEmpty()) {
+                        Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200), modifier = Modifier.weight(1f)) {
+                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Hourly Sales Distribution", style = MaterialTheme.typography.titleSmall)
+                                BarChartCanvas(
+                                    labels = hourlySeries.map { it.label },
+                                    values = hourlySeries.map { it.sales },
+                                    barColor = PosColors.Indigo600
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (stats.tender.isNotEmpty() || abcRanking.ranked.isNotEmpty()) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        if (stats.tender.isNotEmpty()) {
+                            Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200), modifier = Modifier.weight(1f)) {
+                                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("Payment Tender Mix", style = MaterialTheme.typography.titleSmall)
+                                    stats.tender.forEach { (method, ts) ->
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("$method (${ts.count})", style = MaterialTheme.typography.bodyMedium)
+                                            Text(PosMath.formatPeso(ts.amt), style = MaterialTheme.typography.labelMedium)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (abcRanking.ranked.isNotEmpty()) {
+                            Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200), modifier = Modifier.weight(1f)) {
+                                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("ABC Margin & Profit Ranking", style = MaterialTheme.typography.titleSmall)
+                                    abcRanking.ranked.take(8).forEach { r ->
+                                        val badgeColor = when (r.cls) {
+                                            "A" -> PosColors.Emerald700
+                                            "B" -> PosColors.Indigo700
+                                            else -> PosColors.Slate600
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                                                Surface(shape = RoundedCornerShape(6.dp), color = badgeColor.copy(alpha = 0.12f)) {
+                                                    Text(r.cls, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = badgeColor, modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp))
+                                                }
+                                                Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                            }
+                                            Text("+${PosMath.formatPeso(r.profit)}", style = MaterialTheme.typography.labelMedium, color = PosColors.Emerald700)
                                         }
                                     }
                                 }
@@ -288,82 +395,82 @@ fun SalesScreen(vm: PosViewModel) {
                     }
                 }
             }
-        }
-
-        // Tender Breakdown
-        if (stats.tender.isNotEmpty()) {
-            item {
-                Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Payment Tender Mix", style = MaterialTheme.typography.titleSmall)
-                        stats.tender.forEach { (method, ts) ->
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("$method (${ts.count})", style = MaterialTheme.typography.bodyMedium)
-                                Text(PosMath.formatPeso(ts.amt), style = MaterialTheme.typography.labelMedium)
+        } else {
+            // Tender Breakdown
+            if (stats.tender.isNotEmpty()) {
+                item {
+                    Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Payment Tender Mix", style = MaterialTheme.typography.titleSmall)
+                            stats.tender.forEach { (method, ts) ->
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("$method (${ts.count})", style = MaterialTheme.typography.bodyMedium)
+                                    Text(PosMath.formatPeso(ts.amt), style = MaterialTheme.typography.labelMedium)
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // 7-Day Net Sales Chart
-        item {
-            Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("7-Day Net Sales Trend", style = MaterialTheme.typography.titleSmall)
-                        Text("7d Avg ${PosMath.formatPeso(trend7Summary.average)}/day", style = MaterialTheme.typography.bodySmall, color = PosColors.Slate500)
-                    }
-                    BarChartCanvas(
-                        labels = trend7.map { it.shortDay },
-                        values = trend7.map { it.netSales },
-                        barColor = PosColors.Emerald500
-                    )
-                }
-            }
-        }
-
-        // Hourly Peak Chart
-        if (hourlySeries.isNotEmpty()) {
+            // 7-Day Net Sales Chart
             item {
                 Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Hourly Sales Distribution", style = MaterialTheme.typography.titleSmall)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("7-Day Net Sales Trend", style = MaterialTheme.typography.titleSmall)
+                            Text("7d Avg ${PosMath.formatPeso(trend7Summary.average)}/day", style = MaterialTheme.typography.bodySmall, color = PosColors.Slate500)
+                        }
                         BarChartCanvas(
-                            labels = hourlySeries.map { it.label },
-                            values = hourlySeries.map { it.sales },
-                            barColor = PosColors.Indigo600
+                            labels = trend7.map { it.shortDay },
+                            values = trend7.map { it.netSales },
+                            barColor = PosColors.Emerald500
                         )
                     }
                 }
             }
-        }
 
-        // ABC Profit Ranking
-        if (abcRanking.ranked.isNotEmpty()) {
-            item {
-                Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("ABC Margin & Profit Ranking", style = MaterialTheme.typography.titleSmall)
-                        abcRanking.ranked.take(8).forEach { r ->
-                            val badgeColor = when (r.cls) {
-                                "A" -> PosColors.Emerald700
-                                "B" -> PosColors.Indigo700
-                                else -> PosColors.Slate600
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                                    Surface(shape = RoundedCornerShape(6.dp), color = badgeColor.copy(alpha = 0.12f)) {
-                                        Text(r.cls, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = badgeColor, modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp))
-                                    }
-                                    Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+            // Hourly Peak Chart
+            if (hourlySeries.isNotEmpty()) {
+                item {
+                    Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Hourly Sales Distribution", style = MaterialTheme.typography.titleSmall)
+                            BarChartCanvas(
+                                labels = hourlySeries.map { it.label },
+                                values = hourlySeries.map { it.sales },
+                                barColor = PosColors.Indigo600
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ABC Profit Ranking
+            if (abcRanking.ranked.isNotEmpty()) {
+                item {
+                    Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, PosColors.Slate200)) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("ABC Margin & Profit Ranking", style = MaterialTheme.typography.titleSmall)
+                            abcRanking.ranked.take(8).forEach { r ->
+                                val badgeColor = when (r.cls) {
+                                    "A" -> PosColors.Emerald700
+                                    "B" -> PosColors.Indigo700
+                                    else -> PosColors.Slate600
                                 }
-                                Text("+${PosMath.formatPeso(r.profit)}", style = MaterialTheme.typography.labelMedium, color = PosColors.Emerald700)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                                        Surface(shape = RoundedCornerShape(6.dp), color = badgeColor.copy(alpha = 0.12f)) {
+                                            Text(r.cls, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = badgeColor, modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp))
+                                        }
+                                        Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    }
+                                    Text("+${PosMath.formatPeso(r.profit)}", style = MaterialTheme.typography.labelMedium, color = PosColors.Emerald700)
+                                }
                             }
                         }
                     }
@@ -389,6 +496,25 @@ fun SalesScreen(vm: PosViewModel) {
                     }
                 }
             }
+        } else if (isTablet) {
+            items(periodAllSales.chunked(2), key = { it.first().receiptNo }) { pair ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    pair.forEach { sale ->
+                        Box(modifier = Modifier.weight(1f)) {
+                            ReceiptHistoryCard(
+                                sale = sale,
+                                expanded = expandedReceiptNo == sale.receiptNo,
+                                onToggleExpand = {
+                                    expandedReceiptNo = if (expandedReceiptNo == sale.receiptNo) null else sale.receiptNo
+                                },
+                                onOpenReceipt = { vm.openReceipt(sale) },
+                                onVoid = { vm.openVoidSale(sale) }
+                            )
+                        }
+                    }
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
         } else {
             items(periodAllSales, key = { it.receiptNo }) { sale ->
                 ReceiptHistoryCard(
@@ -401,6 +527,7 @@ fun SalesScreen(vm: PosViewModel) {
                     onVoid = { vm.openVoidSale(sale) }
                 )
             }
+        }
         }
     }
 }
@@ -426,10 +553,13 @@ private fun SalesKpiCard(title: String, value: String, sub: String, accent: Colo
 private fun BarChartCanvas(labels: List<String>, values: List<Double>, barColor: Color) {
     val maxVal = (values.maxOrNull() ?: 0.0).coerceAtLeast(1.0)
     Column {
-        Canvas(modifier = Modifier.fillMaxWidth().height(110.dp)) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(116.dp)) {
             val n = values.size.coerceAtLeast(1)
             val gap = 8.dp.toPx()
             val barW = ((size.width - gap * (n - 1)) / n).coerceAtLeast(4f)
+            val brush = Brush.verticalGradient(
+                colors = listOf(barColor, barColor.copy(alpha = 0.65f))
+            )
             values.forEachIndexed { idx, v ->
                 val h = ((v / maxVal).toFloat() * (size.height - 6.dp.toPx())).coerceAtLeast(if (v > 0) 4f else 0f)
                 val x = idx * (barW + gap)
@@ -441,7 +571,7 @@ private fun BarChartCanvas(labels: List<String>, values: List<Double>, barColor:
                 )
                 if (h > 0f) {
                     drawRoundRect(
-                        color = barColor,
+                        brush = brush,
                         topLeft = Offset(x, size.height - h),
                         size = Size(barW, h),
                         cornerRadius = CornerRadius(6f, 6f)

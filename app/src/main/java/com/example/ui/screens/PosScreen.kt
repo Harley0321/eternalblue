@@ -1,5 +1,11 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -59,6 +66,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -303,8 +311,9 @@ fun PosScreen(
                 // Product Grid
                 BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     val cols = when {
-                        maxWidth >= 700.dp -> 4
-                        maxWidth >= 480.dp -> 3
+                        maxWidth >= 920.dp -> 5
+                        maxWidth >= 680.dp -> 4
+                        maxWidth >= 460.dp -> 3
                         else -> 2
                     }
                     if (filteredProducts.isEmpty()) {
@@ -349,6 +358,7 @@ fun PosScreen(
 
             // Wide Screen Right Cart Column
             if (isWideLayout) {
+                VerticalDivider(color = PosColors.Slate200)
                 Surface(
                     color = Color.White,
                     shadowElevation = 6.dp,
@@ -376,13 +386,19 @@ fun PosScreen(
         }
 
         // Compact Screen Sticky Floating Cart Summary Bar
-        if (!isWideLayout && cart.isNotEmpty()) {
+        AnimatedVisibility(
+            visible = !isWideLayout && cart.isNotEmpty(),
+            enter = slideInVertically(animationSpec = tween(200)) { it / 2 } + fadeIn(tween(180)),
+            exit = slideOutVertically(animationSpec = tween(160)) { it / 2 } + fadeOut(tween(140)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+        ) {
             Surface(
                 color = PosColors.Slate900,
                 shape = RoundedCornerShape(16.dp),
                 shadowElevation = 8.dp,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 10.dp)
                     .clip(RoundedCornerShape(16.dp))
@@ -432,7 +448,7 @@ fun PosScreen(
             onDismissRequest = { vm.closeMobileCart() },
             containerColor = Color.White
         ) {
-            Box(modifier = Modifier.fillMaxWidth().heightIn(max = 580.dp)) {
+            Box(modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp).imePadding()) {
                 CartPaneContent(
                     cart = cart,
                     cartTotals = cartTotals,
@@ -474,7 +490,7 @@ private fun PosProductCard(
 
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = Color.White,
+        color = if (inCartQty > 0.0) PosColors.Emerald50.copy(alpha = 0.45f) else Color.White,
         border = BorderStroke(
             width = if (inCartQty > 0.0) 2.dp else 1.dp,
             color = if (inCartQty > 0.0) PosColors.Emerald500 else PosColors.Slate200
@@ -673,7 +689,7 @@ private fun CartPaneContent(
                                         color = Color.White,
                                         border = BorderStroke(1.dp, PosColors.Slate300),
                                         modifier = Modifier
-                                            .size(38.dp)
+                                            .size(44.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .clickable { onChangeQty(line.productId, -1.0) }
                                             .testTag("cart_dec_${line.productId}")
@@ -695,7 +711,7 @@ private fun CartPaneContent(
                                         singleLine = true,
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                         textStyle = MaterialTheme.typography.labelMedium,
-                                        modifier = Modifier.width(66.dp)
+                                        modifier = Modifier.width(64.dp)
                                     )
 
                                     Surface(
@@ -703,7 +719,7 @@ private fun CartPaneContent(
                                         color = Color.White,
                                         border = BorderStroke(1.dp, PosColors.Slate300),
                                         modifier = Modifier
-                                            .size(38.dp)
+                                            .size(44.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .clickable { onChangeQty(line.productId, 1.0) }
                                             .testTag("cart_inc_${line.productId}")

@@ -2,18 +2,22 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -31,34 +35,47 @@ fun OperationsScreen(vm: PosViewModel) {
 
     Column(modifier = Modifier.fillMaxSize()) {
         Surface(color = Color.White, shadowElevation = 1.dp) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OperationsSubTab.entries.forEach { tab ->
-                    FilterChip(
-                        selected = subTab == tab,
-                        onClick = { vm.setOpsSubTab(tab) },
-                        label = { Text(tab.label, fontWeight = FontWeight.Bold, fontSize = 12.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = PosColors.Slate900,
-                            selectedLabelColor = Color.White
-                        ),
-                        modifier = Modifier.testTag("ops_tab_${tab.name}")
-                    )
+            Column {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Row(
+                        modifier = Modifier
+                            .widthIn(max = 960.dp)
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OperationsSubTab.entries.forEach { tab ->
+                            FilterChip(
+                                selected = subTab == tab,
+                                onClick = { vm.setOpsSubTab(tab) },
+                                label = { Text(tab.label, fontWeight = FontWeight.Bold, fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = PosColors.Slate900,
+                                    selectedLabelColor = Color.White
+                                ),
+                                modifier = Modifier.testTag("ops_tab_${tab.name}")
+                            )
+                        }
+                    }
                 }
+                HorizontalDivider(color = PosColors.Slate200)
             }
         }
 
-        when (subTab) {
-            OperationsSubTab.utang -> UtangSukiTab(vm)
-            OperationsSubTab.repack -> RepackTingiTab(vm)
-            OperationsSubTab.shift -> ShiftGastosTab(vm)
-            OperationsSubTab.services -> DigitalServicesTab(vm)
-            OperationsSubTab.printing -> PrinterLabelsTab(vm)
+        Box(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Box(modifier = Modifier.widthIn(max = 960.dp).fillMaxSize()) {
+                when (subTab) {
+                    OperationsSubTab.utang -> UtangSukiTab(vm)
+                    OperationsSubTab.repack -> RepackTingiTab(vm)
+                    OperationsSubTab.shift -> ShiftGastosTab(vm)
+                    OperationsSubTab.services -> DigitalServicesTab(vm)
+                    OperationsSubTab.printing -> PrinterLabelsTab(vm)
+                }
+            }
         }
     }
 }

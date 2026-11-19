@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -152,208 +154,238 @@ fun CheckoutDialog(vm: PosViewModel) {
             shape = RoundedCornerShape(20.dp),
             color = Color.White,
             modifier = Modifier
+                .widthIn(max = 860.dp)
                 .fillMaxWidth(0.94f)
                 .heightIn(max = 720.dp)
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Checkout & Payment", style = MaterialTheme.typography.titleMedium)
-                        Text("Amount Due: ${PosMath.formatPeso(finalDue)}", style = MaterialTheme.typography.titleLarge, color = PosColors.Emerald700)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { vm.openFlipCustomerDisplay() }) {
-                            Icon(Icons.Rounded.FlipToFront, contentDescription = "Customer Flip Display", tint = PosColors.Indigo600)
-                        }
-                        IconButton(onClick = { vm.closeCheckout() }) {
-                            Icon(Icons.Rounded.Close, contentDescription = "Close checkout")
-                        }
-                    }
-                }
-                HorizontalDivider(color = PosColors.Slate200)
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Payment Methods
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val isWideDialog = maxWidth >= 640.dp
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        PaymentMethod.entries.forEach { pm ->
-                            FilterChip(
-                                selected = method == pm,
-                                onClick = { method = pm },
-                                label = { Text(pm.label, fontWeight = FontWeight.Bold) },
-                                modifier = Modifier.testTag("chk_method_${pm.name.lowercase()}")
-                            )
+                        Column {
+                            Text("Checkout & Payment", style = MaterialTheme.typography.titleMedium)
+                            Text("Amount Due: ${PosMath.formatPeso(finalDue)}", style = MaterialTheme.typography.titleLarge, color = PosColors.Emerald700)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { vm.openFlipCustomerDisplay() }) {
+                                Icon(Icons.Rounded.FlipToFront, contentDescription = "Customer Flip Display", tint = PosColors.Indigo600)
+                            }
+                            IconButton(onClick = { vm.closeCheckout() }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Close checkout")
+                            }
                         }
                     }
+                    HorizontalDivider(color = PosColors.Slate200)
 
-                    // Suki Customer Selector
-                    ExposedDropdownMenuBox(expanded = custExpand, onExpandedChange = { custExpand = it }) {
-                        OutlinedTextField(
-                            value = selectedCustomer?.let { "${it.name} (${it.points} pts · Bal ${PosMath.formatPeso(it.balance)})" } ?: "Walk-in Customer (Optional Suki)",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Suki Customer") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = custExpand) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                        )
-                        ExposedDropdownMenu(expanded = custExpand, onDismissRequest = { custExpand = false }) {
-                            DropdownMenuItem(text = { Text("Walk-in Customer") }, onClick = { selectedCustomerId = null; custExpand = false })
-                            customers.forEach { c ->
-                                DropdownMenuItem(
-                                    text = { Text("${c.name} · ${c.points} pts · Utang ${PosMath.formatPeso(c.balance)}") },
-                                    onClick = { selectedCustomerId = c.id; custExpand = false }
+                    val leftOptions: @Composable () -> Unit = {
+                        // Payment Methods
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            PaymentMethod.entries.forEach { pm ->
+                                FilterChip(
+                                    selected = method == pm,
+                                    onClick = { method = pm },
+                                    label = { Text(pm.label, fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.testTag("chk_method_${pm.name.lowercase()}")
                                 )
                             }
                         }
-                    }
 
-                    if (selectedCustomer != null && selectedCustomer.points > 0) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        // Suki Customer Selector
+                        ExposedDropdownMenuBox(expanded = custExpand, onExpandedChange = { custExpand = it }) {
                             OutlinedTextField(
-                                value = pointsInput,
-                                onValueChange = { pointsInput = it },
-                                label = { Text("Redeem Suki Points (Avail ${selectedCustomer.points})") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                singleLine = true,
-                                modifier = Modifier.weight(1f)
+                                value = selectedCustomer?.let { "${it.name} (${it.points} pts · Bal ${PosMath.formatPeso(it.balance)})" } ?: "Walk-in Customer (Optional Suki)",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Suki Customer") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = custExpand) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
                             )
-                            TextButton(onClick = { pointsInput = selectedCustomer.points.toString() }) { Text("Max") }
+                            ExposedDropdownMenu(expanded = custExpand, onDismissRequest = { custExpand = false }) {
+                                DropdownMenuItem(text = { Text("Walk-in Customer") }, onClick = { selectedCustomerId = null; custExpand = false })
+                                customers.forEach { c ->
+                                    DropdownMenuItem(
+                                        text = { Text("${c.name} · ${c.points} pts · Utang ${PosMath.formatPeso(c.balance)}") },
+                                        onClick = { selectedCustomerId = c.id; custExpand = false }
+                                    )
+                                }
+                            }
+                        }
+
+                        if (selectedCustomer != null && selectedCustomer.points > 0) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = pointsInput,
+                                    onValueChange = { pointsInput = it },
+                                    label = { Text("Redeem Suki Points (Avail ${selectedCustomer.points})") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { pointsInput = selectedCustomer.points.toString() }) { Text("Max") }
+                            }
+                        }
+
+                        if (totals.seniorDiscount > 0.0) {
+                            OutlinedTextField(
+                                value = seniorId,
+                                onValueChange = { seniorId = it },
+                                label = { Text("OSCA / PWD ID # (Optional)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
                     }
 
-                    if (totals.seniorDiscount > 0.0) {
-                        OutlinedTextField(
-                            value = seniorId,
-                            onValueChange = { seniorId = it },
-                            label = { Text("OSCA / PWD ID # (Optional)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    when (method) {
-                        PaymentMethod.Cash -> {
-                            OutlinedTextField(
-                                value = cashStr,
-                                onValueChange = { cashStr = it },
-                                label = { Text("Cash Tendered (₱)") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth().testTag("chk_cash_input")
-                            )
-                            Row(
-                                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                listOf(finalDue, 50.0, 100.0, 200.0, 500.0, 1000.0).distinct().filter { it >= finalDue }.forEach { amt ->
-                                    OutlinedButton(onClick = { cashStr = amt.toString() }) {
-                                        Text(if (amt == finalDue) "Exact" else "₱${amt.toInt()}")
+                    val rightTender: @Composable () -> Unit = {
+                        when (method) {
+                            PaymentMethod.Cash -> {
+                                OutlinedTextField(
+                                    value = cashStr,
+                                    onValueChange = { cashStr = it },
+                                    label = { Text("Cash Tendered (₱)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().testTag("chk_cash_input")
+                                )
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf(finalDue, 50.0, 100.0, 200.0, 500.0, 1000.0).distinct().filter { it >= finalDue }.forEach { amt ->
+                                        OutlinedButton(onClick = { cashStr = amt.toString() }) {
+                                            Text(if (amt == finalDue) "Exact" else "₱${amt.toInt()}")
+                                        }
+                                    }
+                                }
+                                Surface(shape = RoundedCornerShape(12.dp), color = PosColors.Emerald50) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("Change", style = MaterialTheme.typography.titleSmall, color = PosColors.Emerald700)
+                                        Text(PosMath.formatPeso(changeVal), style = MaterialTheme.typography.titleMedium, color = PosColors.Emerald700)
                                     }
                                 }
                             }
-                            Surface(shape = RoundedCornerShape(12.dp), color = PosColors.Emerald50) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("Change", style = MaterialTheme.typography.titleSmall, color = PosColors.Emerald700)
-                                    Text(PosMath.formatPeso(changeVal), style = MaterialTheme.typography.titleMedium, color = PosColors.Emerald700)
-                                }
-                            }
-                        }
-                        PaymentMethod.GCash -> {
-                            MerchantQrCard(qrState = resolvedQr, compact = true)
-                            OutlinedTextField(
-                                value = refNo,
-                                onValueChange = { refNo = it },
-                                label = { Text("GCash Reference # (Optional)") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                        PaymentMethod.Card -> {
-                            OutlinedTextField(
-                                value = refNo,
-                                onValueChange = { refNo = it },
-                                label = { Text("Approval / Trace #") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                        PaymentMethod.Split -> {
-                            OutlinedTextField(
-                                value = splitCashStr,
-                                onValueChange = { splitCashStr = it },
-                                label = { Text("Cash Portion (₱)") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf("GCash", "Card").forEach { dm ->
-                                    FilterChip(selected = splitDigitalMethod == dm, onClick = { splitDigitalMethod = dm }, label = { Text(dm) })
-                                }
-                            }
-                            Text("Digital Balance Due: ${PosMath.formatPeso(splitDigital)}", style = MaterialTheme.typography.titleSmall, color = PosColors.Indigo700)
-                            if (splitDigitalMethod == "GCash" && splitDigital > 0.0) {
+                            PaymentMethod.GCash -> {
                                 MerchantQrCard(qrState = resolvedQr, compact = true)
+                                OutlinedTextField(
+                                    value = refNo,
+                                    onValueChange = { refNo = it },
+                                    label = { Text("GCash Reference # (Optional)") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
-                            OutlinedTextField(value = refNo, onValueChange = { refNo = it }, label = { Text("Digital Ref #") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        }
-                        PaymentMethod.Utang -> {
-                            OutlinedTextField(
-                                value = utangDueDate,
-                                onValueChange = { utangDueDate = it },
-                                label = { Text("Due Date (YYYY-MM-DD, Optional)") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = allowOverLimit, onCheckedChange = { allowOverLimit = it })
-                                Text("Override credit limit if exceeded", fontSize = 12.sp)
+                            PaymentMethod.Card -> {
+                                OutlinedTextField(
+                                    value = refNo,
+                                    onValueChange = { refNo = it },
+                                    label = { Text("Approval / Trace #") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            PaymentMethod.Split -> {
+                                OutlinedTextField(
+                                    value = splitCashStr,
+                                    onValueChange = { splitCashStr = it },
+                                    label = { Text("Cash Portion (₱)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf("GCash", "Card").forEach { dm ->
+                                        FilterChip(selected = splitDigitalMethod == dm, onClick = { splitDigitalMethod = dm }, label = { Text(dm) })
+                                    }
+                                }
+                                Text("Digital Balance Due: ${PosMath.formatPeso(splitDigital)}", style = MaterialTheme.typography.titleSmall, color = PosColors.Indigo700)
+                                if (splitDigitalMethod == "GCash" && splitDigital > 0.0) {
+                                    MerchantQrCard(qrState = resolvedQr, compact = true)
+                                }
+                                OutlinedTextField(value = refNo, onValueChange = { refNo = it }, label = { Text("Digital Ref #") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            }
+                            PaymentMethod.Utang -> {
+                                OutlinedTextField(
+                                    value = utangDueDate,
+                                    onValueChange = { utangDueDate = it },
+                                    label = { Text("Due Date (YYYY-MM-DD, Optional)") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = allowOverLimit, onCheckedChange = { allowOverLimit = it })
+                                    Text("Override credit limit if exceeded", fontSize = 12.sp)
+                                }
                             }
                         }
                     }
-                }
 
-                HorizontalDivider(color = PosColors.Slate200)
-                Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { vm.closeCheckout() }, modifier = Modifier.weight(0.35f).heightIn(min = 48.dp)) { Text("Cancel") }
-                    Button(
-                        onClick = {
-                            vm.completeSale(
-                                paymentMethod = method,
-                                tendered = cashVal,
-                                refNo = refNo,
-                                seniorId = seniorId,
-                                customerId = selectedCustomerId,
-                                pointsRedeemedRequested = redemption.pointsUsed,
-                                utangDueDate = utangDueDate,
-                                allowOverLimit = allowOverLimit,
-                                splitCash = splitCash,
-                                splitDigitalMethod = splitDigitalMethod
-                            )
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = PosColors.Emerald600),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(0.65f)
-                            .heightIn(min = 48.dp)
-                            .testTag("chk_confirm_pay_btn")
-                    ) {
-                        Text("COMPLETE SALE (${PosMath.formatPeso(finalDue)})", fontWeight = FontWeight.ExtraBold)
+                    if (isWideDialog) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) { leftOptions() }
+                            Column(
+                                modifier = Modifier.weight(0.5f).verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) { rightTender() }
+                        }
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .verticalScroll(rememberScrollState())
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            leftOptions()
+                            rightTender()
+                        }
+                    }
+
+                    HorizontalDivider(color = PosColors.Slate200)
+                    Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { vm.closeCheckout() }, modifier = Modifier.weight(0.35f).heightIn(min = 48.dp)) { Text("Cancel") }
+                        Button(
+                            onClick = {
+                                vm.completeSale(
+                                    paymentMethod = method,
+                                    tendered = cashVal,
+                                    refNo = refNo,
+                                    seniorId = seniorId,
+                                    customerId = selectedCustomerId,
+                                    pointsRedeemedRequested = redemption.pointsUsed,
+                                    utangDueDate = utangDueDate,
+                                    allowOverLimit = allowOverLimit,
+                                    splitCash = splitCash,
+                                    splitDigitalMethod = splitDigitalMethod
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PosColors.Emerald600),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(0.65f)
+                                .heightIn(min = 48.dp)
+                                .testTag("chk_confirm_pay_btn")
+                        ) {
+                            Text("COMPLETE SALE (${PosMath.formatPeso(finalDue)})", fontWeight = FontWeight.ExtraBold)
+                        }
                     }
                 }
             }

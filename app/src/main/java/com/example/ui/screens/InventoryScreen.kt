@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,8 +17,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -298,30 +300,48 @@ fun InventoryScreen(vm: PosViewModel) {
             }
         }
 
-        // Inventory Rows List
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        // Inventory Grid (1 col phone, 2 cols tablet)
+        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            val cols = if (maxWidth >= 720.dp) 2 else 1
             if (filteredList.isEmpty()) {
-                item {
-                    Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                        Text("No products match this filter", color = PosColors.Slate500)
+                Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Rounded.Inventory, contentDescription = null, tint = PosColors.Slate300, modifier = Modifier.size(44.dp))
+                        Text("No products match this filter", style = MaterialTheme.typography.titleSmall, color = PosColors.Slate600)
+                        if (invSearch.isNotBlank() || invCategory != "All" || invStockFilter != StockFilter.ALL) {
+                            OutlinedButton(
+                                onClick = {
+                                    vm.setInvSearch("")
+                                    vm.setInvCategory("All")
+                                    vm.setInvStockFilter(StockFilter.ALL)
+                                },
+                                modifier = Modifier.heightIn(min = 44.dp)
+                            ) {
+                                Text("Reset Filters")
+                            }
+                        }
                     }
                 }
             } else {
-                items(filteredList, key = { it.id }) { prod ->
-                    InventoryRowCard(
-                        product = prod,
-                        globalLowTh = settings.lowStockThreshold,
-                        expiryStatus = expiryMap[prod.id],
-                        avgDailySales = velocity.byId[prod.id]?.avgDaily ?: 0.0,
-                        daysOfCover = velocity.byId[prod.id]?.daysOfCover,
-                        onAdjustStock = { vm.openStockAdjust(prod.id) },
-                        onEdit = { vm.openProductModal(prod.id) },
-                        onDelete = { vm.askDeleteProduct(prod.id) }
-                    )
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(cols),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(filteredList, key = { it.id }) { prod ->
+                        InventoryRowCard(
+                            product = prod,
+                            globalLowTh = settings.lowStockThreshold,
+                            expiryStatus = expiryMap[prod.id],
+                            avgDailySales = velocity.byId[prod.id]?.avgDaily ?: 0.0,
+                            daysOfCover = velocity.byId[prod.id]?.daysOfCover,
+                            onAdjustStock = { vm.openStockAdjust(prod.id) },
+                            onEdit = { vm.openProductModal(prod.id) },
+                            onDelete = { vm.askDeleteProduct(prod.id) }
+                        )
+                    }
                 }
             }
         }
@@ -452,7 +472,7 @@ private fun InventoryRowCard(
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
-                            .heightIn(min = 40.dp)
+                            .heightIn(min = 44.dp)
                             .testTag("inv_adj_${product.id}")
                     ) {
                         Text("+/- Stock", fontSize = 11.sp)

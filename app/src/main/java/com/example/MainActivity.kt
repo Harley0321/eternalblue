@@ -4,9 +4,12 @@ import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -28,6 +31,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.hardware.AndroidDeviceBridge
+import com.example.model.ScannerMode
 import com.example.model.TabName
 import com.example.ui.components.PosBottomBar
 import com.example.ui.components.PosNavigationRail
@@ -108,6 +112,7 @@ private fun EternalBluePosApp(
                     storeIcon = settings.storeIcon,
                     activeCashierName = activeShift?.cashierName,
                     hasPin = hasPin,
+                    isWideLayout = isWideLayout,
                     onOpenAssistant = { vm.openAssistant() },
                     onOpenSettings = { vm.openSettingsTab() },
                     onLockTerminal = { vm.lockTerminal() }
@@ -136,17 +141,27 @@ private fun EternalBluePosApp(
                         lowStockCount = lowStockCount,
                         outOfStockCount = outOfStockCount,
                         overdueUtangCount = overdueUtangCount,
+                        onQuickScan = {
+                            vm.selectTab(TabName.pos)
+                            vm.openScanner(ScannerMode.pos, continuous = true)
+                        },
                         onSelectTab = { vm.selectTab(it) }
                     )
                 }
 
                 Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                    when (activeTab) {
-                        TabName.pos -> PosScreen(vm = vm, isWideLayout = isWideLayout)
-                        TabName.inventory -> InventoryScreen(vm = vm)
-                        TabName.operations -> OperationsScreen(vm = vm)
-                        TabName.sales -> SalesScreen(vm = vm)
-                        TabName.settings -> SettingsScreen(vm = vm)
+                    Crossfade(
+                        targetState = activeTab,
+                        animationSpec = tween(durationMillis = 160),
+                        label = "main_tab_crossfade"
+                    ) { tab ->
+                        when (tab) {
+                            TabName.pos -> PosScreen(vm = vm, isWideLayout = isWideLayout)
+                            TabName.inventory -> InventoryScreen(vm = vm)
+                            TabName.operations -> OperationsScreen(vm = vm)
+                            TabName.sales -> SalesScreen(vm = vm)
+                            TabName.settings -> SettingsScreen(vm = vm)
+                        }
                     }
                 }
             }
@@ -207,7 +222,10 @@ private fun EternalBluePosApp(
 
         ToastOverlay(
             toasts = toasts,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 84.dp)
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = if (isWideLayout) 20.dp else 88.dp)
         )
     }
 }
