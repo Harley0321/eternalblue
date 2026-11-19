@@ -9,6 +9,8 @@ coverage/
 .playwright-cli/
 .aistudio/
 dev-dist/
+.gradle/
+app/src/main/assets/web/
 r1-*.png
 r2-*.png
 debug-*.png

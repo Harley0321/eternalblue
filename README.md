@@ -1,15 +1,18 @@
-# EternalBlue POS (Android)
+# EternalBlue POS (Web / React)
 
-Offline-first Philippine Supermarket & Sari-Sari Point of Sale, Inventory, Barcode Scanner, Operations & Suki Ledger, and Sales Analytics application built with **Kotlin**, **Jetpack Compose (Material 3)**, **SQLite**, **CameraX + ML Kit**, and **ZXing**.
+Offline-first Philippine Supermarket & Sari-Sari Point of Sale, Inventory, Barcode Scanner, Operations & Suki Ledger, and Sales Analytics application built with **React**, **TypeScript**, **Vite**, **Tailwind CSS**, **ZXing (`@zxing/browser`)**, **QRCode**, and **Web Crypto API**.
 
 ## Core Features
-- **Point of Sale (POS)**: Search & barcode scan checkout, category filter chips, Retail & Wholesale price tiers with below-capital guard, PH SC/PWD 5% discount with configurable weekly cap, Hold/Recall orders, and multi-method checkout (Cash with quick bills, GCash / QR Ph dynamic CRC-16 EMVCo QR, Card, Split, and Utang).
+- **Point of Sale (POS)**: Search & barcode scan checkout (WebRTC camera scanner + manual fallback), category filter chips, Retail & Wholesale price tiers with below-capital guard, PH SC/PWD 5% discount with configurable weekly cap, Hold/Recall orders, Web Audio API scanner beep, and multi-method checkout (Cash with quick bills, GCash / QR Ph dynamic CRC-16 EMVCo QR, Card, Split, and Utang).
 - **Inventory & Audit**: Clickable Stock Health KPIs (All, Low, Out, Fast-Low, Expiring), Batch Receive & Physical Cycle Count, Stock Movement Log, Product Add/Edit with EAN-13 generator, and Quick Stock Adjustment.
-- **Operations & Suki (`Ops & Suki`)**: Suki Customer & Utang Ledger with SMS reminders, Bulk-to-Tingi Repack Rules with weighted-average capital calculation, Shift & Cash Drawer (`Gastos` / `Float` / `Drop`), GCash/Maya/E-Load/Bills Pay fee logger, and Thermal Receipt / Shelf Label CSV export.
-- **Sales Analytics & Security**: Net Revenue & Profit KPIs, 7-day daily sales trend, PH Cash Denomination Counter, Void Receipt with stock restoration, PBKDF2-HMAC-SHA256 Manager PIN lock, hash-chained security audit log, JSON backup export, and offline bilingual (EN / Tagalog) Store AI.
+- **Operations & Suki (`Ops & Suki`)**: Suki Customer & Utang Ledger with SMS reminders, Bulk-to-Tingi Repack Rules with weighted-average capital calculation, Shift & Cash Drawer (`Gastos` / `Float` / `Drop`), GCash/Maya/E-Load/Bills Pay fee logger, and Thermal Receipt formatting (58mm/80mm) & Shelf Label CSV export.
+- **Sales Analytics & Security**: Net Revenue & Profit KPIs, 7-day daily sales trend, PH Cash Denomination Counter, Void Receipt with stock restoration, PBKDF2-HMAC-SHA256 Manager PIN lock, hash-chained security audit log, JSON backup export/restore, and offline bilingual (EN / Tagalog) Store AI.
+- **Resilient Local Persistence**: Browser `localStorage` persistence with primary + shadow (`__prev`) recovery, corrupt backup preservation, and pinned store identity.
 
-## Build
+## Scripts
 ```bash
-gradle assembleDebug
+npm install
+npm run dev      # Starts Vite dev server on http://0.0.0.0:3000
+npm run lint     # Runs TypeScript type checking (tsc --noEmit)
+npm run build    # Builds production bundle into dist/
 ```
-Output APK: `app/build/outputs/apk/debug/app-debug.apk`

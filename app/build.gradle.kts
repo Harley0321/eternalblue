@@ -1,7 +1,5 @@
 plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.serialization)
+    id("com.android.application")
 }
 
 android {
@@ -9,17 +7,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
-        val resolvedVersionCode = ciRunNumber ?: 1
-        val resolvedVersionName = if (ciRunNumber != null) "2.3.$ciRunNumber" else "2.3.0"
-        val resolvedGithubRepo = (System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() } ?: "Harley0321/eternalblue").replace("\"", "")
-
         applicationId = "com.aistudio.eternalbluepos.kxmpzq"
         minSdk = 26
         targetSdk = 36
-        versionCode = resolvedVersionCode
-        versionName = resolvedVersionName
-        buildConfigField("String", "GITHUB_REPO", "\"$resolvedGithubRepo\"")
+        versionCode = 1
+        versionName = "2.3.0"
     }
 
     signingConfigs {
@@ -29,33 +21,9 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
-        create("releaseConfig") {
-            val relPath = System.getenv("RELEASE_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
-            if (relPath != null && file(relPath).exists()) {
-                storeFile = file(relPath)
-                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD") ?: ""
-                keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: ""
-                keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: ""
-            } else {
-                storeFile = file("${rootDir}/debug.keystore")
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
-            }
-        }
     }
 
     buildTypes {
-        release {
-            isDebuggable = false
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            signingConfig = signingConfigs.getByName("releaseConfig")
-        }
         debug {
             signingConfig = signingConfigs.getByName("debugConfig")
         }
@@ -66,38 +34,29 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
 
-    buildFeatures {
-        compose = true
-        buildConfig = true
-    }
-
     lint {
         abortOnError = true
         checkReleaseBuilds = false
     }
 }
 
+val buildWebApp = tasks.register<Exec>("buildWebApp") {
+    workingDir = rootProject.projectDir
+    val npmBin = if (file("/usr/local/bin/npm").exists()) "/usr/local/bin/npm" else "npm"
+    commandLine(npmBin, "run", "build")
+}
+
+val syncWebAssets = tasks.register<Sync>("syncWebAssets") {
+    dependsOn(buildWebApp)
+    from(rootProject.layout.projectDirectory.dir("dist"))
+    into(layout.projectDirectory.dir("src/main/assets/web"))
+}
+
+tasks.named("preBuild") {
+    dependsOn(syncWebAssets)
+}
+
 dependencies {
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.activity.compose)
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material3.window.size)
-    implementation(libs.androidx.compose.material.icons.extended)
-    implementation(libs.androidx.navigation.compose)
-    implementation(libs.kotlinx.serialization.json)
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-    implementation(libs.androidx.camera.mlkit.vision)
-    implementation(libs.mlkit.barcode.scanning)
-    implementation(libs.zxing.core)
-    implementation(libs.androidx.biometric)
+    implementation("androidx.core:core-ktx:1.16.0")
+    implementation("androidx.activity:activity:1.10.1")
 }
