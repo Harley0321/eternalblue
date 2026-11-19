@@ -157,6 +157,8 @@ interface PosContextValue {
   runRepackRule: (rule: RepackRule, masterQty: number) => void;
   recordDrawerEvent: (type: string, category: string, amount: number, note: string) => void;
   startShift: (cashier: CashierAccount, openingFloat: number) => void;
+  addCashierAccount: (name: string, role: 'owner' | 'cashier') => void;
+  deleteCashierAccount: (id: string) => void;
   recordDigitalService: (kind: string, amount: number, fee: number, phone: string, ref: string) => void;
   requestVoidSale: (sale: SaleRecord) => void;
   closeVoidSale: () => void;
@@ -1131,6 +1133,70 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [recordDrawerEvent, toast]
   );
 
+  const addCashierAccount = useCallback(
+    (name: string, role: 'owner' | 'cashier') => {
+      const clean = name.trim();
+      if (!clean) {
+        toast('Enter an Owner or Cashier name', 'WARNING');
+        return;
+      }
+      const st = stateRef.current;
+      const duplicate = st.cashiers.some(
+        (c) => c.name.trim().toLowerCase() === clean.toLowerCase()
+      );
+      if (duplicate) {
+        toast(`"${clean}" already exists`, 'WARNING');
+        return;
+      }
+      const account: CashierAccount = {
+        id: `cashier-${role}-${Date.now()}`,
+        name: clean,
+        role: role === 'owner' ? 'owner' : 'cashier',
+        active: true,
+        createdAt: new Date().toISOString(),
+      };
+      const next = [...st.cashiers, account];
+      PosRepository.saveCashiers(next);
+      setState((s) => ({ ...s, cashiers: next }));
+      toast(`Added ${role === 'owner' ? 'Owner' : 'Cashier'}: ${clean}`);
+    },
+    [toast]
+  );
+
+  const deleteCashierAccount = useCallback(
+    (id: string) => {
+      const st = stateRef.current;
+      if (st.cashiers.length <= 1) {
+        toast('At least one Owner or Cashier is required', 'WARNING');
+        return;
+      }
+      const target = st.cashiers.find((c) => c.id === id);
+      if (!target) return;
+      const next = st.cashiers.filter((c) => c.id !== id);
+      PosRepository.saveCashiers(next);
+
+      let nextShift = st.activeShift;
+      if (st.activeShift?.cashierId === id) {
+        const fallback = next[0];
+        nextShift = fallback
+          ? {
+              shiftId: `SHIFT-${Date.now()}`,
+              cashierId: fallback.id,
+              cashierName: fallback.name,
+              cashierRole: fallback.role,
+              openedAt: new Date().toISOString(),
+              openingFloat: st.activeShift.openingFloat,
+            }
+          : null;
+        PosRepository.saveActiveShift(nextShift);
+      }
+
+      setState((s) => ({ ...s, cashiers: next, activeShift: nextShift }));
+      toast(`Deleted ${target.name}`);
+    },
+    [toast]
+  );
+
   const recordDigitalService = useCallback(
     (kind: string, amount: number, fee: number, phone: string, ref: string) => {
       if (amount <= 0) {
@@ -1618,6 +1684,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     runRepackRule,
     recordDrawerEvent,
     startShift,
+    addCashierAccount,
+    deleteCashierAccount,
     recordDigitalService,
     requestVoidSale,
     closeVoidSale,

@@ -1,8 +1,18 @@
 import { PosMath } from '../domain/posMath';
 
+export interface NativeUpdateManifest {
+  versionCode?: number;
+  versionName?: string;
+  tagName?: string;
+  apkUrl?: string;
+  sha256?: string;
+  releaseUrl?: string;
+}
+
 export interface AndroidPosBridgeApi {
   isAndroidHost?: () => boolean;
   getInstalledVersionInfo?: () => string;
+  fetchUpdateManifestNative?: (repoSlug: string, callbackId: string) => void;
   downloadAndInstallApk?: (
     apkUrl: string,
     fileName: string,
@@ -23,7 +33,30 @@ declare global {
   interface Window {
     AndroidPosBridge?: AndroidPosBridgeApi;
     __onAndroidUpdateProgress?: (event: UpdateProgressEvent) => void;
+    __onAndroidManifestResult?: (callbackId: string, jsonStr: string | null, errorMsg: string | null) => void;
   }
+}
+
+const pendingManifestCallbacks = new Map<
+  string,
+  { resolve: (val: NativeUpdateManifest | null) => void }
+>();
+
+if (typeof window !== 'undefined') {
+  window.__onAndroidManifestResult = (callbackId, jsonStr) => {
+    const pending = pendingManifestCallbacks.get(callbackId);
+    if (!pending) return;
+    pendingManifestCallbacks.delete(callbackId);
+    if (!jsonStr) {
+      pending.resolve(null);
+      return;
+    }
+    try {
+      pending.resolve(JSON.parse(jsonStr) as NativeUpdateManifest);
+    } catch {
+      pending.resolve(null);
+    }
+  };
 }
 
 let audioCtx: AudioContext | null = null;
@@ -39,6 +72,12 @@ export const DeviceBridge = {
 
   isAndroidBrowser(): boolean {
     return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  },
+
+  isAppleMobileBrowser(): boolean {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent;
+    return /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   },
 
   getInstalledVersionInfo(): { versionName: string; versionCode: number } {
@@ -58,6 +97,33 @@ export const DeviceBridge = {
       versionName: PosMath.APP_VERSION,
       versionCode: PosMath.BUILD_CODE,
     };
+  },
+
+  fetchUpdateManifestNative(repoSlug: string): Promise<NativeUpdateManifest | null> {
+    const fn = window.AndroidPosBridge?.fetchUpdateManifestNative;
+    if (!fn) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const cbId = `m_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const timer = setTimeout(() => {
+        if (pendingManifestCallbacks.has(cbId)) {
+          pendingManifestCallbacks.delete(cbId);
+          resolve(null);
+        }
+      }, 12_000);
+      pendingManifestCallbacks.set(cbId, {
+        resolve: (val) => {
+          clearTimeout(timer);
+          resolve(val);
+        },
+      });
+      try {
+        fn.call(window.AndroidPosBridge, repoSlug, cbId);
+      } catch {
+        clearTimeout(timer);
+        pendingManifestCallbacks.delete(cbId);
+        resolve(null);
+      }
+    });
   },
 
   downloadAndInstallAndroidApk(
@@ -95,6 +161,7 @@ export const DeviceBridge = {
   triggerRemoteDownload(url: string, fileName?: string): void {
     const a = document.createElement('a');
     a.href = url;
+    a.target = '_blank';
     if (fileName) a.download = fileName;
     a.rel = 'noopener noreferrer';
     document.body.appendChild(a);

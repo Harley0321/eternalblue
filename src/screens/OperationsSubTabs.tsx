@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
+import { Trash2, UserPlus } from 'lucide-react';
 import { KpiCard } from '../components/CommonGraphics';
 import { OpsMath } from '../domain/opsMath';
 import { PosMath } from '../domain/posMath';
 import { DeviceBridge } from '../hardware/deviceBridge';
 import { usePos } from '../state/PosContext';
-import type { SukiCustomer } from '../types/pos';
+import type { CashierAccount, SukiCustomer } from '../types/pos';
 
 export const UtangSubTab: React.FC = () => {
   const { state, addSukiCustomer, recordUtangPayment, toast } = usePos();
@@ -254,10 +255,13 @@ export const RepackSubTab: React.FC = () => {
 };
 
 export const ShiftSubTab: React.FC = () => {
-  const { state, startShift, recordDrawerEvent } = usePos();
+  const { state, startShift, addCashierAccount, deleteCashierAccount, recordDrawerEvent } = usePos();
   const [evType, setEvType] = useState('expense');
   const [evAmt, setEvAmt] = useState('');
   const [evNote, setEvNote] = useState('');
+  const [staffName, setStaffName] = useState('');
+  const [staffRole, setStaffRole] = useState<'owner' | 'cashier'>('cashier');
+  const [confirmDeleteStaff, setConfirmDeleteStaff] = useState<CashierAccount | null>(null);
 
   const startToday = PosMath.startOfDayMs();
   const endToday = startToday + PosMath.DAY_MS;
@@ -274,6 +278,13 @@ export const ShiftSubTab: React.FC = () => {
     [state.sales, state.drawerEvents, state.utangTransactions, state.digitalServices, startToday, endToday]
   );
 
+  const handleAddStaff = () => {
+    const clean = staffName.trim();
+    if (!clean) return;
+    addCashierAccount(clean, staffRole);
+    setStaffName('');
+  };
+
   return (
     <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
       <div className="grid grid-cols-2 gap-2">
@@ -282,25 +293,138 @@ export const ShiftSubTab: React.FC = () => {
       </div>
 
       <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3 space-y-2.5">
-        <h3 className="font-bold text-sm text-[#0F172A]">Switch Active Cashier Shift</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-bold text-sm text-[#0F172A]">Switch Active Cashier Shift</h3>
+          <span className="text-[10px] font-semibold text-[#64748B]">
+            {state.cashiers.length} account{state.cashiers.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
         <div className="flex flex-wrap gap-2">
           {state.cashiers.map((c) => {
             const active = state.activeShift?.cashierId === c.id;
+            const isOwner = c.role === 'owner' || c.role === 'manager';
+            const canDelete = state.cashiers.length > 1;
             return (
-              <button
+              <div
                 key={c.id}
-                type="button"
-                onClick={() => startShift(c, 1500)}
-                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                className={`inline-flex items-center rounded-lg border overflow-hidden ${
                   active
-                    ? 'bg-[#ECFDF5] border-[#059669] text-[#047857]'
-                    : 'bg-white border-[#E2E8F0] text-[#64748B]'
+                    ? 'bg-[#ECFDF5] border-[#059669]'
+                    : 'bg-white border-[#E2E8F0]'
                 }`}
               >
-                {c.name}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => startShift(c, 1500)}
+                  className={`px-3 py-1.5 text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer ${
+                    active ? 'text-[#047857]' : 'text-[#0F172A] hover:bg-slate-50'
+                  }`}
+                >
+                  <span>{c.name}</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${
+                      isOwner
+                        ? 'bg-[#EEF2FF] text-[#4F46E5]'
+                        : 'bg-slate-100 text-[#64748B]'
+                    }`}
+                  >
+                    {isOwner ? 'Owner' : 'Cashier'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canDelete}
+                  aria-label={`Delete ${c.name}`}
+                  title={canDelete ? `Delete ${c.name}` : 'At least one account is required'}
+                  onClick={() => setConfirmDeleteStaff(c)}
+                  className={`px-2 py-1.5 border-l ${
+                    active ? 'border-[#059669]/25' : 'border-[#E2E8F0]'
+                  } ${
+                    canDelete
+                      ? 'text-[#64748B] hover:text-[#E11D48] hover:bg-rose-50 cursor-pointer'
+                      : 'text-slate-300 cursor-not-allowed'
+                  }`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
             );
           })}
+        </div>
+
+        {confirmDeleteStaff && (
+          <div className="rounded-xl bg-rose-50 border border-[#E11D48]/30 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-[#0F172A]">
+              Delete <span className="font-bold">{confirmDeleteStaff.name}</span>?
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteStaff(null)}
+                className="px-2.5 py-1 rounded-lg bg-white border border-[#E2E8F0] text-[11px] font-semibold text-[#64748B] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  deleteCashierAccount(confirmDeleteStaff.id);
+                  setConfirmDeleteStaff(null);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-[#E11D48] text-white text-[11px] font-bold cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-xl bg-slate-50 border border-[#E2E8F0] p-2.5 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-[#0F172A] inline-flex items-center gap-1">
+              <UserPlus size={13} className="text-[#059669]" />
+              Add Owner / Cashier
+            </span>
+            <div className="inline-flex rounded-lg border border-[#E2E8F0] bg-white p-0.5">
+              {(['cashier', 'owner'] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setStaffRole(r)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer transition-colors ${
+                    staffRole === r
+                      ? r === 'owner'
+                        ? 'bg-[#EEF2FF] text-[#4F46E5]'
+                        : 'bg-[#ECFDF5] text-[#047857]'
+                      : 'text-[#64748B]'
+                  }`}
+                >
+                  {r === 'owner' ? 'Owner' : 'Cashier'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={staffName}
+              onChange={(e) => setStaffName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleAddStaff();
+              }}
+              placeholder={staffRole === 'owner' ? 'Owner Name' : 'Cashier Name'}
+              className="flex-1 min-w-0 px-3 py-2 text-xs rounded-xl border border-[#E2E8F0] bg-white focus:outline-none focus:border-[#059669]"
+            />
+            <button
+              type="button"
+              disabled={!staffName.trim()}
+              onClick={handleAddStaff}
+              className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:bg-slate-300 text-white text-xs font-bold shrink-0 cursor-pointer disabled:cursor-not-allowed"
+            >
+              Add {staffRole === 'owner' ? 'Owner' : 'Cashier'}
+            </button>
+          </div>
         </div>
 
         <div className="border-t border-[#E2E8F0] pt-2" />

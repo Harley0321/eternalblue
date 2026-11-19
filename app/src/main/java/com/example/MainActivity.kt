@@ -410,8 +410,20 @@ class MainActivity : ComponentActivity() {
                 setDataAndType(contentUri, "application/vnd.android.package-archive")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
             }
-            startActivity(intent)
+            try {
+                startActivity(intent)
+            } catch (_: Exception) {
+                @Suppress("DEPRECATION")
+                val fallback = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+                    data = contentUri
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
+                }
+                startActivity(fallback)
+            }
         } catch (e: Exception) {
             emitUpdateEvent("ERROR", 0, "Could not launch installer: ${e.message ?: "error"}")
         }
@@ -497,6 +509,48 @@ class MainActivity : ComponentActivity() {
                 }.toString()
             } catch (_: Exception) {
                 """{"versionName":"2.3.0","versionCode":1}"""
+            }
+        }
+
+        @JavascriptInterface
+        fun fetchUpdateManifestNative(repoSlug: String, callbackId: String) {
+            val clean = repoSlug.trim().removePrefix("https://github.com/").removeSuffix(".git").trim('/')
+            val safeCb = JSONObject.quote(callbackId)
+            if (!clean.contains('/')) {
+                runOnUiThread {
+                    if (this@MainActivity::webView.isInitialized) {
+                        webView.evaluateJavascript(
+                            "window.__onAndroidManifestResult && window.__onAndroidManifestResult($safeCb, null, 'Invalid repo');",
+                            null
+                        )
+                    }
+                }
+                return
+            }
+            ioExecutor.execute {
+                try {
+                    val manifestUrl = "https://github.com/$clean/releases/latest/download/update-manifest.json"
+                    val json = fetchTextFollowingRedirects(manifestUrl)
+                    val quotedJson = JSONObject.quote(json)
+                    runOnUiThread {
+                        if (this@MainActivity::webView.isInitialized) {
+                            webView.evaluateJavascript(
+                                "window.__onAndroidManifestResult && window.__onAndroidManifestResult($safeCb, $quotedJson, null);",
+                                null
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    val err = JSONObject.quote(e.message ?: "Fetch failed")
+                    runOnUiThread {
+                        if (this@MainActivity::webView.isInitialized) {
+                            webView.evaluateJavascript(
+                                "window.__onAndroidManifestResult && window.__onAndroidManifestResult($safeCb, null, $err);",
+                                null
+                            )
+                        }
+                    }
+                }
             }
         }
 

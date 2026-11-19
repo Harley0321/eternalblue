@@ -1,3 +1,5 @@
+import { DeviceBridge } from '../hardware/deviceBridge';
+
 export type SyncStatus = 'UPDATE_AVAILABLE' | 'UP_TO_DATE' | 'NO_RELEASE_APK_YET' | 'ERROR';
 
 export interface ReleaseInfo {
@@ -72,7 +74,38 @@ export const GitHubUpdateChecker = {
       };
     }
 
-    const releasesPageUrl = `https://github.com/${clean}/releases`;
+    const releasesPageUrl = `https://github.com/${clean}/releases/latest`;
+
+    if (DeviceBridge.isAndroidHost()) {
+      const nativeManifest = await DeviceBridge.fetchUpdateManifestNative(clean);
+      if (nativeManifest && (nativeManifest.tagName || nativeManifest.versionName)) {
+        const tag = String(nativeManifest.tagName || `v${nativeManifest.versionName ?? currentVersion}`);
+        const remoteCode = Number(nativeManifest.versionCode) || 0;
+        const newerByName = GitHubUpdateChecker.isVersionNewer(
+          nativeManifest.versionName || tag,
+          currentVersion
+        );
+        const newerByCode = remoteCode > 0 && remoteCode > currentVersionCode;
+        const newer = newerByName || newerByCode;
+        const apkUrl = nativeManifest.apkUrl?.trim() || null;
+        const apkName = apkUrl ? apkUrl.split('/').pop() || `EternalBlue-POS-${tag}.apk` : null;
+        return {
+          repoSlug: clean,
+          status: newer ? 'UPDATE_AVAILABLE' : 'UP_TO_DATE',
+          tagName: tag,
+          versionCode: remoteCode || currentVersionCode,
+          htmlUrl: nativeManifest.releaseUrl?.trim() || releasesPageUrl,
+          apkDownloadUrl: apkUrl,
+          apkFileName: apkName,
+          manifestUrl: `https://github.com/${clean}/releases/latest/download/update-manifest.json`,
+          expectedSha256: nativeManifest.sha256?.trim() || null,
+          message: newer
+            ? `Update ${tag} is available.`
+            : `App is up to date (installed v${currentVersion}, latest ${tag}).`,
+          isNewer: newer,
+        };
+      }
+    }
 
     try {
       const latestResp = await fetch(`https://api.github.com/repos/${clean}/releases/latest`, {

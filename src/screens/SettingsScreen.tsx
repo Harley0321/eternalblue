@@ -101,18 +101,30 @@ export const SettingsScreen: React.FC = () => {
             </div>
           </div>
           {info.apkDownloadUrl && (
-            <button
-              type="button"
-              disabled={
-                state.updateProgress?.status === 'DOWNLOADING' ||
-                state.updateProgress?.status === 'VERIFYING'
-              }
-              onClick={installAppUpdate}
-              className="shrink-0 min-h-[38px] px-3.5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:opacity-60 text-white text-xs font-extrabold inline-flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <Download size={14} />
-              <span>{DeviceBridge.isAndroidHost() ? 'Install Update' : 'Download APK'}</span>
-            </button>
+            DeviceBridge.isAndroidHost() ? (
+              <button
+                type="button"
+                disabled={
+                  state.updateProgress?.status === 'DOWNLOADING' ||
+                  state.updateProgress?.status === 'VERIFYING'
+                }
+                onClick={installAppUpdate}
+                className="shrink-0 min-h-[38px] px-3.5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:opacity-60 text-white text-xs font-extrabold inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Download size={14} />
+                <span>Install Update</span>
+              </button>
+            ) : (
+              <a
+                href={info.apkDownloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 min-h-[38px] px-3.5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-extrabold inline-flex items-center justify-center gap-1.5"
+              >
+                <Download size={14} />
+                <span>Download APK</span>
+              </a>
+            )
           )}
         </div>
       )}
@@ -336,22 +348,36 @@ export const SettingsScreen: React.FC = () => {
         )}
 
         {info?.isNewer && info.apkDownloadUrl && (
-          <button
-            type="button"
-            disabled={
-              state.updateProgress?.status === 'DOWNLOADING' ||
-              state.updateProgress?.status === 'VERIFYING'
-            }
-            onClick={installAppUpdate}
-            className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:opacity-60 text-white text-xs font-extrabold inline-flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Download size={15} />
-            <span>
-              {DeviceBridge.isAndroidHost()
-                ? `Download & Install ${info.tagName}`
-                : `Download APK (${info.tagName})`}
-            </span>
-          </button>
+          DeviceBridge.isAndroidHost() ? (
+            <button
+              type="button"
+              disabled={
+                state.updateProgress?.status === 'DOWNLOADING' ||
+                state.updateProgress?.status === 'VERIFYING'
+              }
+              onClick={installAppUpdate}
+              className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:opacity-60 text-white text-xs font-extrabold inline-flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Download size={15} />
+              <span>Download &amp; Install {info.tagName}</span>
+            </button>
+          ) : (
+            <a
+              href={info.apkDownloadUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-extrabold inline-flex items-center justify-center gap-2"
+            >
+              <Download size={15} />
+              <span>Download Android APK ({info.tagName})</span>
+            </a>
+          )
+        )}
+
+        {!DeviceBridge.isAndroidHost() && DeviceBridge.isAppleMobileBrowser() && (
+          <p className="text-[11px] text-[#64748B]">
+            On iPhone/iPad, tap <span className="font-bold text-[#0F172A]">Reload Web App</span> to load the latest web version (APK files are for Android devices).
+          </p>
         )}
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
