@@ -1,18 +1,11 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,8 +14,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,40 +24,31 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Clear
-import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.ExpandMore
-import androidx.compose.material.icons.rounded.FlipToFront
-import androidx.compose.material.icons.rounded.PauseCircleOutline
-import androidx.compose.material.icons.rounded.QrCodeScanner
-import androidx.compose.material.icons.rounded.ReceiptLong
-import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.ShoppingBasket
-import androidx.compose.material.icons.rounded.Undo
-import androidx.compose.material.icons.rounded.Verified
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.PauseCircleOutline
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,395 +56,199 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.domain.InventoryFilter
 import com.example.domain.PosMath
 import com.example.domain.StockAlerts
 import com.example.model.CartLine
-import com.example.model.CartTotals
 import com.example.model.PriceType
 import com.example.model.Product
-import com.example.model.ScannerMode
-import com.example.ui.components.ProductIconBadge
-import com.example.ui.components.getCategoryIcon
-import com.example.ui.theme.PosColors
+import com.example.ui.components.ProductCategoryBadge
+import com.example.ui.theme.AmberWarn
+import com.example.ui.theme.EmeraldDark
+import com.example.ui.theme.EmeraldLightBg
+import com.example.ui.theme.EmeraldPrimary
+import com.example.ui.theme.IndigoAccent
+import com.example.ui.theme.RoseDanger
+import com.example.ui.theme.SlateBorder
+import com.example.ui.theme.SlateMuted
+import com.example.ui.theme.SlateSurface
+import com.example.ui.theme.SlateText
+import com.example.viewmodel.PosUiState
 import com.example.viewmodel.PosViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PosScreen(
-    vm: PosViewModel,
-    isWideLayout: Boolean
-) {
-    val products by vm.products.collectAsStateWithLifecycle()
-    val settings by vm.settings.collectAsStateWithLifecycle()
-    val cart by vm.cart.collectAsStateWithLifecycle()
-    val cartTotals by vm.cartTotals.collectAsStateWithLifecycle()
-    val priceMode by vm.priceMode.collectAsStateWithLifecycle()
-    val isSeniorPwd by vm.isSeniorPwd.collectAsStateWithLifecycle()
-    val posCategory by vm.posCategory.collectAsStateWithLifecycle()
-    val posSearch by vm.posSearch.collectAsStateWithLifecycle()
-    val heldOrders by vm.heldOrders.collectAsStateWithLifecycle()
-    val sales by vm.sales.collectAsStateWithLifecycle()
-    val lastVoidable by vm.lastVoidableSale.collectAsStateWithLifecycle()
-    val fastMoverIds by vm.fastMoverIds.collectAsStateWithLifecycle()
-    val productMap by vm.productMap.collectAsStateWithLifecycle()
-    val mobileCartOpen by vm.mobileCartOpen.collectAsStateWithLifecycle()
+fun PosScreen(state: PosUiState, vm: PosViewModel, isWide: Boolean) {
+    var mobileCartSheetOpen by remember { mutableStateOf(false) }
 
-    val categories = remember(products) {
-        val cats = products.map { it.category }.filter { it.isNotBlank() }.distinct()
-        listOf("All") + cats
+    val categories = remember(state.products) {
+        listOf("All") + state.products.map { it.category }.distinct().sorted()
     }
-
-    val filteredProducts = remember(products, posCategory, posSearch, settings.expiryWarnDays) {
-        val q = posSearch.trim()
-        products.filter { p ->
-            if (posCategory != "All" && p.category != posCategory) return@filter false
-            if (q.isNotEmpty() && !InventoryFilter.matchesInventorySearch(p, q)) return@filter false
-            true
+    val filteredProducts = remember(state.products, state.posSearch, state.posCategory) {
+        val q = state.posSearch.trim().lowercase()
+        state.products.filter { p ->
+            val matchCat = state.posCategory == "All" || p.category == state.posCategory
+            val matchQ = q.isEmpty() || p.name.lowercase().contains(q) || p.barcode.lowercase().contains(q)
+            matchCat && matchQ
         }
     }
 
-    val cartQtyMap = remember(cart) {
-        cart.groupBy { it.productId }.mapValues { (_, lines) -> lines.sumOf { it.qty } }
-    }
-
-    val itemCountText = remember(cart) {
-        val count = cart.sumOf { if (it.unit == "kg") 1.0 else it.qty }
-        if (count % 1.0 == 0.0) "${count.toInt()} item(s)" else "${PosMath.round3(count)} item(s)"
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            Column(
+    Row(modifier = Modifier.fillMaxSize().background(SlateSurface)) {
+        Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            // Search & Scanner bar
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
-                    .weight(if (isWideLayout) 0.62f else 1f)
-                    .fillMaxHeight()
+                    .fillMaxWidth()
+                    .background(Color.White)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
-                // Search & Barcode bar
-                Surface(color = Color.White, shadowElevation = 1.dp) {
-                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = posSearch,
-                                onValueChange = { vm.setPosSearch(it) },
-                                placeholder = { Text("Search or type 5*barcode", fontSize = 13.sp, maxLines = 1) },
-                                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = "Search") },
-                                trailingIcon = {
-                                    if (posSearch.isNotEmpty()) {
-                                        IconButton(onClick = { vm.setPosSearch("") }) {
-                                            Icon(Icons.Rounded.Clear, contentDescription = "Clear search")
-                                        }
-                                    }
-                                },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                                keyboardActions = KeyboardActions(onSearch = { vm.onPosSearchSubmit(posSearch) }),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    unfocusedContainerColor = PosColors.Slate50,
-                                    focusedContainerColor = Color.White
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("pos_search_input")
-                            )
-
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = PosColors.Slate900,
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { vm.openScanner(ScannerMode.pos, continuous = true) }
-                                    .testTag("pos_scan_button")
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Rounded.QrCodeScanner, contentDescription = "Scan Barcode", tint = Color.White)
-                                }
+                OutlinedTextField(
+                    value = state.posSearch,
+                    onValueChange = vm::setPosSearch,
+                    placeholder = { Text("Search product or barcode…", fontSize = 13.sp) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (state.posSearch.isNotEmpty()) {
+                            IconButton(onClick = { vm.setPosSearch("") }) {
+                                Icon(Icons.Filled.Clear, contentDescription = "Clear search")
                             }
                         }
-
-                        Spacer(Modifier.height(8.dp))
-
-                        // Price Mode + Quick Actions Row
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            FilterChip(
-                                selected = priceMode == PriceType.retail,
-                                onClick = { vm.setPriceMode(PriceType.retail) },
-                                label = { Text("Retail", fontWeight = FontWeight.Bold, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = PosColors.Emerald600,
-                                    selectedLabelColor = Color.White
-                                ),
-                                modifier = Modifier.testTag("pos_mode_retail")
-                            )
-                            FilterChip(
-                                selected = priceMode == PriceType.wholesale,
-                                onClick = { vm.setPriceMode(PriceType.wholesale) },
-                                label = { Text("Wholesale", fontWeight = FontWeight.Bold, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = PosColors.Indigo600,
-                                    selectedLabelColor = Color.White
-                                ),
-                                modifier = Modifier.testTag("pos_mode_wholesale")
-                            )
-                            FilterChip(
-                                selected = heldOrders.isNotEmpty(),
-                                onClick = { vm.openHeldModal() },
-                                leadingIcon = { Icon(Icons.Rounded.PauseCircleOutline, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                label = { Text("Parked (${heldOrders.size})", fontSize = 12.sp) },
-                                modifier = Modifier.testTag("pos_quick_parked")
-                            )
-                            if (sales.isNotEmpty()) {
-                                val latestSale = sales.lastOrNull()
-                                if (latestSale != null) {
-                                    FilterChip(
-                                        selected = false,
-                                        onClick = { vm.openReceipt(latestSale) },
-                                        leadingIcon = { Icon(Icons.Rounded.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                        label = { Text("Last Receipt", fontSize = 12.sp) },
-                                        modifier = Modifier.testTag("pos_quick_last_receipt")
-                                    )
-                                }
-                            }
-                            if (lastVoidable != null) {
-                                FilterChip(
-                                    selected = false,
-                                    onClick = { lastVoidable?.let { vm.openVoidSale(it) } },
-                                    leadingIcon = { Icon(Icons.Rounded.Undo, contentDescription = null, modifier = Modifier.size(16.dp), tint = PosColors.Rose600) },
-                                    label = { Text("Void Last", fontSize = 12.sp, color = PosColors.Rose700) },
-                                    modifier = Modifier.testTag("pos_quick_void")
-                                )
-                            }
-                            FilterChip(
-                                selected = false,
-                                onClick = { vm.openFlipCustomerDisplay() },
-                                leadingIcon = { Icon(Icons.Rounded.FlipToFront, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                label = { Text("Customer View", fontSize = 12.sp) },
-                                modifier = Modifier.testTag("pos_quick_customer_screen")
-                            )
-                        }
-
-                        // Category Chips Bar
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            categories.take(6).forEach { cat ->
-                                FilterChip(
-                                    selected = posCategory == cat,
-                                    onClick = { vm.setPosCategory(cat) },
-                                    leadingIcon = {
-                                        Icon(
-                                            getCategoryIcon(cat),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    },
-                                    label = { Text(cat, fontSize = 12.sp, maxLines = 1) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = PosColors.Slate900,
-                                        selectedLabelColor = Color.White,
-                                        selectedLeadingIconColor = PosColors.Emerald500
-                                    ),
-                                    modifier = Modifier.testTag("pos_cat_${cat.lowercase().replace(" ", "_")}")
-                                )
-                            }
-                            if (categories.size > 6) {
-                                OutlinedButton(
-                                    onClick = { vm.openCategorySheet() },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier
-                                        .height(34.dp)
-                                        .testTag("pos_cat_more_button")
-                                ) {
-                                    Text("More", fontSize = 12.sp)
-                                    Icon(Icons.Rounded.ExpandMore, contentDescription = "More categories", modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Product Grid
-                BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    val cols = when {
-                        maxWidth >= 920.dp -> 5
-                        maxWidth >= 680.dp -> 4
-                        maxWidth >= 460.dp -> 3
-                        else -> 2
-                    }
-                    if (filteredProducts.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                                Icon(Icons.Rounded.ShoppingBasket, contentDescription = null, tint = PosColors.Slate300, modifier = Modifier.size(48.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text("No matching products", style = MaterialTheme.typography.titleMedium, color = PosColors.Slate600)
-                                Text("Try another keyword or clear category filters", style = MaterialTheme.typography.bodySmall, color = PosColors.Slate500)
-                            }
-                        }
-                    } else {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(cols),
-                            contentPadding = PaddingValues(
-                                start = 12.dp,
-                                end = 12.dp,
-                                top = 12.dp,
-                                bottom = if (!isWideLayout && cart.isNotEmpty()) 96.dp else 16.dp
-                            ),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            items(filteredProducts, key = { it.id }) { prod ->
-                                val inCartQty = cartQtyMap[prod.id] ?: 0.0
-                                val isFast = prod.id in fastMoverIds
-                                PosProductCard(
-                                    product = prod,
-                                    priceMode = priceMode,
-                                    inCartQty = inCartQty,
-                                    isFastMover = isFast,
-                                    globalLowThreshold = settings.lowStockThreshold,
-                                    expiryWarnDays = settings.expiryWarnDays,
-                                    onClick = { vm.onProductClick(prod) }
-                                )
-                            }
-                        }
-                    }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = { vm.openScanner("pos") },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = IndigoAccent),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp)
+                ) {
+                    Icon(Icons.Filled.QrCodeScanner, contentDescription = "Scan Barcode")
+                    Spacer(Modifier.width(6.dp))
+                    Text("Scan", fontWeight = FontWeight.Bold)
                 }
             }
 
-            // Wide Screen Right Cart Column
-            if (isWideLayout) {
-                VerticalDivider(color = PosColors.Slate200)
-                Surface(
-                    color = Color.White,
-                    shadowElevation = 6.dp,
-                    modifier = Modifier
-                        .weight(0.38f)
-                        .fillMaxHeight()
-                ) {
-                    CartPaneContent(
-                        cart = cart,
-                        cartTotals = cartTotals,
-                        isSeniorPwd = isSeniorPwd,
-                        productMap = productMap,
-                        onToggleSenior = { vm.toggleSeniorPwd(it) },
-                        onChangeQty = { pid, d -> vm.changeCartQty(pid, d) },
-                        onSetQty = { pid, q -> vm.setCartQty(pid, q) },
-                        onSetPriceType = { pid, pt -> vm.setLinePriceType(pid, pt) },
-                        onUnlockWholesale = { pid, min -> vm.unlockWholesaleLine(pid, min) },
-                        onRemoveLine = { vm.removeCartLine(it) },
-                        onParkOrder = { vm.openHoldModal() },
-                        onClearCart = { vm.askClearCart() },
-                        onCheckout = { vm.openCheckout() }
+            // Categories
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                categories.forEach { cat ->
+                    FilterChip(
+                        selected = state.posCategory == cat,
+                        onClick = { vm.setPosCategory(cat) },
+                        label = { Text(cat, fontSize = 12.sp) }
                     )
                 }
             }
-        }
+            HorizontalDivider(color = SlateBorder)
 
-        // Compact Screen Sticky Floating Cart Summary Bar
-        AnimatedVisibility(
-            visible = !isWideLayout && cart.isNotEmpty(),
-            enter = slideInVertically(animationSpec = tween(200)) { it / 2 } + fadeIn(tween(180)),
-            exit = slideOutVertically(animationSpec = tween(160)) { it / 2 } + fadeOut(tween(140)),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-        ) {
-            Surface(
-                color = PosColors.Slate900,
-                shape = RoundedCornerShape(16.dp),
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { vm.openMobileCart() }
-                    .testTag("pos_mobile_cart_bar")
+            // Product Grid
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 156.dp),
+                contentPadding = PaddingValues(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                items(filteredProducts, key = { it.id }) { p ->
+                    val out = StockAlerts.isOutOfStock(p)
+                    val low = StockAlerts.isLowStock(p, state.settings)
+                    val inCartQty = state.cart.firstOrNull { it.productId == p.id }?.qty ?: 0.0
+                    ProductQuickCard(
+                        product = p,
+                        priceMode = state.priceMode,
+                        out = out,
+                        low = low,
+                        inCartQty = inCartQty,
+                        onClick = { vm.addToCart(p, 1.0) }
+                    )
+                }
+            }
+
+            // Compact Cart Sticky Footer (mobile / narrow screens)
+            if (!isWide) {
+                Surface(
+                    color = Color.White,
+                    shadowElevation = 8.dp,
+                    border = BorderStroke(1.dp, SlateBorder),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Surface(shape = RoundedCornerShape(8.dp), color = PosColors.Emerald600) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f).clickable { mobileCartSheetOpen = true }) {
                             Text(
-                                text = itemCountText,
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                "${state.cart.size} items • Tap to edit cart",
+                                fontSize = 11.sp,
+                                color = SlateMuted,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                PosMath.formatPeso(state.cartTotals.grandTotal),
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.Monospace,
+                                color = EmeraldDark
                             )
                         }
-                        Column {
-                            Text("View Basket", color = PosColors.Slate300, fontSize = 11.sp)
-                            Text(PosMath.formatPeso(cartTotals.grandTotal), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { mobileCartSheetOpen = true },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Filled.ShoppingCart, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Cart (${state.cart.size})")
+                            }
+                            Button(
+                                onClick = { vm.openCheckout() },
+                                enabled = state.cart.isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Charge", fontWeight = FontWeight.ExtraBold)
+                            }
                         }
-                    }
-
-                    Button(
-                        onClick = { vm.openCheckout() },
-                        colors = ButtonDefaults.buttonColors(containerColor = PosColors.Emerald500, contentColor = PosColors.Slate950),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier
-                            .heightIn(min = 48.dp)
-                            .testTag("pos_mobile_checkout_btn")
-                    ) {
-                        Text("Charge", fontWeight = FontWeight.ExtraBold)
                     }
                 }
             }
         }
+
+        // Tablet / Wide Right Cart Pane
+        if (isWide) {
+            Surface(
+                color = Color.White,
+                border = BorderStroke(1.dp, SlateBorder),
+                modifier = Modifier.width(360.dp).fillMaxHeight()
+            ) {
+                CartPanelContent(state = state, vm = vm)
+            }
+        }
     }
 
-    if (!isWideLayout && mobileCartOpen) {
-        ModalBottomSheet(
-            onDismissRequest = { vm.closeMobileCart() },
-            containerColor = Color.White
-        ) {
-            Box(modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp).imePadding()) {
-                CartPaneContent(
-                    cart = cart,
-                    cartTotals = cartTotals,
-                    isSeniorPwd = isSeniorPwd,
-                    productMap = productMap,
-                    onToggleSenior = { vm.toggleSeniorPwd(it) },
-                    onChangeQty = { pid, d -> vm.changeCartQty(pid, d) },
-                    onSetQty = { pid, q -> vm.setCartQty(pid, q) },
-                    onSetPriceType = { pid, pt -> vm.setLinePriceType(pid, pt) },
-                    onUnlockWholesale = { pid, min -> vm.unlockWholesaleLine(pid, min) },
-                    onRemoveLine = { vm.removeCartLine(it) },
-                    onParkOrder = { vm.closeMobileCart(); vm.openHoldModal() },
-                    onClearCart = { vm.askClearCart() },
-                    onCheckout = { vm.closeMobileCart(); vm.openCheckout() }
+    if (mobileCartSheetOpen && !isWide) {
+        ModalBottomSheet(onDismissRequest = { mobileCartSheetOpen = false }) {
+            Box(modifier = Modifier.fillMaxWidth().height(540.dp)) {
+                CartPanelContent(
+                    state = state,
+                    vm = vm,
+                    onCloseAfterAction = { mobileCartSheetOpen = false }
                 )
             }
         }
@@ -470,366 +256,299 @@ fun PosScreen(
 }
 
 @Composable
-private fun PosProductCard(
+private fun ProductQuickCard(
     product: Product,
     priceMode: PriceType,
+    out: Boolean,
+    low: Boolean,
     inCartQty: Double,
-    isFastMover: Boolean,
-    globalLowThreshold: Double,
-    expiryWarnDays: Int,
     onClick: () -> Unit
 ) {
-    val exp = remember(product.expiry, expiryWarnDays) { PosMath.expiryInfo(product, expiryWarnDays) }
-    val isExpired = exp.status == PosMath.ExpiryState.EXPIRED
-    val isOut = product.stock <= 0.0
-    val effLow = StockAlerts.getEffectiveLowStockThreshold(product, globalLowThreshold)
-    val isLow = !isOut && product.stock <= effLow
-    val showWhs = priceMode == PriceType.wholesale && product.wholesalePrice > 0 && product.wholesalePrice < product.retailPrice
-    val displayPrice = if (showWhs) product.wholesalePrice else product.retailPrice
-    val unavailable = isOut || isExpired
-
-    Surface(
+    val activePrice = if (priceMode == PriceType.wholesale && product.wholesalePrice > 0) {
+        product.wholesalePrice
+    } else {
+        product.retailPrice
+    }
+    Card(
         shape = RoundedCornerShape(14.dp),
-        color = if (inCartQty > 0.0) PosColors.Emerald50.copy(alpha = 0.45f) else Color.White,
-        border = BorderStroke(
-            width = if (inCartQty > 0.0) 2.dp else 1.dp,
-            color = if (inCartQty > 0.0) PosColors.Emerald500 else PosColors.Slate200
-        ),
-        shadowElevation = 1.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(if (unavailable) 0.55f else 1f)
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(enabled = !unavailable, onClick = onClick)
-            .testTag("pos_product_${product.id}")
+        colors = CardDefaults.cardColors(containerColor = if (out) Color(0xFFF8FAFC) else Color.White),
+        border = BorderStroke(if (inCartQty > 0) 1.5.dp else 1.dp, if (inCartQty > 0) EmeraldPrimary else SlateBorder),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = !out) { onClick() }
     ) {
-        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.padding(11.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
+                modifier = Modifier.fillMaxWidth()
             ) {
-                ProductIconBadge(product = product, size = 34.dp)
-                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    if (inCartQty > 0.0) {
-                        Surface(shape = RoundedCornerShape(8.dp), color = PosColors.Emerald600) {
-                            Text(
-                                text = "×${PosMath.formatQty(inCartQty)}",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    } else if (isFastMover) {
-                        Surface(shape = RoundedCornerShape(6.dp), color = PosColors.Amber50) {
-                            Text("FAST", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = PosColors.Amber700, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
-                        }
+                ProductCategoryBadge(category = product.category, size = 34.dp)
+                if (inCartQty > 0) {
+                    Surface(color = EmeraldPrimary, shape = RoundedCornerShape(8.dp)) {
+                        Text(
+                            PosMath.formatQty(inCartQty),
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        )
                     }
-                    if (isExpired) {
-                        Surface(shape = RoundedCornerShape(6.dp), color = PosColors.Rose100) {
-                            Text("EXPIRED", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = PosColors.Rose700, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
-                        }
-                    } else if (isOut) {
-                        Surface(shape = RoundedCornerShape(6.dp), color = PosColors.Rose100) {
-                            Text("OUT", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = PosColors.Rose700, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
-                        }
-                    } else if (isLow) {
-                        Surface(shape = RoundedCornerShape(6.dp), color = PosColors.Amber100) {
-                            Text("LOW ${PosMath.formatQty(product.stock)}", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = PosColors.Amber700, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
-                        }
+                } else {
+                    val stockColor = when {
+                        out -> RoseDanger
+                        low -> AmberWarn
+                        else -> SlateMuted
                     }
+                    Text(
+                        if (out) "OUT" else PosMath.formatQty(product.stock, product.unit),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = stockColor
+                    )
                 }
             }
-
+            Spacer(Modifier.height(8.dp))
             Text(
-                text = product.name,
-                style = MaterialTheme.typography.titleSmall,
-                color = PosColors.Slate900,
+                product.name,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = if (out) SlateMuted else SlateText,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 minLines = 2
             )
-
+            Spacer(Modifier.height(6.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column {
+                Text(
+                    PosMath.formatPeso(activePrice),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (out) SlateMuted else EmeraldDark
+                )
+                if (product.wholesalePrice > 0 && product.wholesalePrice < product.retailPrice) {
                     Text(
-                        text = PosMath.formatPeso(displayPrice),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (showWhs) PosColors.Indigo700 else PosColors.Emerald700
-                    )
-                    Text(
-                        text = "per ${product.unit}" + if (product.wholesalePrice < product.retailPrice) " · min ${product.wholesaleMinQty}" else "",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = PosColors.Slate500
+                        "WS ≥${PosMath.formatQty(product.wholesaleMinQty)}",
+                        fontSize = 10.sp,
+                        color = IndigoAccent,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
-                Text(
-                    text = "${PosMath.formatQty(product.stock)} left",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = PosColors.Slate500
-                )
             }
         }
     }
 }
 
 @Composable
-private fun CartPaneContent(
-    cart: List<CartLine>,
-    cartTotals: CartTotals,
-    isSeniorPwd: Boolean,
-    productMap: Map<String, Product>,
-    onToggleSenior: (Boolean) -> Unit,
-    onChangeQty: (String, Double) -> Unit,
-    onSetQty: (String, String) -> Unit,
-    onSetPriceType: (String, PriceType) -> Unit,
-    onUnlockWholesale: (String, Int) -> Unit,
-    onRemoveLine: (String) -> Unit,
-    onParkOrder: () -> Unit,
-    onClearCart: () -> Unit,
-    onCheckout: () -> Unit
+private fun CartPanelContent(
+    state: PosUiState,
+    vm: PosViewModel,
+    onCloseAfterAction: () -> Unit = {}
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
+    val totals = state.cartTotals
+    val pMap = state.productMap
+
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+        // Header + Hold / Recall / Clear
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Column {
-                Text("Current Basket", style = MaterialTheme.typography.titleMedium)
-                Text("${cart.size} line(s)", style = MaterialTheme.typography.bodySmall, color = PosColors.Slate500)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(
-                    onClick = onParkOrder,
-                    enabled = cart.isNotEmpty(),
-                    modifier = Modifier.testTag("cart_park_button")
-                ) {
-                    Icon(Icons.Rounded.PauseCircleOutline, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Park")
+            Text("Current Order (${state.cart.size})", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+            Row {
+                IconButton(onClick = { vm.setHoldCartOpen(true) }, enabled = state.cart.isNotEmpty()) {
+                    Icon(Icons.Filled.PauseCircleOutline, contentDescription = "Park order")
                 }
-                IconButton(
-                    onClick = onClearCart,
-                    enabled = cart.isNotEmpty(),
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("cart_clear_button")
-                ) {
-                    Icon(Icons.Rounded.DeleteOutline, contentDescription = "Clear Basket", tint = PosColors.Rose600)
+                IconButton(onClick = { vm.setHeldOrdersOpen(true) }) {
+                    Icon(Icons.Filled.Restore, contentDescription = "Recall parked (${state.heldOrders.size})")
+                }
+                IconButton(onClick = { vm.clearCart() }, enabled = state.cart.isNotEmpty()) {
+                    Icon(Icons.Filled.DeleteSweep, contentDescription = "Clear cart", tint = RoseDanger)
                 }
             }
         }
-        HorizontalDivider(color = PosColors.Slate200)
 
-        if (cart.isEmpty()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                    Icon(Icons.Rounded.ShoppingBasket, contentDescription = null, tint = PosColors.Slate300, modifier = Modifier.size(44.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Text("Basket is empty", style = MaterialTheme.typography.titleSmall, color = PosColors.Slate600)
-                    Text("Tap items or scan barcodes to ring up", style = MaterialTheme.typography.bodySmall, color = PosColors.Slate500)
-                }
+        // Retail vs Wholesale + SC/PWD toggle
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            FilterChip(
+                selected = state.priceMode == PriceType.retail,
+                onClick = { vm.togglePriceMode(PriceType.retail) },
+                label = { Text("Retail", fontSize = 12.sp) },
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = state.priceMode == PriceType.wholesale,
+                onClick = { vm.togglePriceMode(PriceType.wholesale) },
+                label = { Text("Wholesale", fontSize = 12.sp) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("SC / PWD 5% Discount", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("Applies to eligible PH basic necessities", fontSize = 10.sp, color = SlateMuted)
+            }
+            Switch(checked = state.isSeniorPwd, onCheckedChange = vm::toggleSeniorPwd)
+        }
+        if (state.isSeniorPwd) {
+            OutlinedTextField(
+                value = state.seniorId,
+                onValueChange = vm::setSeniorId,
+                label = { Text("OSCA / PWD ID #", fontSize = 11.sp) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+            )
+        }
+
+        HorizontalDivider(color = SlateBorder)
+
+        if (state.cart.isEmpty()) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Text("Tap a product or scan a barcode to start", fontSize = 13.sp, color = SlateMuted)
             }
         } else {
             LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 8.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth()
             ) {
-                items(cart, key = { it.productId }) { line ->
-                    val pricing = PosMath.linePricing(line, productMap)
-                    val unitPrice = PosMath.getLinePrice(line, productMap)
-                    val lineTotal = PosMath.lineTotalPeso(unitPrice, line.qty)
-                    val isWhs = PosMath.isWholesaleLine(line, productMap)
-                    val whsBlock = PosMath.wholesaleBlock(line, productMap)
-
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = PosColors.Slate50,
-                        border = BorderStroke(1.dp, PosColors.Slate200)
-                    ) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(line.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        "${PosMath.formatPeso(unitPrice)} / ${line.unit}" + if (isWhs) " (Wholesale)" else "",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (isWhs) PosColors.Indigo700 else PosColors.Slate600
-                                    )
-                                }
-                                Text(
-                                    PosMath.formatPeso(lineTotal),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = PosColors.Slate900
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color.White,
-                                        border = BorderStroke(1.dp, PosColors.Slate300),
-                                        modifier = Modifier
-                                            .size(44.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { onChangeQty(line.productId, -1.0) }
-                                            .testTag("cart_dec_${line.productId}")
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(Icons.Rounded.Remove, contentDescription = "Decrease quantity", modifier = Modifier.size(18.dp))
-                                        }
-                                    }
-
-                                    var qtyInput by remember(line.qty) { mutableStateOf(PosMath.formatQty(line.qty)) }
-                                    OutlinedTextField(
-                                        value = qtyInput,
-                                        onValueChange = {
-                                            qtyInput = it
-                                            if (it.toDoubleOrNull() != null && !it.endsWith(".")) {
-                                                onSetQty(line.productId, it)
-                                            }
-                                        },
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        textStyle = MaterialTheme.typography.labelMedium,
-                                        modifier = Modifier.width(64.dp)
-                                    )
-
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color.White,
-                                        border = BorderStroke(1.dp, PosColors.Slate300),
-                                        modifier = Modifier
-                                            .size(44.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { onChangeQty(line.productId, 1.0) }
-                                            .testTag("cart_inc_${line.productId}")
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(Icons.Rounded.Add, contentDescription = "Increase quantity", modifier = Modifier.size(18.dp))
-                                        }
-                                    }
-                                }
-
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    if (pricing.wholesale > 0.0 && pricing.wholesale < pricing.retail) {
-                                        if (whsBlock == PosMath.WholesaleBlockReason.QTY) {
-                                            val needed = PosMath.round3(pricing.minQty - line.qty)
-                                            TextButton(
-                                                onClick = { onUnlockWholesale(line.productId, pricing.minQty) },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                                modifier = Modifier.testTag("cart_unlock_whs_${line.productId}")
-                                            ) {
-                                                Text("+${PosMath.formatQty(needed)} → Whs", fontSize = 11.sp, color = PosColors.Indigo700)
-                                            }
-                                        } else if (whsBlock == null) {
-                                            FilterChip(
-                                                selected = isWhs,
-                                                onClick = {
-                                                    onSetPriceType(
-                                                        line.productId,
-                                                        if (isWhs) PriceType.retail else PriceType.wholesale
-                                                    )
-                                                },
-                                                label = { Text(if (isWhs) "Wholesale" else "Retail", fontSize = 10.sp) }
-                                            )
-                                        }
-                                    }
-                                    IconButton(onClick = { onRemoveLine(line.productId) }) {
-                                        Icon(Icons.Rounded.DeleteOutline, contentDescription = "Remove line", tint = PosColors.Slate500, modifier = Modifier.size(18.dp))
-                                    }
-                                }
-                            }
-                        }
-                    }
+                items(state.cart, key = { it.productId }) { line ->
+                    CartLineRow(
+                        line = line,
+                        effectivePrice = PosMath.getLinePrice(line, pMap),
+                        isWs = PosMath.isWholesaleLine(line, pMap),
+                        wsBlock = PosMath.wholesaleBlock(line, pMap),
+                        onDec = { vm.updateCartQty(line.productId, line.qty - 1.0) },
+                        onInc = { vm.updateCartQty(line.productId, line.qty + 1.0) },
+                        onToggleType = { vm.toggleLinePriceType(line.productId) }
+                    )
                 }
             }
         }
 
-        HorizontalDivider(color = PosColors.Slate200)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(PosColors.Slate50)
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        HorizontalDivider(color = SlateBorder)
+        Spacer(Modifier.height(8.dp))
+
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text("Subtotal", fontSize = 12.sp, color = SlateMuted)
+            Text(PosMath.formatPeso(totals.retailSubtotal), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        }
+        if (totals.wholesaleSavings > 0.0) {
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Text("Wholesale Savings", fontSize = 12.sp, color = IndigoAccent)
+                Text("-${PosMath.formatPeso(totals.wholesaleSavings)}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = IndigoAccent)
+            }
+        }
+        if (totals.seniorDiscount > 0.0) {
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Text("SC/PWD 5%${if (totals.seniorCapped) " (Capped)" else ""}", fontSize = 12.sp, color = EmeraldDark)
+                Text("-${PosMath.formatPeso(totals.seniorDiscount)}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = EmeraldDark)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text("Grand Total", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                PosMath.formatPeso(totals.grandTotal),
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold,
+                fontFamily = FontFamily.Monospace,
+                color = EmeraldDark
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = {
+                onCloseAfterAction()
+                vm.openCheckout()
+            },
+            enabled = state.cart.isNotEmpty(),
+            colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Text("Charge ${PosMath.formatPeso(totals.grandTotal)}", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
+@Composable
+private fun CartLineRow(
+    line: CartLine,
+    effectivePrice: Double,
+    isWs: Boolean,
+    wsBlock: PosMath.WholesaleBlockReason?,
+    onDec: () -> Unit,
+    onInc: () -> Unit,
+    onToggleType: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFFF8FAFC),
+        border = BorderStroke(1.dp, SlateBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(8.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(line.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Rounded.Verified, contentDescription = null, tint = PosColors.Indigo600, modifier = Modifier.size(16.dp))
-                    Column {
-                        Text("Senior / PWD 5% Basic Needs", style = MaterialTheme.typography.labelMedium)
-                        if (isSeniorPwd) {
-                            Text(
-                                "${cartTotals.scKinds} eligible SKU(s) · Cap ${PosMath.formatPeso(cartTotals.seniorCap)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = PosColors.Slate500
-                            )
-                        }
+                    Text(
+                        "${PosMath.formatPeso(effectivePrice)} / ${line.unit}",
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = SlateMuted
+                    )
+                    Surface(
+                        color = if (isWs) Color(0xFFEEF2FF) else Color(0xFFF1F5F9),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.clickable { onToggleType() }
+                    ) {
+                        Text(
+                            if (isWs) "WS" else "RT",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isWs) IndigoAccent else SlateMuted,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                    if (line.priceType == PriceType.wholesale && wsBlock == PosMath.WholesaleBlockReason.QTY) {
+                        Text("Need ≥${PosMath.formatQty(line.wholesaleMinQty)}", fontSize = 9.sp, color = AmberWarn)
                     }
                 }
-                Switch(
-                    checked = isSeniorPwd,
-                    onCheckedChange = onToggleSenior,
-                    modifier = Modifier.testTag("cart_sc_pwd_switch")
-                )
             }
-
-            if (cartTotals.wholesaleSavings > 0.0) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Wholesale Savings", style = MaterialTheme.typography.bodySmall, color = PosColors.Indigo700)
-                    Text("-${PosMath.formatPeso(cartTotals.wholesaleSavings)}", style = MaterialTheme.typography.labelMedium, color = PosColors.Indigo700)
-                }
+            IconButton(onClick = onDec, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Filled.Remove, contentDescription = "Decrease qty", modifier = Modifier.size(16.dp))
             }
-            if (cartTotals.seniorDiscount > 0.0) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("SC/PWD 5% Discount", style = MaterialTheme.typography.bodySmall, color = PosColors.Emerald700)
-                    Text("-${PosMath.formatPeso(cartTotals.seniorDiscount)}", style = MaterialTheme.typography.labelMedium, color = PosColors.Emerald700)
-                }
+            Text(
+                PosMath.formatQty(line.qty),
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+            IconButton(onClick = onInc, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = "Increase qty", modifier = Modifier.size(16.dp))
             }
-
-            Button(
-                onClick = onCheckout,
-                enabled = cart.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(containerColor = PosColors.Emerald600),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-                    .testTag("cart_checkout_button")
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("CHARGE ORDER", fontWeight = FontWeight.ExtraBold)
-                    Text(PosMath.formatPeso(cartTotals.grandTotal), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
-                }
-            }
+            Spacer(Modifier.width(6.dp))
+            Text(
+                PosMath.formatPeso(PosMath.lineTotalPeso(effectivePrice, line.qty)),
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 13.sp,
+                color = SlateText
+            )
         }
     }
 }

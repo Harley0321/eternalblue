@@ -5,172 +5,221 @@ import com.example.domain.PosMath
 import com.example.model.ActiveShiftState
 import com.example.model.CashDrawerEvent
 import com.example.model.CashierAccount
-import com.example.model.ConfigSnapshot
 import com.example.model.DigitalServiceEntry
 import com.example.model.HeldOrder
 import com.example.model.Product
 import com.example.model.RepackLogEntry
 import com.example.model.RepackRule
+import com.example.model.SaleItem
 import com.example.model.SaleRecord
 import com.example.model.SecurityLogEntry
 import com.example.model.StockLogEntry
-import com.example.model.StorageBreakdownItem
 import com.example.model.StoreSettings
 import com.example.model.SukiCustomer
 import com.example.model.UtangTransaction
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.time.Instant
-import kotlin.math.max
-import kotlin.math.roundToInt
+import java.time.LocalDate
 
 class PosRepository(context: Context) {
-    companion object {
-        const val KEY_PRODUCTS = "products"
-        const val KEY_SALES = "sales"
-        const val KEY_HELD = "held"
-        const val KEY_SETTINGS = "settings"
-        const val KEY_STOCK_LOG = "stock_log"
-        const val KEY_CONFIG_HISTORY = "config_history"
-        const val KEY_SECURITY_LOG = "security_log"
-        const val KEY_CUSTOMERS = "customers"
-        const val KEY_UTANG_TX = "utang_tx"
-        const val KEY_REPACK_RULES = "repack_rules"
-        const val KEY_REPACK_LOG = "repack_log"
-        const val KEY_DRAWER_EVENTS = "drawer_events"
-        const val KEY_SERVICE_LOGS = "service_logs"
-        const val KEY_CASHIERS = "cashiers"
-        const val KEY_ACTIVE_SHIFT = "active_shift"
-        const val KEY_QUICK_ACTIONS_POS = "qa_dock_pos"
-
-        val json = Json {
-            ignoreUnknownKeys = true
-            encodeDefaults = true
-        }
-    }
-
     private val db = PosDatabaseHelper(context.applicationContext)
+    val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    private inline fun <reified T> readList(key: String, serializer: KSerializer<T>): List<T> {
-        val raw = db.readString(key) ?: return emptyList()
-        return runCatching { json.decodeFromString(ListSerializer(serializer), raw) }.getOrDefault(emptyList())
-    }
-
-    private inline fun <reified T> writeList(key: String, list: List<T>, serializer: KSerializer<T>, cap: Int? = null) {
-        val trimmed = if (cap != null) list.take(cap) else list
-        db.writeString(key, json.encodeToString(ListSerializer(serializer), trimmed))
-    }
-
-    fun loadOrSeedProducts(): List<Product> {
-        val existing = db.readString(KEY_PRODUCTS)
-        if (existing != null) {
-            val parsed = runCatching { json.decodeFromString(ListSerializer(Product.serializer()), existing) }.getOrNull()
-            if (parsed != null) return parsed
+    fun loadProducts(): List<Product> {
+        val raw = db.getString("products")
+        if (raw.isNullOrBlank()) {
+            val seed = seedProducts()
+            saveProducts(seed)
+            return seed
         }
-        val seed = PosMath.buildDefaultCatalog()
-        saveProducts(seed)
-        return seed
+        return runCatching { json.decodeFromString<List<Product>>(raw) }.getOrElse { seedProducts() }
     }
 
-    fun saveProducts(products: List<Product>) = writeList(KEY_PRODUCTS, products, Product.serializer())
+    fun saveProducts(list: List<Product>) = db.putString("products", json.encodeToString(list))
 
-    fun loadSales(): List<SaleRecord> = readList(KEY_SALES, SaleRecord.serializer())
-    fun saveSales(sales: List<SaleRecord>) = writeList(KEY_SALES, sales, SaleRecord.serializer())
-
-    fun loadHeldOrders(): List<HeldOrder> = readList(KEY_HELD, HeldOrder.serializer())
-    fun saveHeldOrders(held: List<HeldOrder>) = writeList(KEY_HELD, held, HeldOrder.serializer())
-
-    fun loadSettings(): StoreSettings {
-        val raw = db.readString(KEY_SETTINGS) ?: return StoreSettings().also { saveSettings(it) }
-        val loaded = runCatching { json.decodeFromString(StoreSettings.serializer(), raw) }.getOrDefault(StoreSettings())
-        return loaded.copy(
-            lowStockThreshold = loaded.lowStockThreshold.coerceAtLeast(0.0),
-            expiryWarnDays = loaded.expiryWarnDays.coerceAtLeast(1),
-            reorderLeadDays = loaded.reorderLeadDays.coerceAtLeast(0),
-            reorderSafetyDays = loaded.reorderSafetyDays.coerceAtLeast(0),
-            scDiscountCap = loaded.scDiscountCap.coerceAtLeast(0.0),
-            zCount = loaded.zCount.coerceAtLeast(0)
-        )
+    fun loadSales(): List<SaleRecord> {
+        val raw = db.getString("sales")
+        if (raw.isNullOrBlank()) {
+            val seed = seedSales()
+            saveSales(seed)
+            return seed
+        }
+        return runCatching { json.decodeFromString<List<SaleRecord>>(raw) }.getOrElse { emptyList() }
     }
 
-    fun saveSettings(settings: StoreSettings) {
-        db.writeString(KEY_SETTINGS, json.encodeToString(StoreSettings.serializer(), settings))
+    fun saveSales(list: List<SaleRecord>) = db.putString("sales", json.encodeToString(list))
+
+    fun loadHeldOrders(): List<HeldOrder> =
+        db.getString("held")?.let { runCatching { json.decodeFromString<List<HeldOrder>>(it) }.getOrNull() } ?: emptyList()
+
+    fun saveHeldOrders(list: List<HeldOrder>) = db.putString("held", json.encodeToString(list))
+
+    fun loadSettings(): StoreSettings =
+        db.getString("settings")?.let { runCatching { json.decodeFromString<StoreSettings>(it) }.getOrNull() } ?: StoreSettings()
+
+    fun saveSettings(s: StoreSettings) = db.putString("settings", json.encodeToString(s))
+
+    fun loadSukiCustomers(): List<SukiCustomer> {
+        val raw = db.getString("suki")
+        if (raw.isNullOrBlank()) {
+            val seed = seedCustomers()
+            saveSukiCustomers(seed)
+            return seed
+        }
+        return runCatching { json.decodeFromString<List<SukiCustomer>>(raw) }.getOrElse { seedCustomers() }
     }
 
-    fun loadStockLog(): List<StockLogEntry> = readList(KEY_STOCK_LOG, StockLogEntry.serializer())
-    fun saveStockLog(entries: List<StockLogEntry>) = writeList(KEY_STOCK_LOG, entries, StockLogEntry.serializer(), 500)
+    fun saveSukiCustomers(list: List<SukiCustomer>) = db.putString("suki", json.encodeToString(list))
 
-    fun loadConfigHistory(): List<ConfigSnapshot> = readList(KEY_CONFIG_HISTORY, ConfigSnapshot.serializer())
-    fun saveConfigHistory(history: List<ConfigSnapshot>) = writeList(KEY_CONFIG_HISTORY, history, ConfigSnapshot.serializer(), 30)
+    fun loadUtangTx(): List<UtangTransaction> =
+        db.getString("utang_tx")?.let { runCatching { json.decodeFromString<List<UtangTransaction>>(it) }.getOrNull() } ?: emptyList()
 
-    fun loadSecurityLog(): List<SecurityLogEntry> = readList(KEY_SECURITY_LOG, SecurityLogEntry.serializer())
-    fun saveSecurityLog(entries: List<SecurityLogEntry>) = writeList(KEY_SECURITY_LOG, entries, SecurityLogEntry.serializer(), 250)
+    fun saveUtangTx(list: List<UtangTransaction>) = db.putString("utang_tx", json.encodeToString(list))
 
-    fun loadCustomers(): List<SukiCustomer> = readList(KEY_CUSTOMERS, SukiCustomer.serializer())
-    fun saveCustomers(customers: List<SukiCustomer>) = writeList(KEY_CUSTOMERS, customers, SukiCustomer.serializer())
+    fun loadRepackRules(): List<RepackRule> {
+        val raw = db.getString("repack_rules")
+        if (raw.isNullOrBlank()) {
+            val seed = seedRepackRules()
+            saveRepackRules(seed)
+            return seed
+        }
+        return runCatching { json.decodeFromString<List<RepackRule>>(raw) }.getOrElse { emptyList() }
+    }
 
-    fun loadUtangTx(): List<UtangTransaction> = readList(KEY_UTANG_TX, UtangTransaction.serializer())
-    fun saveUtangTx(txs: List<UtangTransaction>) = writeList(KEY_UTANG_TX, txs, UtangTransaction.serializer(), 600)
+    fun saveRepackRules(list: List<RepackRule>) = db.putString("repack_rules", json.encodeToString(list))
 
-    fun loadRepackRules(): List<RepackRule> = readList(KEY_REPACK_RULES, RepackRule.serializer())
-    fun saveRepackRules(rules: List<RepackRule>) = writeList(KEY_REPACK_RULES, rules, RepackRule.serializer())
+    fun loadRepackLog(): List<RepackLogEntry> =
+        db.getString("repack_log")?.let { runCatching { json.decodeFromString<List<RepackLogEntry>>(it) }.getOrNull() } ?: emptyList()
 
-    fun loadRepackLogs(): List<RepackLogEntry> = readList(KEY_REPACK_LOG, RepackLogEntry.serializer())
-    fun saveRepackLogs(logs: List<RepackLogEntry>) = writeList(KEY_REPACK_LOG, logs, RepackLogEntry.serializer(), 300)
+    fun saveRepackLog(list: List<RepackLogEntry>) = db.putString("repack_log", json.encodeToString(list))
 
-    fun loadDrawerEvents(): List<CashDrawerEvent> = readList(KEY_DRAWER_EVENTS, CashDrawerEvent.serializer())
-    fun saveDrawerEvents(events: List<CashDrawerEvent>) = writeList(KEY_DRAWER_EVENTS, events, CashDrawerEvent.serializer(), 400)
+    fun loadDrawerEvents(): List<CashDrawerEvent> =
+        db.getString("drawer_events")?.let { runCatching { json.decodeFromString<List<CashDrawerEvent>>(it) }.getOrNull() } ?: emptyList()
 
-    fun loadServiceLogs(): List<DigitalServiceEntry> = readList(KEY_SERVICE_LOGS, DigitalServiceEntry.serializer())
-    fun saveServiceLogs(entries: List<DigitalServiceEntry>) = writeList(KEY_SERVICE_LOGS, entries, DigitalServiceEntry.serializer(), 400)
+    fun saveDrawerEvents(list: List<CashDrawerEvent>) = db.putString("drawer_events", json.encodeToString(list))
 
-    fun buildDefaultCashiers(): List<CashierAccount> = listOf(
-        CashierAccount(
-            id = "CSH-OWNER",
-            name = "Store Owner",
-            role = "manager",
-            active = true,
-            createdAt = Instant.now().toString()
-        )
-    )
+    fun loadDigitalServices(): List<DigitalServiceEntry> =
+        db.getString("digital_services")?.let { runCatching { json.decodeFromString<List<DigitalServiceEntry>>(it) }.getOrNull() } ?: emptyList()
+
+    fun saveDigitalServices(list: List<DigitalServiceEntry>) = db.putString("digital_services", json.encodeToString(list))
 
     fun loadCashiers(): List<CashierAccount> {
-        val list = readList(KEY_CASHIERS, CashierAccount.serializer())
-        return if (list.isEmpty()) buildDefaultCashiers().also { saveCashiers(it) } else list
+        val raw = db.getString("cashiers")
+        if (raw.isNullOrBlank()) {
+            val now = Instant.now().toString()
+            val seed = listOf(
+                CashierAccount("cashier-owner", "Ate Maria (Owner)", "manager", true, now),
+                CashierAccount("cashier-shift1", "Juan (Cashier)", "cashier", true, now)
+            )
+            saveCashiers(seed)
+            return seed
+        }
+        return runCatching { json.decodeFromString<List<CashierAccount>>(raw) }.getOrElse { emptyList() }
     }
 
-    fun saveCashiers(cashiers: List<CashierAccount>) = writeList(KEY_CASHIERS, cashiers, CashierAccount.serializer())
+    fun saveCashiers(list: List<CashierAccount>) = db.putString("cashiers", json.encodeToString(list))
 
-    fun loadActiveShift(): ActiveShiftState? {
-        val raw = db.readString(KEY_ACTIVE_SHIFT) ?: return null
-        if (raw.isBlank() || raw == "null") return null
-        return runCatching { json.decodeFromString(ActiveShiftState.serializer(), raw) }.getOrNull()
-    }
+    fun loadActiveShift(): ActiveShiftState? =
+        db.getString("active_shift")?.let { runCatching { json.decodeFromString<ActiveShiftState>(it) }.getOrNull() }
 
     fun saveActiveShift(shift: ActiveShiftState?) {
-        if (shift == null) db.writeString(KEY_ACTIVE_SHIFT, "null")
-        else db.writeString(KEY_ACTIVE_SHIFT, json.encodeToString(ActiveShiftState.serializer(), shift))
+        if (shift == null) db.putString("active_shift", "")
+        else db.putString("active_shift", json.encodeToString(shift))
     }
 
-    fun getStorageBreakdown(): Pair<Long, List<StorageBreakdownItem>> {
-        val sizes = db.getAllSizesBytes()
-        val labelMap = mapOf(
-            KEY_PRODUCTS to "Inventory Catalog",
-            KEY_SALES to "Sales & Receipts",
-            KEY_SETTINGS to "Store Settings & QR",
-            KEY_STOCK_LOG to "Stock Movement Audit",
-            KEY_CUSTOMERS to "Suki & Utang Ledger",
-            KEY_UTANG_TX to "Utang Transactions",
-            KEY_SECURITY_LOG to "Security Audit Chain",
-            KEY_CONFIG_HISTORY to "Config Checkpoints",
-            KEY_HELD to "Parked / Held Orders"
-        )
-        val total = max(1L, sizes.values.sum())
-        val items = labelMap.mapNotNull { (k, label) ->
-            val b = sizes[k] ?: 0L
-            if (b > 0L) StorageBreakdownItem(k, label, b, ((b * 100.0) / total).roundToInt()) else null
-        }.sortedByDescending { it.bytes }
-        return sizes.values.sum() to items
+    fun loadStockLog(): List<StockLogEntry> =
+        db.getString("stock_log")?.let { runCatching { json.decodeFromString<List<StockLogEntry>>(it) }.getOrNull() } ?: emptyList()
+
+    fun saveStockLog(list: List<StockLogEntry>) = db.putString("stock_log", json.encodeToString(list))
+
+    fun loadSecurityLog(): List<SecurityLogEntry> =
+        db.getString("security_log")?.let { runCatching { json.decodeFromString<List<SecurityLogEntry>>(it) }.getOrNull() } ?: emptyList()
+
+    fun saveSecurityLog(list: List<SecurityLogEntry>) = db.putString("security_log", json.encodeToString(list))
+
+    fun resetAll() = db.clearAll()
+
+    companion object {
+        fun seedProducts(): List<Product> {
+            val soon = LocalDate.now().plusDays(14).toString()
+            val okDate = LocalDate.now().plusMonths(6).toString()
+            return listOf(
+                Product("p-rice-50", "4800010000011", "Sinandomeng Rice 25kg Sack", "Rice & Staples", "sack", 1125.0, 1250.0, 1210.0, 3.0, 8.0, 3.0, okDate, true),
+                Product("p-rice-1", "4800010000028", "Sinandomeng Rice 1kg Repack", "Rice & Staples", "kg", 45.0, 54.0, 51.0, 10.0, 42.0, 15.0, okDate, true),
+                Product("p-corned", "4800010000035", "Argentina Corned Beef 175g", "Canned & Noodles", "can", 33.5, 42.0, 39.5, 12.0, 36.0, 12.0, okDate, true),
+                Product("p-sardines", "4800010000042", "555 Sardines Tomato 155g", "Canned & Noodles", "can", 21.0, 27.0, 25.5, 12.0, 48.0, 12.0, okDate, true),
+                Product("p-canton", "4800010000059", "Lucky Me Pancit Canton Chilimansi", "Canned & Noodles", "pack", 12.5, 16.0, 15.0, 12.0, 64.0, 20.0, okDate, true),
+                Product("p-kopiko", "4800010000066", "Kopiko Black 3-in-1 Twin Pack", "Beverages", "pack", 11.0, 15.0, 13.75, 10.0, 55.0, 15.0, okDate, true),
+                Product("p-milo", "4800010000073", "Milo Active-Go 24g Sachet", "Beverages", "sachet", 8.5, 12.0, 11.0, 12.0, 72.0, 24.0, okDate, true),
+                Product("p-oil", "4800010000080", "Golden Fiesta Palm Oil 1L", "Condiments & Cooking", "bottle", 92.0, 112.0, 106.0, 6.0, 18.0, 6.0, okDate, true),
+                Product("p-toyo", "4800010000097", "Datu Puti Soy Sauce 385ml", "Condiments & Cooking", "bottle", 23.0, 30.0, 28.0, 12.0, 24.0, 8.0, okDate, true),
+                Product("p-eggs", "4800010000103", "Fresh Farm Eggs Medium (Tray 30s)", "Dairy & Bakery", "tray", 205.0, 240.0, 230.0, 3.0, 6.0, 3.0, soon, true),
+                Product("p-cola", "4800010000110", "Coca-Cola Kasalo 1.5L", "Beverages", "bottle", 58.0, 72.0, 67.0, 12.0, 22.0, 8.0, okDate, false),
+                Product("p-water", "4800010000127", "Absolute Mineral Water 500ml", "Beverages", "bottle", 10.5, 15.0, 13.5, 24.0, 40.0, 12.0, okDate, true),
+                Product("p-chips", "4800010000134", "Piattos Cheese 85g", "Snacks & Biscuits", "pack", 30.0, 39.0, 36.5, 10.0, 9.0, 10.0, okDate, false),
+                Product("p-soap", "4800010000141", "Safeguard Pure White 130g", "Personal & Home", "bar", 42.0, 52.0, 49.0, 12.0, 16.0, 6.0, okDate, true),
+                Product("p-ariel", "4800010000158", "Ariel Sunrise Fresh 75g Twin", "Personal & Home", "sachet", 13.0, 17.0, 15.75, 12.0, 0.0, 12.0, okDate, true),
+                Product("p-tocino", "4800010000165", "CDO Funtastyk Young Pork Tocino 450g", "Frozen Meat", "pack", 118.0, 145.0, 138.0, 5.0, 14.0, 5.0, soon, true)
+            )
+        }
+
+        fun seedSales(): List<SaleRecord> {
+            val now = Instant.now()
+            val yday = now.minusSeconds(PosMath.DAY_MS / 1000)
+            return listOf(
+                SaleRecord(
+                    receiptNo = "OR-001001",
+                    dateIso = now.minusSeconds(3600).toString(),
+                    dateFormatted = PosMath.formatDateTime(now.minusSeconds(3600).toString()),
+                    items = listOf(
+                        SaleItem("p-rice-1", "Rice & Staples", "Sinandomeng Rice 1kg Repack", 3.0, "kg", 54.0, capital = 45.0, lineTotal = 162.0),
+                        SaleItem("p-corned", "Canned & Noodles", "Argentina Corned Beef 175g", 2.0, "can", 42.0, capital = 33.5, lineTotal = 84.0)
+                    ),
+                    retailSubtotal = 246.0,
+                    wholesaleSavings = 0.0,
+                    seniorDiscount = 0.0,
+                    grandTotal = 246.0,
+                    paymentMethod = "Cash",
+                    tendered = 300.0,
+                    change = 54.0,
+                    cashierName = "Ate Maria (Owner)"
+                ),
+                SaleRecord(
+                    receiptNo = "OR-001000",
+                    dateIso = yday.toString(),
+                    dateFormatted = PosMath.formatDateTime(yday.toString()),
+                    items = listOf(
+                        SaleItem("p-canton", "Canned & Noodles", "Lucky Me Pancit Canton Chilimansi", 6.0, "pack", 16.0, capital = 12.5, lineTotal = 96.0),
+                        SaleItem("p-cola", "Beverages", "Coca-Cola Kasalo 1.5L", 1.0, "bottle", 72.0, capital = 58.0, lineTotal = 72.0)
+                    ),
+                    retailSubtotal = 168.0,
+                    wholesaleSavings = 0.0,
+                    seniorDiscount = 0.0,
+                    grandTotal = 168.0,
+                    paymentMethod = "GCash",
+                    tendered = 168.0,
+                    change = 0.0,
+                    refNo = "GC-884120",
+                    cashierName = "Juan (Cashier)"
+                )
+            )
+        }
+
+        fun seedCustomers(): List<SukiCustomer> {
+            val now = Instant.now().toString()
+            val due = LocalDate.now().plusDays(5).toString()
+            return listOf(
+                SukiCustomer("suki-1", "Aling Nena Reyes", "0917-555-0142", "Brgy. Poblacion", 2500.0, 420.0, due, 48, 4820.0, now, now),
+                SukiCustomer("suki-2", "Mang Tonyo Cruz", "0918-555-0199", "Sitio Mabini", 1500.0, 0.0, null, 115, 7250.0, now, now)
+            )
+        }
+
+        fun seedRepackRules(): List<RepackRule> {
+            val now = Instant.now().toString()
+            return listOf(
+                RepackRule("rpk-rice", "25kg Sack → 25× 1kg Repack", "p-rice-50", "p-rice-1", 25.0, true, now)
+            )
+        }
     }
 }

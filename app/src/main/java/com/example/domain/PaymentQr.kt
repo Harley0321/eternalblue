@@ -1,296 +1,136 @@
 package com.example.domain
 
+import android.graphics.Bitmap
+import android.graphics.Color
 import com.example.model.StoreSettings
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
 import java.util.Locale
-
-data class EmvTlvTag(
-    val id: String,
-    val length: Int,
-    val value: String
-)
-
-sealed interface ParseEmvCoResult {
-    data class Success(
-        val tags: List<EmvTlvTag>,
-        val merchantName: String,
-        val merchantCity: String,
-        val currencyNumeric: String,
-        val countryCode: String,
-        val amount: Double?,
-        val channelLabel: String,
-        val isDynamic: Boolean,
-        val crcValid: Boolean
-    ) : ParseEmvCoResult
-
-    data class Error(val error: String) : ParseEmvCoResult
-}
-
-enum class CheckoutQrMode {
-    EMVCO,
-    IMAGE,
-    MANUAL,
-    UNCONFIGURED
-}
-
-data class ResolvedCheckoutQr(
-    val mode: CheckoutQrMode,
-    val channelLabel: String,
-    val merchantName: String,
-    val accountNumber: String,
-    val amount: Double,
-    val qrPayload: String?,
-    val qrImageDataUrl: String?,
-    val isDynamicAmount: Boolean,
-    val error: String? = null
-)
+import kotlin.math.max
 
 object PaymentQr {
+    data class EmvTag(val id: String, val value: String)
+
+    data class ResolvedQr(
+        val mode: String, // EMVCO | MANUAL | UNCONFIGURED
+        val channelLabel: String,
+        val merchantName: String,
+        val accountNumber: String,
+        val amount: Double,
+        val qrPayload: String? = null,
+        val isDynamicAmount: Boolean = false
+    )
+
     fun crc16CcittFalse(input: String): String {
         var crc = 0xFFFF
         for (ch in input) {
             crc = crc xor ((ch.code and 0xFF) shl 8)
-            repeat(8) {
-                crc = if ((crc and 0x8000) != 0) {
-                    ((crc shl 1) xor 0x1021) and 0xFFFF
-                } else {
-                    (crc shl 1) and 0xFFFF
-                }
+            for (b in 0 until 8) {
+                crc = if ((crc and 0x8000) != 0) ((crc shl 1) xor 0x1021) and 0xFFFF else (crc shl 1) and 0xFFFF
             }
         }
-        return crc.toString(16).uppercase(Locale.US).padStart(4, '0')
+        return String.format(Locale.US, "%04X", crc)
     }
 
-    fun parseEmvTlv(raw: String): Result<List<EmvTlvTag>> {
+    fun parseEmvTlv(raw: String): List<EmvTag>? {
         val clean = raw.trim()
-        if (clean.length < 12) {
-            return Result.failure(IllegalArgumentException("Payload is too short to be an EMVCo / QR Ph code."))
-        }
-        val tags = mutableListOf<EmvTlvTag>()
+        if (clean.length < 12) return null
+        val tags = mutableListOf<EmvTag>()
         var cursor = 0
         while (cursor < clean.length) {
-            if (cursor + 4 > clean.length) {
-                return Result.failure(IllegalArgumentException("Truncated TLV header at offset $cursor."))
-            }
+            if (cursor + 4 > clean.length) return null
             val id = clean.substring(cursor, cursor + 2)
-            val lenStr = clean.substring(cursor + 2, cursor + 4)
-            val length = lenStr.toIntOrNull()
-                ?: return Result.failure(IllegalArgumentException("Invalid TLV length \"$lenStr\" for tag $id."))
-            val valStart = cursor + 4
-            val valEnd = valStart + length
-            if (valEnd > clean.length) {
-                return Result.failure(IllegalArgumentException("Tag $id length ($length) exceeds payload end."))
-            }
-            tags.add(EmvTlvTag(id = id, length = length, value = clean.substring(valStart, valEnd)))
-            cursor = valEnd
+            val len = clean.substring(cursor + 2, cursor + 4).toIntOrNull() ?: return null
+            val start = cursor + 4
+            val end = start + len
+            if (end > clean.length) return null
+            tags.add(EmvTag(id, clean.substring(start, end)))
+            cursor = end
         }
-        return Result.success(tags)
+        return tags
     }
 
-    fun serializeEmvTlv(tags: List<EmvTlvTag>): String {
-        return tags.joinToString("") { t ->
-            "${t.id}${t.value.length.toString().padStart(2, '0')}${t.value}"
-        }
-    }
+    fun patchEmvAmount(rawPayload: String, amountPeso: Double): String? {
+        val clean = rawPayload.trim()
+        if (!clean.startsWith("000201")) return null
+        val tags = parseEmvTlv(clean) ?: return null
+        val crcTag = tags.lastOrNull() ?: return null
+        if (crcTag.id != "63" || crcTag.value.length != 4) return null
+        val bodyWithoutCrc = clean.dropLast(4)
+        if (!crc16CcittFalse(bodyWithoutCrc).equals(crcTag.value, ignoreCase = true)) return null
 
-    private fun detectPhChannel(tags: List<EmvTlvTag>): String {
-        val acctText = tags
-            .filter { (it.id.toIntOrNull() ?: -1) in 26..51 }
-            .joinToString(" ") { it.value.lowercase() }
-        return when {
-            "gcash" in acctText || "gxch" in acctText -> "GCash / QR Ph"
-            "maya" in acctText || "paymaya" in acctText -> "Maya / QR Ph"
-            "gotyme" in acctText -> "GoTyme / QR Ph"
-            "bpi" in acctText -> "BPI / QR Ph"
-            "bdo" in acctText -> "BDO / QR Ph"
-            "qrph" in acctText || "ph.p2m" in acctText || "instapay" in acctText || "bancnet" in acctText -> "QR Ph"
-            else -> "QR Ph / EMV"
-        }
-    }
+        val amt = PosMath.round2(max(0.0, amountPeso))
+        val formattedAmt = if (amt > 0.0) String.format(Locale.US, "%.2f", amt) else null
 
-    fun parseEmvCoQr(raw: String): ParseEmvCoResult {
-        val clean = raw.trim()
-        if (!clean.startsWith("000201")) {
-            return ParseEmvCoResult.Error("Not an EMVCo QR Ph payload (must start with 000201).")
-        }
-        val parsed = parseEmvTlv(clean)
-        val tags = parsed.getOrElse { return ParseEmvCoResult.Error(it.message ?: "Invalid TLV") }
-        val crcTag = tags.lastOrNull()
-        if (crcTag == null || crcTag.id != "63" || crcTag.value.length != 4) {
-            return ParseEmvCoResult.Error("Missing valid EMVCo Tag 63 (CRC checksum).")
-        }
-        val bodyWithoutCrc = clean.substring(0, clean.length - 4)
-        val expectedCrc = crc16CcittFalse(bodyWithoutCrc)
-        val crcValid = crcTag.value.equals(expectedCrc, ignoreCase = true)
-
-        fun getTag(id: String): String = tags.firstOrNull { it.id == id }?.value ?: ""
-        val amtNum = getTag("54").toDoubleOrNull()
-
-        return ParseEmvCoResult.Success(
-            tags = tags,
-            merchantName = getTag("59").ifEmpty { "Store Merchant" },
-            merchantCity = getTag("60").ifEmpty { "Philippines" },
-            currencyNumeric = getTag("53").ifEmpty { "608" },
-            countryCode = getTag("58").ifEmpty { "PH" },
-            amount = if (amtNum != null && amtNum > 0.0) PosMath.round2(amtNum) else null,
-            channelLabel = detectPhChannel(tags),
-            isDynamic = getTag("01") == "12",
-            crcValid = crcValid
-        )
-    }
-
-    fun patchEmvCoQrAmount(rawPayload: String, amountPeso: Double): Result<Pair<String, String?>> {
-        val parsed = parseEmvCoQr(rawPayload)
-        if (parsed is ParseEmvCoResult.Error) {
-            return Result.failure(IllegalArgumentException(parsed.error))
-        }
-        val ok = parsed as ParseEmvCoResult.Success
-        if (!ok.crcValid) {
-            return Result.failure(IllegalArgumentException("Stored QR Ph checksum is invalid. Please re-paste or re-scan the merchant QR."))
-        }
-        val cleanAmt = PosMath.round2(amountPeso.coerceAtLeast(0.0))
-        val formattedAmount = if (cleanAmt > 0.0) String.format(Locale.US, "%.2f", cleanAmt) else null
-
-        val nextTags = ok.tags.filter { it.id != "54" && it.id != "63" && it.id != "01" }.toMutableList()
-        val initTag = EmvTlvTag(id = "01", length = 2, value = if (formattedAmount != null) "12" else "11")
+        val nextTags = tags.filterNot { it.id == "54" || it.id == "63" || it.id == "01" }.toMutableList()
+        val initTag = EmvTag("01", if (formattedAmt != null) "12" else "11")
         val idx00 = nextTags.indexOfFirst { it.id == "00" }
         nextTags.add(if (idx00 >= 0) idx00 + 1 else 0, initTag)
+        if (nextTags.none { it.id == "53" }) nextTags.add(EmvTag("53", "608"))
+        if (nextTags.none { it.id == "58" }) nextTags.add(EmvTag("58", "PH"))
 
-        if (nextTags.none { it.id == "53" }) nextTags.add(EmvTlvTag("53", 3, "608"))
-        if (nextTags.none { it.id == "58" }) nextTags.add(EmvTlvTag("58", 2, "PH"))
-
-        if (formattedAmount != null) {
-            val amtTag = EmvTlvTag("54", formattedAmount.length, formattedAmount)
-            val insertIdx = nextTags.indexOfFirst { (it.id.toIntOrNull() ?: 99) > 54 }
-            if (insertIdx >= 0) nextTags.add(insertIdx, amtTag) else nextTags.add(amtTag)
+        if (formattedAmt != null) {
+            val amtTag = EmvTag("54", formattedAmt)
+            val idx = nextTags.indexOfFirst { (it.id.toIntOrNull() ?: 99) > 54 }
+            if (idx >= 0) nextTags.add(idx, amtTag) else nextTags.add(amtTag)
         }
 
-        val bodyPlusCrcPrefix = serializeEmvTlv(nextTags) + "6304"
-        val crc = crc16CcittFalse(bodyPlusCrcPrefix)
-        return Result.success((bodyPlusCrcPrefix + crc) to formattedAmount)
+        val serialized = nextTags.joinToString("") { "${it.id}${String.format(Locale.US, "%02d", it.value.length)}${it.value}" } + "6304"
+        return serialized + crc16CcittFalse(serialized)
     }
 
-    fun resolveCheckoutQrState(settings: StoreSettings, amountPeso: Double): ResolvedCheckoutQr {
-        val cleanAmt = PosMath.round2(amountPeso.coerceAtLeast(0.0))
-        val rawEmv = (settings.qrEmvPayload ?: "").trim()
-        val rawImg = (settings.qrImageDataUrl ?: "").trim()
-        val acct = (settings.qrAccountNumber ?: "").trim()
-        val label = (settings.qrPayLabel ?: "").trim().ifEmpty { "QR Ph / GCash" }
-        val fallbackName = (settings.qrMerchantName ?: settings.storeName).trim().ifEmpty { "Store Merchant" }
+    fun resolveCheckoutQr(settings: StoreSettings, amountPeso: Double): ResolvedQr {
+        val amt = PosMath.round2(max(0.0, amountPeso))
+        val emv = settings.qrEmvPayload?.trim().orEmpty()
+        val acct = settings.qrAccountNumber?.trim().orEmpty()
+        val label = settings.qrPayLabel?.trim().takeIf { !it.isNullOrEmpty() } ?: "QR Ph / GCash"
+        val merchant = settings.qrMerchantName?.trim().takeIf { !it.isNullOrEmpty() } ?: settings.storeName
 
-        if (rawEmv.isNotEmpty()) {
-            val parsed = parseEmvCoQr(rawEmv)
-            if (parsed is ParseEmvCoResult.Success && parsed.crcValid) {
-                val patched = patchEmvCoQrAmount(rawEmv, cleanAmt).getOrNull()
-                if (patched != null) {
-                    return ResolvedCheckoutQr(
-                        mode = CheckoutQrMode.EMVCO,
-                        channelLabel = (settings.qrPayLabel ?: "").trim().ifEmpty { parsed.channelLabel },
-                        merchantName = (settings.qrMerchantName ?: "").trim().ifEmpty { parsed.merchantName }.ifEmpty { fallbackName },
-                        accountNumber = acct,
-                        amount = cleanAmt,
-                        qrPayload = patched.first,
-                        qrImageDataUrl = null,
-                        isDynamicAmount = cleanAmt > 0.0
-                    )
+        if (emv.isNotEmpty()) {
+            val patched = patchEmvAmount(emv, amt)
+            return ResolvedQr(
+                mode = "EMVCO",
+                channelLabel = label,
+                merchantName = merchant,
+                accountNumber = acct,
+                amount = amt,
+                qrPayload = patched ?: emv,
+                isDynamicAmount = patched != null && amt > 0.0
+            )
+        }
+        if (acct.isNotEmpty()) {
+            return ResolvedQr(
+                mode = "MANUAL",
+                channelLabel = label,
+                merchantName = merchant,
+                accountNumber = acct,
+                amount = amt
+            )
+        }
+        return ResolvedQr(
+            mode = "UNCONFIGURED",
+            channelLabel = label,
+            merchantName = merchant,
+            accountNumber = "",
+            amount = amt
+        )
+    }
+
+    fun renderQrBitmap(payload: String, sizePx: Int = 512): Bitmap? {
+        if (payload.isBlank()) return null
+        return try {
+            val hints = mapOf(EncodeHintType.MARGIN to 1)
+            val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
+            val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+            for (x in 0 until sizePx) {
+                for (y in 0 until sizePx) {
+                    bmp.setPixel(x, y, if (matrix.get(x, y)) Color.BLACK else Color.WHITE)
                 }
             }
-            if (!rawEmv.startsWith("000201")) {
-                return ResolvedCheckoutQr(
-                    mode = CheckoutQrMode.EMVCO,
-                    channelLabel = label,
-                    merchantName = fallbackName,
-                    accountNumber = acct,
-                    amount = cleanAmt,
-                    qrPayload = rawEmv,
-                    qrImageDataUrl = null,
-                    isDynamicAmount = false
-                )
-            }
-            if (rawImg.isEmpty() && acct.isEmpty()) {
-                return ResolvedCheckoutQr(
-                    mode = CheckoutQrMode.UNCONFIGURED,
-                    channelLabel = label,
-                    merchantName = fallbackName,
-                    accountNumber = acct,
-                    amount = cleanAmt,
-                    qrPayload = null,
-                    qrImageDataUrl = null,
-                    isDynamicAmount = false,
-                    error = if (parsed is ParseEmvCoResult.Error) parsed.error else "Invalid QR Ph checksum"
-                )
-            }
+            bmp
+        } catch (_: Exception) {
+            null
         }
-
-        if (rawImg.isNotEmpty()) {
-            return ResolvedCheckoutQr(
-                mode = CheckoutQrMode.IMAGE,
-                channelLabel = label,
-                merchantName = fallbackName,
-                accountNumber = acct,
-                amount = cleanAmt,
-                qrPayload = null,
-                qrImageDataUrl = rawImg,
-                isDynamicAmount = false
-            )
-        }
-
-        if (acct.isNotEmpty()) {
-            return ResolvedCheckoutQr(
-                mode = CheckoutQrMode.MANUAL,
-                channelLabel = label,
-                merchantName = fallbackName,
-                accountNumber = acct,
-                amount = cleanAmt,
-                qrPayload = null,
-                qrImageDataUrl = null,
-                isDynamicAmount = false
-            )
-        }
-
-        return ResolvedCheckoutQr(
-            mode = CheckoutQrMode.UNCONFIGURED,
-            channelLabel = label,
-            merchantName = fallbackName,
-            accountNumber = "",
-            amount = cleanAmt,
-            qrPayload = null,
-            qrImageDataUrl = null,
-            isDynamicAmount = false
-        )
-    }
-
-    fun buildMerchantQrPhString(
-        merchantName: String,
-        merchantCity: String = "MANGATAREM",
-        merchantAccount: String = "09170000000",
-        amount: Double? = null
-    ): String {
-        val name = merchantName.trim().ifEmpty { "STORE MERCHANT" }.take(25)
-        val city = merchantCity.trim().ifEmpty { "MANGATAREM" }.take(15)
-        val acct = merchantAccount.trim().ifEmpty { "09170000000" }.take(32)
-
-        val tag27Val = serializeEmvTlv(
-            listOf(
-                EmvTlvTag("00", 9, "ph.p2m.01"),
-                EmvTlvTag("01", acct.length, acct)
-            )
-        )
-        val root = mutableListOf(
-            EmvTlvTag("00", 2, "01"),
-            EmvTlvTag("01", 2, if (amount != null && amount > 0.0) "12" else "11"),
-            EmvTlvTag("27", tag27Val.length, tag27Val),
-            EmvTlvTag("52", 4, "5411"),
-            EmvTlvTag("53", 3, "608")
-        )
-        if (amount != null && amount > 0.0) {
-            val amtStr = String.format(Locale.US, "%.2f", PosMath.round2(amount))
-            root.add(EmvTlvTag("54", amtStr.length, amtStr))
-        }
-        root.add(EmvTlvTag("58", 2, "PH"))
-        root.add(EmvTlvTag("59", name.length, name))
-        root.add(EmvTlvTag("60", city.length, city))
-
-        val bodyPlusCrcPrefix = serializeEmvTlv(root) + "6304"
-        return bodyPlusCrcPrefix + crc16CcittFalse(bodyPlusCrcPrefix)
     }
 }

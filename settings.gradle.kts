@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "EternalBlue POS"
+rootProject.name = "EternalBluePOS"
 include(":app")

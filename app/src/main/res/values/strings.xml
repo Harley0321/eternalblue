@@ -1,13 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">EternalBlue POS</string>
-    <string name="tab_pos">POS</string>
-    <string name="tab_inventory">Inventory</string>
-    <string name="tab_operations">Store Ops</string>
-    <string name="tab_sales">Sales</string>
-    <string name="tab_settings">Settings</string>
-    <string name="empty_basket_title">Basket is empty</string>
-    <string name="empty_basket_subtitle">Tap any item, scan a barcode, or type 5*code</string>
-    <string name="checkout_pay">Checkout &amp; Pay</string>
-    <string name="error_invalid_pin">Incorrect PIN. Please check and try again.</string>
 </resources>
