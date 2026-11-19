@@ -3,13 +3,14 @@ package com.example.hardware
 import com.example.domain.PosMath
 import com.example.model.SaleRecord
 import com.example.model.StoreSettings
+import java.util.Locale
 
 object EscPosPrinter {
     fun formatReceiptText(sale: SaleRecord, settings: StoreSettings): String {
         val width = if (settings.receiptWidth == "58mm") 32 else 42
         val sep = "-".repeat(width)
         val sb = StringBuilder()
-        sb.appendLine(settings.storeName.uppercase())
+        sb.appendLine(settings.storeName.uppercase(Locale.ROOT))
         sb.appendLine(settings.storeAddress)
         if (settings.storeTin.isNotBlank()) sb.appendLine(settings.storeTin)
         if (settings.storePhone.isNotBlank()) sb.appendLine("Tel: ${settings.storePhone}")

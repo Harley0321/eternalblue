@@ -1,4 +1,4 @@
-name: Build & Release Android APK
+name: Build & Release Signed Android APK
 
 on:
   push:
@@ -27,25 +27,37 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Restore consistent debug signing keystore
+      - name: Restore Release or Fallback Signing Keystore
+        id: sign
         env:
-          KEYSTORE_SECRET: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          REL_KS: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          REL_STORE_PASS: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          REL_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          REL_KEY_PASS: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          DBG_KS: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
-          if [ -n "$KEYSTORE_SECRET" ]; then
-            echo "$KEYSTORE_SECRET" | base64 -d > debug.keystore
+          if [ -n "$REL_KS" ] && [ -n "$REL_STORE_PASS" ] && [ -n "$REL_ALIAS" ]; then
+            echo "$REL_KS" | base64 -d > release.keystore
+            echo "RELEASE_KEYSTORE_PATH=${PWD}/release.keystore" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_PASSWORD=$REL_STORE_PASS" >> "$GITHUB_ENV"
+            echo "RELEASE_KEY_ALIAS=$REL_ALIAS" >> "$GITHUB_ENV"
+            echo "RELEASE_KEY_PASSWORD=${REL_KEY_PASS:-$REL_STORE_PASS}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$DBG_KS" ]; then
+            echo "$DBG_KS" | base64 -d > debug.keystore
           elif [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
           else
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Build signed APK
+      - name: Build non-debuggable minified Release APK
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleRelease --no-daemon
 
-      - name: Prepare versioned update & OTA manifest
+      - name: Prepare versioned release & OTA manifest
         id: meta
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
@@ -56,7 +68,7 @@ jobs:
             VERSION_NAME="2.3.${GITHUB_RUN_NUMBER}"
           fi
           APK_NAME="EternalBlue-POS-${TAG}.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "$APK_NAME"
+          cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
           SHA256=$(sha256sum "$APK_NAME" | awk '{print $1}')
           cat <<EOF > update-manifest.json
           {

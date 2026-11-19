@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,11 +37,30 @@ import com.example.ui.theme.SlateBorder
 import com.example.ui.theme.SlateMuted
 import com.example.viewmodel.PosUiState
 import com.example.viewmodel.PosViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsSecuritySection(state: PosUiState, vm: PosViewModel) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var confirmReset by remember { mutableStateOf(false) }
+    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val content = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.getOrNull()
+            }
+            if (content.isNullOrBlank()) {
+                vm.toast("Could not read backup file", com.example.model.ToastType.ERROR)
+            } else {
+                vm.importBackupJson(content)
+            }
+        }
+    }
 
     Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, SlateBorder)) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(14.dp)) {
@@ -72,15 +94,21 @@ fun SettingsSecuritySection(state: PosUiState, vm: PosViewModel) {
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Export Backup JSON", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Export Backup", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
                 OutlinedButton(
-                    onClick = { confirmReset = true },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = RoseDanger),
+                    onClick = { restoreLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Factory Reset", fontSize = 12.sp)
+                    Text("Restore Backup", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
+            }
+            OutlinedButton(
+                onClick = { confirmReset = true },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = RoseDanger),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Factory Reset", fontSize = 12.sp)
             }
             Text("Security Audit Entries: ${state.securityLog.size}", fontSize = 11.sp, color = SlateMuted)
         }
@@ -90,7 +118,7 @@ fun SettingsSecuritySection(state: PosUiState, vm: PosViewModel) {
         AlertDialog(
             onDismissRequest = { confirmReset = false },
             title = { Text("Reset Store Data?", fontWeight = FontWeight.Bold) },
-            text = { Text("This clears all sales and restores default Philippine retail seed data.") },
+            text = { Text("This clears all sales and restores default Philippine retail seed data while keeping your Store Name.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmReset = false

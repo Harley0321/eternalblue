@@ -100,8 +100,8 @@ fun ProductModal(state: PosUiState, vm: PosViewModel) {
         confirmButton = {
             Button(
                 onClick = {
-                    val retailVal = retail.toDoubleOrNull() ?: 0.0
-                    val wsVal = wholesale.toDoubleOrNull() ?: retailVal
+                    val retailVal = (retail.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0)
+                    val wsVal = (wholesale.toDoubleOrNull() ?: retailVal).coerceAtLeast(0.0)
                     vm.saveProduct(
                         Product(
                             id = existing?.id ?: "p-${System.currentTimeMillis()}",
@@ -109,17 +109,20 @@ fun ProductModal(state: PosUiState, vm: PosViewModel) {
                             name = name.trim(),
                             category = category.trim().ifEmpty { "General" },
                             unit = unit.trim().ifEmpty { "pc" },
-                            capital = capital.toDoubleOrNull(),
+                            capital = capital.toDoubleOrNull()?.takeIf { it.isFinite() }?.coerceAtLeast(0.0),
                             retailPrice = retailVal,
                             wholesalePrice = wsVal,
-                            wholesaleMinQty = minQty.toDoubleOrNull() ?: 10.0,
-                            stock = stock.toDoubleOrNull() ?: 0.0,
+                            wholesaleMinQty = (minQty.toDoubleOrNull() ?: 10.0).coerceAtLeast(1.0),
+                            stock = (stock.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0),
+                            lowStockThreshold = existing?.lowStockThreshold,
                             expiry = expiry.trim().takeIf { it.isNotEmpty() },
-                            scEligible = scElig
+                            scEligible = scElig,
+                            icon = existing?.icon,
+                            iconColor = existing?.iconColor
                         )
                     )
                 },
-                enabled = name.isNotBlank() && (retail.toDoubleOrNull() ?: 0.0) > 0.0,
+                enabled = name.isNotBlank() && (retail.toDoubleOrNull()?.let { it.isFinite() && it > 0.0 } == true),
                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
             ) { Text("Save") }
         },

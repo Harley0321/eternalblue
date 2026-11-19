@@ -111,11 +111,13 @@ private fun CameraBarcodePreview(
     val scanner = remember { BarcodeScanning.getClient() }
     var lastCode by remember { mutableStateOf("") }
     var lastTime by remember { mutableStateOf(0L) }
+    var disposed by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         onDispose {
+            disposed = true
             executor.shutdown()
-            scanner.close()
+            runCatching { scanner.close() }
         }
     }
 
@@ -124,26 +126,34 @@ private fun CameraBarcodePreview(
             val previewView = PreviewView(ctx)
             val future = ProcessCameraProvider.getInstance(ctx)
             future.addListener({
-                val provider = future.get()
+                if (disposed) return@addListener
+                val provider = runCatching { future.get() }.getOrNull() ?: return@addListener
                 val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
                 val analysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                 analysis.setAnalyzer(executor) { proxy ->
+                    if (disposed) {
+                        proxy.close()
+                        return@setAnalyzer
+                    }
                     val mediaImage = proxy.image
                     if (mediaImage != null) {
                         val img = InputImage.fromMediaImage(mediaImage, proxy.imageInfo.rotationDegrees)
-                        scanner.process(img)
-                            .addOnSuccessListener { list ->
-                                val raw = list.firstOrNull()?.rawValue?.trim()
-                                val now = System.currentTimeMillis()
-                                if (!raw.isNullOrEmpty() && (raw != lastCode || now - lastTime > 1400)) {
-                                    lastCode = raw
-                                    lastTime = now
-                                    previewView.post { onCode(raw) }
+                        runCatching {
+                            scanner.process(img)
+                                .addOnSuccessListener { list ->
+                                    if (disposed) return@addOnSuccessListener
+                                    val raw = list.firstOrNull()?.rawValue?.trim()
+                                    val now = System.currentTimeMillis()
+                                    if (!raw.isNullOrEmpty() && (raw != lastCode || now - lastTime > 1400)) {
+                                        lastCode = raw
+                                        lastTime = now
+                                        previewView.post { if (!disposed) onCode(raw) }
+                                    }
                                 }
-                            }
-                            .addOnCompleteListener { proxy.close() }
+                                .addOnCompleteListener { proxy.close() }
+                        }.onFailure { proxy.close() }
                     } else {
                         proxy.close()
                     }

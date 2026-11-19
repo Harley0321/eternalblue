@@ -219,17 +219,19 @@ fun RepackSubTab(state: PosUiState, vm: PosViewModel) {
             }
         }
         if (state.products.size >= 2) {
+            val safeMasterIdx = masterIdx.coerceIn(0, state.products.lastIndex)
+            val safeTargetIdx = targetIdx.coerceIn(0, state.products.lastIndex)
             item {
                 Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, SlateBorder)) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(12.dp)) {
                         Text("Create New Repack Rule", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         OutlinedTextField(value = ruleName, onValueChange = { ruleName = it }, label = { Text("Rule Label") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedButton(onClick = { masterIdx = (masterIdx + 1) % state.products.size }, modifier = Modifier.weight(1f)) {
-                                Text("Bulk: ${state.products[masterIdx].name.take(14)}", fontSize = 11.sp)
+                            OutlinedButton(onClick = { masterIdx = (safeMasterIdx + 1) % state.products.size }, modifier = Modifier.weight(1f)) {
+                                Text("Bulk: ${state.products[safeMasterIdx].name.take(14)}", fontSize = 11.sp)
                             }
-                            OutlinedButton(onClick = { targetIdx = (targetIdx + 1) % state.products.size }, modifier = Modifier.weight(1f)) {
-                                Text("Tingi: ${state.products[targetIdx].name.take(14)}", fontSize = 11.sp)
+                            OutlinedButton(onClick = { targetIdx = (safeTargetIdx + 1) % state.products.size }, modifier = Modifier.weight(1f)) {
+                                Text("Tingi: ${state.products[safeTargetIdx].name.take(14)}", fontSize = 11.sp)
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -242,7 +244,7 @@ fun RepackSubTab(state: PosUiState, vm: PosViewModel) {
                                 modifier = Modifier.weight(1f)
                             )
                             Button(onClick = {
-                                vm.addRepackRule(ruleName, state.products[masterIdx].id, state.products[targetIdx].id, yieldStr.toDoubleOrNull() ?: 10.0)
+                                vm.addRepackRule(ruleName, state.products[safeMasterIdx].id, state.products[safeTargetIdx].id, yieldStr.toDoubleOrNull() ?: 10.0)
                                 ruleName = ""
                             }) { Text("Add Rule") }
                         }
@@ -429,7 +431,9 @@ fun PrintingSubTab(state: PosUiState, vm: PosViewModel) {
                     onClick = {
                         val csv = buildString {
                             appendLine("Barcode,Name,Category,RetailPrice,WholesalePrice")
-                            state.products.forEach { appendLine("${it.barcode},\"${it.name}\",\"${it.category}\",${it.retailPrice},${it.wholesalePrice}") }
+                            state.products.forEach {
+                                appendLine("${safeCsvCell(it.barcode)},${safeCsvCell(it.name)},${safeCsvCell(it.category)},${it.retailPrice},${it.wholesalePrice}")
+                            }
                         }
                         AndroidDeviceBridge.shareTextFile(ctx, "eternalblue_shelf_labels.csv", csv, "text/csv")
                     },
@@ -440,4 +444,13 @@ fun PrintingSubTab(state: PosUiState, vm: PosViewModel) {
             }
         }
     }
+}
+
+private fun safeCsvCell(raw: String): String {
+    val clean = raw.replace("\r", " ").replace("\n", " ")
+    val trimmed = clean.trimStart()
+    val neutralized = if (trimmed.startsWith("=") || trimmed.startsWith("+") || trimmed.startsWith("-") || trimmed.startsWith("@")) {
+        "'$clean"
+    } else clean
+    return "\"${neutralized.replace("\"", "\"\"")}\""
 }

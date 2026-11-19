@@ -162,7 +162,11 @@ fun SmallModalsHost(state: PosUiState, vm: PosViewModel) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Icons.Filled.Lock, contentDescription = null, tint = EmeraldPrimary, modifier = Modifier.size(20.dp))
                             Text(
-                                if (mode == "setPin") "Set Manager PIN" else "Manager PIN",
+                                when (mode) {
+                                    "setPin" -> "Set Manager PIN"
+                                    "unlockVoid" -> "Authorize Void (PIN)"
+                                    else -> "Manager PIN"
+                                },
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 17.sp,
                                 color = SlateText

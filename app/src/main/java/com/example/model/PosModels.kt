@@ -322,6 +322,14 @@ data class ToastItem(
 )
 
 @Serializable
+data class ActiveCartSnapshot(
+    val cart: List<CartLine> = emptyList(),
+    val priceMode: PriceType = PriceType.retail,
+    val isSeniorPwd: Boolean = false,
+    val seniorId: String = ""
+)
+
+@Serializable
 data class PosBackupPayload(
     val app: String = "eternalblue-pos",
     val version: String = "2.3.0",
@@ -333,7 +341,10 @@ data class PosBackupPayload(
     val sukiCustomers: List<SukiCustomer> = emptyList(),
     val utangTransactions: List<UtangTransaction> = emptyList(),
     val repackRules: List<RepackRule> = emptyList(),
+    val repackLog: List<RepackLogEntry> = emptyList(),
     val drawerEvents: List<CashDrawerEvent> = emptyList(),
     val digitalServices: List<DigitalServiceEntry> = emptyList(),
-    val stockLog: List<StockLogEntry> = emptyList()
+    val stockLog: List<StockLogEntry> = emptyList(),
+    val cashiers: List<CashierAccount> = emptyList(),
+    val activeShift: ActiveShiftState? = null
 )

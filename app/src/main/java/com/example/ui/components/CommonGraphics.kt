@@ -13,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -50,11 +52,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -94,69 +99,109 @@ fun GlowingEmeraldStoreName(
         label = "glowPulse"
     )
 
-    val baseStyle = TextStyle(
-        fontSize = fontSize,
-        fontWeight = FontWeight.ExtraBold,
-        letterSpacing = 0.3.sp
-    )
+    val currentDensity = LocalDensity.current
+    // Isolate Store Name typography from Android system Font Size / Accessibility scaling
+    val lockedDensity = remember(currentDensity.density) {
+        Density(density = currentDensity.density, fontScale = 1.0f)
+    }
 
-    Box(modifier = modifier) {
-        // Layer 1: Wide atmospheric Cyber-Emerald bloom
-        Text(
-            text = text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = Color.Transparent,
-            style = baseStyle.copy(
-                shadow = Shadow(
-                    color = EmeraldGlowNeon.copy(alpha = 0.55f * glowPulse),
-                    offset = Offset.Zero,
-                    blurRadius = 28f
-                )
+    CompositionLocalProvider(LocalDensity provides lockedDensity) {
+        val textMeasurer = rememberTextMeasurer()
+        BoxWithConstraints(modifier = modifier) {
+            val maxWidthPx = constraints.maxWidth
+            val fittedSize = remember(text, fontSize, maxWidthPx, lockedDensity) {
+                if (maxWidthPx <= 0 || maxWidthPx == Int.MAX_VALUE) {
+                    fontSize
+                } else {
+                    var candidate = fontSize.value
+                    val minSize = 12f
+                    while (candidate > minSize) {
+                        val measured = textMeasurer.measure(
+                            text = text,
+                            style = TextStyle(
+                                fontSize = candidate.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        if (measured.size.width <= maxWidthPx) break
+                        candidate -= 0.5f
+                    }
+                    candidate.coerceAtLeast(minSize).sp
+                }
+            }
+
+            val baseStyle = TextStyle(
+                fontSize = fittedSize,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 0.3.sp
             )
-        )
-        // Layer 2: Mid saturated emerald aura
-        Text(
-            text = text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = Color.Transparent,
-            style = baseStyle.copy(
-                shadow = Shadow(
-                    color = EmeraldPrimary.copy(alpha = 0.90f),
-                    offset = Offset.Zero,
-                    blurRadius = 14f
+
+            Box {
+                // Layer 1: Wide atmospheric Cyber-Emerald bloom
+                Text(
+                    text = text,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    color = Color.Transparent,
+                    style = baseStyle.copy(
+                        shadow = Shadow(
+                            color = EmeraldGlowNeon.copy(alpha = 0.55f * glowPulse),
+                            offset = Offset.Zero,
+                            blurRadius = 28f
+                        )
+                    )
                 )
-            )
-        )
-        // Layer 3: Tight luminous mint-emerald rim
-        Text(
-            text = text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = Color.Transparent,
-            style = baseStyle.copy(
-                shadow = Shadow(
-                    color = EmeraldGlowHighlight.copy(alpha = 0.95f * glowPulse),
-                    offset = Offset.Zero,
-                    blurRadius = 5f
+                // Layer 2: Mid saturated emerald aura
+                Text(
+                    text = text,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    color = Color.Transparent,
+                    style = baseStyle.copy(
+                        shadow = Shadow(
+                            color = EmeraldPrimary.copy(alpha = 0.90f),
+                            offset = Offset.Zero,
+                            blurRadius = 14f
+                        )
+                    )
                 )
-            )
-        )
-        // Layer 4: Crisp, high-contrast emerald green core
-        Text(
-            text = text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = EmeraldGlowCore,
-            style = baseStyle.copy(
-                shadow = Shadow(
-                    color = EmeraldGlowNeon.copy(alpha = 0.45f),
-                    offset = Offset.Zero,
-                    blurRadius = 2f
+                // Layer 3: Tight luminous mint-emerald rim
+                Text(
+                    text = text,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    color = Color.Transparent,
+                    style = baseStyle.copy(
+                        shadow = Shadow(
+                            color = EmeraldGlowHighlight.copy(alpha = 0.95f * glowPulse),
+                            offset = Offset.Zero,
+                            blurRadius = 5f
+                        )
+                    )
                 )
-            )
-        )
+                // Layer 4: Crisp, high-contrast emerald green core
+                Text(
+                    text = text,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    color = EmeraldGlowCore,
+                    style = baseStyle.copy(
+                        shadow = Shadow(
+                            color = EmeraldGlowNeon.copy(alpha = 0.45f),
+                            offset = Offset.Zero,
+                            blurRadius = 2f
+                        )
+                    )
+                )
+            }
+        }
     }
 }
 

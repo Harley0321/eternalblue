@@ -13,6 +13,7 @@ import com.example.domain.PosMath
 import com.example.hardware.AndroidDeviceBridge
 import com.example.hardware.UpdateEvents
 import com.example.hardware.UpdateSessionEvent
+import com.example.model.ActiveCartSnapshot
 import com.example.model.ActiveShiftState
 import com.example.model.CartLine
 import com.example.model.CartTotals
@@ -50,6 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import java.time.Instant
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToLong
 
@@ -97,7 +99,8 @@ data class PosUiState(
     val heldOrdersModalOpen: Boolean = false,
     val holdCartModalOpen: Boolean = false,
     val voidSaleTarget: SaleRecord? = null,
-    val pinModalMode: String? = null, // null | unlockSettings | setPin | unlockTerminal
+    val pendingVoidSale: SaleRecord? = null,
+    val pinModalMode: String? = null, // null | unlockSettings | setPin | unlockTerminal | unlockVoid
     val pinBusy: Boolean = false,
     val pinError: String? = null,
     val pinFailCount: Int = 0,
@@ -124,6 +127,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<PosUiState> = _state.asStateFlow()
     private var lastAutoCheckAtMs: Long = 0L
     private var autoAppliedTag: String? = null
+    private var lastBackgroundedAtMs: Long = 0L
+    private var checkoutBusy: Boolean = false
 
     init {
         val products = repo.loadProducts()
@@ -137,11 +142,16 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         val dEvents = repo.loadDrawerEvents()
         val dServ = repo.loadDigitalServices()
         val cashiers = repo.loadCashiers()
-        val activeShift = repo.loadActiveShift() ?: cashiers.firstOrNull()?.let { c ->
-            ActiveShiftState("SHIFT-INIT", c.id, c.name, c.role, Instant.now().toString(), 1500.0)
+        val existingShift = repo.loadActiveShift()
+        val activeShift = existingShift ?: cashiers.firstOrNull()?.let { c ->
+            ActiveShiftState("SHIFT-INIT", c.id, c.name, c.role, Instant.now().toString(), 1500.0).also {
+                repo.saveActiveShift(it)
+            }
         }
         val stockLog = repo.loadStockLog()
         val secLog = repo.loadSecurityLog()
+        val cartSnap = repo.loadActiveCart()
+        val (pinFails, pinLockoutUntil) = repo.loadPinLockState()
         val pinConf = !settings.adminPinHash.isNullOrBlank()
         val welcome = AssistantEngine.welcome(AssistantEngine.Lang.EN)
 
@@ -160,8 +170,14 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             activeShift = activeShift,
             stockLog = stockLog,
             securityLog = secLog,
+            cart = cartSnap.cart,
+            priceMode = cartSnap.priceMode,
+            isSeniorPwd = cartSnap.isSeniorPwd,
+            seniorId = cartSnap.seniorId,
             settingsUnlocked = !pinConf,
             terminalLocked = pinConf && settings.lockWholePos,
+            pinFailCount = pinFails,
+            pinLockoutUntilMs = pinLockoutUntil,
             assistantMessages = listOf(
                 AssistantEngine.ChatMessage(1L, false, welcome.text, emptyList(), welcome.chips)
             )
@@ -209,19 +225,30 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     fun setStockFilter(f: StockFilter) = _state.update { it.copy(stockFilter = f) }
     fun setStockSort(s: StockSort) = _state.update { it.copy(stockSort = s) }
 
+    private fun persistCartState(st: PosUiState = _state.value) {
+        repo.saveActiveCart(
+            ActiveCartSnapshot(
+                cart = st.cart,
+                priceMode = st.priceMode,
+                isSeniorPwd = st.isSeniorPwd,
+                seniorId = st.seniorId
+            )
+        )
+    }
+
     fun togglePriceMode(mode: PriceType) {
         _state.update { st ->
             val updated = st.cart.map { it.copy(priceType = mode) }
-            st.copy(priceMode = mode, cart = updated)
+            st.copy(priceMode = mode, cart = updated).also(::persistCartState)
         }
     }
 
     fun toggleSeniorPwd(enabled: Boolean) {
-        _state.update { it.copy(isSeniorPwd = enabled) }
+        _state.update { it.copy(isSeniorPwd = enabled).also(::persistCartState) }
     }
 
     fun setSeniorId(id: String) {
-        _state.update { it.copy(seniorId = id) }
+        _state.update { it.copy(seniorId = id).also(::persistCartState) }
     }
 
     fun addToCart(product: Product, qtyDelta: Double = 1.0) {
@@ -247,7 +274,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     qty = qtyDelta.coerceAtMost(product.stock)
                 )
             }
-            st.copy(cart = nextCart)
+            st.copy(cart = nextCart).also(::persistCartState)
         }
     }
 
@@ -263,7 +290,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     if (it.productId == productId) it.copy(qty = clean.coerceAtMost(maxStock)) else it
                 }
             }
-            st.copy(cart = nextCart)
+            st.copy(cart = nextCart).also(::persistCartState)
         }
     }
 
@@ -275,11 +302,13 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(priceType = nextType)
                 } else it
             }
-            st.copy(cart = nextCart)
+            st.copy(cart = nextCart).also(::persistCartState)
         }
     }
 
-    fun clearCart() = _state.update { it.copy(cart = emptyList(), isSeniorPwd = false, seniorId = "") }
+    fun clearCart() = _state.update {
+        it.copy(cart = emptyList(), isSeniorPwd = false, seniorId = "").also(::persistCartState)
+    }
 
     fun setHoldCartOpen(open: Boolean) = _state.update { it.copy(holdCartModalOpen = open) }
     fun setHeldOrdersOpen(open: Boolean) = _state.update { it.copy(heldOrdersModalOpen = open) }
@@ -305,7 +334,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 isSeniorPwd = false,
                 seniorId = "",
                 holdCartModalOpen = false
-            )
+            ).also(::persistCartState)
         }
         toast("Order parked (${order.label})")
     }
@@ -322,7 +351,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 priceMode = order.priceMode ?: PriceType.retail,
                 heldOrdersModalOpen = false,
                 activeTab = TabName.POS
-            )
+            ).also(::persistCartState)
         }
         toast("Recalled ${order.label ?: order.id}")
     }
@@ -357,133 +386,151 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         redeemPoints: Int = 0
     ) {
         val st = _state.value
-        if (st.cart.isEmpty()) return
-        val totals = st.cartTotals
-        val map = st.productMap
+        if (checkoutBusy || st.cart.isEmpty()) return
+        checkoutBusy = true
+        try {
+            val totals = st.cartTotals
+            val map = st.productMap
 
-        val suki = customerId?.let { cid -> st.sukiCustomers.firstOrNull { it.id == cid } }
-        val pointVal = st.settings.loyaltyPointValue.takeIf { it > 0.0 } ?: 1.0
-        val usedPoints = if (suki != null && redeemPoints > 0) {
-            minOf(redeemPoints, suki.points, (totals.grandTotal / pointVal).toInt())
-        } else 0
-        val pointsDiscount = PosMath.round2(usedPoints * pointVal)
-        val payable = max(0.0, PosMath.round2(totals.grandTotal - pointsDiscount))
+            val suki = customerId?.let { cid -> st.sukiCustomers.firstOrNull { it.id == cid } }
+            val pointVal = st.settings.loyaltyPointValue.takeIf { it > 0.0 } ?: 1.0
+            val usedPoints = if (suki != null && redeemPoints > 0) {
+                minOf(redeemPoints, suki.points, (totals.grandTotal / pointVal).toInt())
+            } else 0
+            val pointsDiscount = PosMath.round2(usedPoints * pointVal)
+            val payable = max(0.0, PosMath.round2(totals.grandTotal - pointsDiscount))
 
-        if (paymentMethod == "Cash" && tendered + 0.001 < payable) {
-            toast("Insufficient cash tendered", ToastType.ERROR)
-            return
-        }
-        if (paymentMethod == "Utang" && suki == null) {
-            toast("Select a Suki customer for Utang checkout", ToastType.ERROR)
-            return
-        }
-
-        val receiptNo = PosMath.nextReceiptNo(st.sales)
-        val nowIso = Instant.now().toString()
-        val saleItems = st.cart.map { line ->
-            val p = map[line.productId]
-            val unitPrice = PosMath.getLinePrice(line, map)
-            SaleItem(
-                productId = line.productId,
-                category = p?.category,
-                name = line.name,
-                qty = line.qty,
-                unit = line.unit,
-                unitPrice = unitPrice,
-                priceType = if (PosMath.isWholesaleLine(line, map)) PriceType.wholesale else PriceType.retail,
-                capital = p?.capital,
-                lineTotal = PosMath.lineTotalPeso(unitPrice, line.qty)
-            )
-        }
-
-        var nextCustomers = st.sukiCustomers
-        var nextUtang = st.utangTransactions
-        val earnedPoints = if (suki != null && paymentMethod != "Utang") {
-            OpsMath.computeLoyaltyPointsEarned(payable, st.settings.loyaltyPesoPerPoint)
-        } else 0
-
-        if (suki != null) {
-            var updatedSuki = suki.copy(
-                points = max(0, suki.points - usedPoints + earnedPoints),
-                totalSpent = if (paymentMethod != "Utang") PosMath.round2(suki.totalSpent + payable) else suki.totalSpent,
-                updatedAt = nowIso
-            )
-            if (paymentMethod == "Utang") {
-                when (val r = OpsMath.applyUtangCharge(
-                    updatedSuki, payable, receiptNo, utangDueDate,
-                    cashierName = st.activeShift?.cashierName
-                )) {
-                    is OpsMath.UtangResult.Err -> {
-                        toast(r.error, ToastType.ERROR)
-                        return
-                    }
-                    is OpsMath.UtangResult.Ok -> {
-                        updatedSuki = r.customer
-                        nextUtang = listOf(r.tx) + nextUtang
-                    }
+            if (!payable.isFinite()) {
+                toast("Invalid checkout total", ToastType.ERROR)
+                return
+            }
+            if (paymentMethod == "Cash" && (!tendered.isFinite() || tendered + 0.001 < payable)) {
+                toast("Insufficient cash tendered", ToastType.ERROR)
+                return
+            }
+            if (paymentMethod == "Split") {
+                val splitValid = splitCash.isFinite() && splitDigital.isFinite() &&
+                    splitCash >= 0.0 && splitDigital >= 0.0 &&
+                    kotlin.math.abs((splitCash + splitDigital) - payable) <= 0.05
+                if (!splitValid) {
+                    toast("Split amounts must be non-negative and equal ${PosMath.formatPeso(payable)}", ToastType.ERROR)
+                    return
                 }
             }
-            nextCustomers = nextCustomers.map { if (it.id == updatedSuki.id) updatedSuki else it }
-        }
+            if (paymentMethod == "Utang" && suki == null) {
+                toast("Select a Suki customer for Utang checkout", ToastType.ERROR)
+                return
+            }
 
-        val change = when (paymentMethod) {
-            "Cash" -> max(0.0, PosMath.round2(tendered - payable))
-            else -> 0.0
-        }
+            val receiptNo = PosMath.nextReceiptNo(st.sales)
+            val nowIso = Instant.now().toString()
+            val saleItems = st.cart.map { line ->
+                val p = map[line.productId]
+                val unitPrice = PosMath.getLinePrice(line, map)
+                SaleItem(
+                    productId = line.productId,
+                    category = p?.category,
+                    name = line.name,
+                    qty = line.qty,
+                    unit = line.unit,
+                    unitPrice = unitPrice,
+                    priceType = if (PosMath.isWholesaleLine(line, map)) PriceType.wholesale else PriceType.retail,
+                    capital = p?.capital,
+                    lineTotal = PosMath.lineTotalPeso(unitPrice, line.qty)
+                )
+            }
 
-        val sale = SaleRecord(
-            receiptNo = receiptNo,
-            dateIso = nowIso,
-            dateFormatted = PosMath.formatDateTime(nowIso),
-            items = saleItems,
-            retailSubtotal = totals.retailSubtotal,
-            wholesaleSavings = totals.wholesaleSavings,
-            seniorDiscount = totals.seniorDiscount,
-            grandTotal = payable,
-            paymentMethod = paymentMethod,
-            tendered = if (paymentMethod == "Cash") tendered else payable,
-            change = change,
-            refNo = refNo?.trim()?.takeIf { it.isNotEmpty() },
-            splitDetails = if (paymentMethod == "Split") SplitDetails(splitCash, splitDigital, splitMethod) else null,
-            seniorId = if (totals.isSeniorPwd) st.seniorId.trim().takeIf { it.isNotEmpty() } else null,
-            seniorBase = if (totals.isSeniorPwd) totals.seniorBase else null,
-            seniorCapped = if (totals.isSeniorPwd) totals.seniorCapped else null,
-            customerId = suki?.id,
-            customerName = suki?.name,
-            pointsEarned = earnedPoints.takeIf { it > 0 },
-            pointsRedeemed = usedPoints.takeIf { it > 0 },
-            pointsDiscount = pointsDiscount.takeIf { it > 0.0 },
-            utangDueDate = utangDueDate?.takeIf { paymentMethod == "Utang" && it.isNotBlank() },
-            cashierName = st.activeShift?.cashierName,
-            shiftId = st.activeShift?.shiftId
-        )
+            var nextCustomers = st.sukiCustomers
+            var nextUtang = st.utangTransactions
+            val earnedPoints = if (suki != null && paymentMethod != "Utang") {
+                OpsMath.computeLoyaltyPointsEarned(payable, st.settings.loyaltyPesoPerPoint)
+            } else 0
 
-        val qtyByPid = st.cart.associate { it.productId to it.qty }
-        val nextProducts = st.products.map { p ->
-            val sold = qtyByPid[p.id] ?: 0.0
-            if (sold > 0.0) p.copy(stock = max(0.0, PosMath.round3(p.stock - sold)), updatedAt = nowIso) else p
-        }
-        val nextSales = listOf(sale) + st.sales
+            if (suki != null) {
+                var updatedSuki = suki.copy(
+                    points = max(0, suki.points - usedPoints + earnedPoints),
+                    totalSpent = if (paymentMethod != "Utang") PosMath.round2(suki.totalSpent + payable) else suki.totalSpent,
+                    updatedAt = nowIso
+                )
+                if (paymentMethod == "Utang") {
+                    when (val r = OpsMath.applyUtangCharge(
+                        updatedSuki, payable, receiptNo, utangDueDate,
+                        cashierName = st.activeShift?.cashierName
+                    )) {
+                        is OpsMath.UtangResult.Err -> {
+                            toast(r.error, ToastType.ERROR)
+                            return
+                        }
+                        is OpsMath.UtangResult.Ok -> {
+                            updatedSuki = r.customer
+                            nextUtang = listOf(r.tx) + nextUtang
+                        }
+                    }
+                }
+                nextCustomers = nextCustomers.map { if (it.id == updatedSuki.id) updatedSuki else it }
+            }
 
-        repo.saveProducts(nextProducts)
-        repo.saveSales(nextSales)
-        repo.saveSukiCustomers(nextCustomers)
-        repo.saveUtangTx(nextUtang)
+            val change = when (paymentMethod) {
+                "Cash" -> max(0.0, PosMath.round2(tendered - payable))
+                else -> 0.0
+            }
 
-        _state.update {
-            it.copy(
-                products = nextProducts,
-                sales = nextSales,
-                sukiCustomers = nextCustomers,
-                utangTransactions = nextUtang,
-                cart = emptyList(),
-                isSeniorPwd = false,
-                seniorId = "",
-                checkoutOpen = false,
-                receiptModalSale = sale
+            val sale = SaleRecord(
+                receiptNo = receiptNo,
+                dateIso = nowIso,
+                dateFormatted = PosMath.formatDateTime(nowIso),
+                items = saleItems,
+                retailSubtotal = totals.retailSubtotal,
+                wholesaleSavings = totals.wholesaleSavings,
+                seniorDiscount = totals.seniorDiscount,
+                grandTotal = payable,
+                paymentMethod = paymentMethod,
+                tendered = if (paymentMethod == "Cash") tendered else payable,
+                change = change,
+                refNo = refNo?.trim()?.takeIf { it.isNotEmpty() },
+                splitDetails = if (paymentMethod == "Split") SplitDetails(PosMath.round2(splitCash), PosMath.round2(splitDigital), splitMethod) else null,
+                seniorId = if (totals.isSeniorPwd) st.seniorId.trim().takeIf { it.isNotEmpty() } else null,
+                seniorBase = if (totals.isSeniorPwd) totals.seniorBase else null,
+                seniorCapped = if (totals.isSeniorPwd) totals.seniorCapped else null,
+                customerId = suki?.id,
+                customerName = suki?.name,
+                pointsEarned = earnedPoints.takeIf { it > 0 },
+                pointsRedeemed = usedPoints.takeIf { it > 0 },
+                pointsDiscount = pointsDiscount.takeIf { it > 0.0 },
+                utangDueDate = utangDueDate?.takeIf { paymentMethod == "Utang" && it.isNotBlank() },
+                cashierName = st.activeShift?.cashierName,
+                shiftId = st.activeShift?.shiftId
             )
+
+            val qtyByPid = st.cart.associate { it.productId to it.qty }
+            val nextProducts = st.products.map { p ->
+                val sold = qtyByPid[p.id] ?: 0.0
+                if (sold > 0.0) p.copy(stock = max(0.0, PosMath.round3(p.stock - sold)), updatedAt = nowIso) else p
+            }
+            val nextSales = listOf(sale) + st.sales
+
+            repo.saveProducts(nextProducts)
+            repo.saveSales(nextSales)
+            repo.saveSukiCustomers(nextCustomers)
+            repo.saveUtangTx(nextUtang)
+
+            _state.update {
+                it.copy(
+                    products = nextProducts,
+                    sales = nextSales,
+                    sukiCustomers = nextCustomers,
+                    utangTransactions = nextUtang,
+                    cart = emptyList(),
+                    isSeniorPwd = false,
+                    seniorId = "",
+                    checkoutOpen = false,
+                    receiptModalSale = sale
+                ).also(::persistCartState)
+            }
+            toast("Sale completed: $receiptNo")
+        } finally {
+            checkoutBusy = false
         }
-        toast("Sale completed: $receiptNo")
     }
 
     // Inventory CRUD & Stock Audit
@@ -507,7 +554,13 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteProduct(id: String) {
-        val next = _state.value.products.filterNot { it.id == id }
+        val st = _state.value
+        if (st.pinConfigured && !st.settingsUnlocked) {
+            openPinModal("unlockSettings")
+            toast("Unlock Settings with Manager PIN to delete products", ToastType.WARNING)
+            return
+        }
+        val next = st.products.filterNot { it.id == id }
         repo.saveProducts(next)
         _state.update { it.copy(products = next, productModalOpen = false, editingProduct = null) }
         toast("Product deleted")
@@ -684,7 +737,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             id = "DRW-${System.currentTimeMillis()}",
             dateIso = Instant.now().toString(),
             type = type,
-            category = category.ifBlank { type.uppercase() },
+            category = category.ifBlank { type.uppercase(Locale.ROOT) },
             amount = PosMath.round2(amount),
             note = note.trim().takeIf { it.isNotEmpty() },
             cashierName = st.activeShift?.cashierName,
@@ -736,13 +789,25 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Sales Void + Z-Read
-    fun requestVoidSale(sale: SaleRecord) = _state.update { it.copy(voidSaleTarget = sale) }
-    fun closeVoidSale() = _state.update { it.copy(voidSaleTarget = null) }
+    fun requestVoidSale(sale: SaleRecord) {
+        val st = _state.value
+        if (st.pinConfigured && !st.settingsUnlocked) {
+            _state.update { it.copy(pendingVoidSale = sale, pinModalMode = "unlockVoid", pinError = null) }
+        } else {
+            _state.update { it.copy(voidSaleTarget = sale) }
+        }
+    }
+
+    fun closeVoidSale() = _state.update { it.copy(voidSaleTarget = null, pendingVoidSale = null) }
 
     fun confirmVoidSale(reason: String) {
         val st = _state.value
         val target = st.voidSaleTarget ?: return
         if (target.voided == true) return
+        if (st.pinConfigured && !st.settingsUnlocked) {
+            requestVoidSale(target)
+            return
+        }
         val now = Instant.now().toString()
         val restoreQty = mutableMapOf<String, Double>()
         for (it in target.items) {
@@ -769,14 +834,19 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
     // Settings & Security PIN
     fun updateSettings(mutator: (StoreSettings) -> StoreSettings) {
-        val next = mutator(_state.value.settings)
+        val prev = _state.value.settings
+        val candidate = mutator(prev)
+        val safeStoreName = candidate.storeName.trim().ifEmpty {
+            prev.storeName.trim().ifEmpty { repo.loadPinnedStoreName() ?: "EternalBlue Mart" }
+        }
+        val next = if (safeStoreName != candidate.storeName) candidate.copy(storeName = safeStoreName) else candidate
         repo.saveSettings(next)
         _state.update { it.copy(settings = next) }
         toast("Settings saved")
     }
 
     fun openPinModal(mode: String) = _state.update { it.copy(pinModalMode = mode, pinError = null) }
-    fun closePinModal() = _state.update { it.copy(pinModalMode = null, pinError = null, pinBusy = false) }
+    fun closePinModal() = _state.update { it.copy(pinModalMode = null, pinError = null, pinBusy = false, pendingVoidSale = null) }
     fun clearPinError() = _state.update { it.copy(pinError = null) }
 
     fun setAdminPin(pin: String) {
@@ -798,6 +868,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             withContext(Dispatchers.IO) {
                 repo.saveSettings(nextSettings)
                 repo.saveSecurityLog(secLog)
+                repo.savePinLockState(0, 0L)
             }
             _state.update {
                 it.copy(
@@ -835,7 +906,11 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 SecurityManager.verifyPin(pin, st.settings.adminPinHash, st.settings.adminPinSalt, st.settings.adminPinIter)
             }
             if (ok) {
-                val ev = if (mode == "unlockTerminal") "POS_UNLOCK" else "SETTINGS_UNLOCK"
+                val ev = when (mode) {
+                    "unlockTerminal" -> "POS_UNLOCK"
+                    "unlockVoid" -> "VOID_AUTH"
+                    else -> "SETTINGS_UNLOCK"
+                }
                 var nextSettings = st.settings
                 if (st.settings.adminPinIter != SecurityManager.DEFAULT_PBKDF2_ITER) {
                     val (fastHash, fastSalt) = withContext(Dispatchers.Default) { SecurityManager.hashPin(pin) }
@@ -849,13 +924,17 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     if (nextSettings != st.settings) repo.saveSettings(nextSettings)
                     repo.saveSecurityLog(secLog)
+                    repo.savePinLockState(0, 0L)
                 }
                 _state.update {
+                    val authorizedVoid = if (mode == "unlockVoid") it.pendingVoidSale else it.voidSaleTarget
                     it.copy(
                         settings = nextSettings,
                         securityLog = secLog,
-                        settingsUnlocked = if (mode == "unlockSettings") true else it.settingsUnlocked,
+                        settingsUnlocked = if (mode == "unlockSettings" || mode == "unlockVoid") true else it.settingsUnlocked,
                         terminalLocked = if (mode == "unlockTerminal") false else it.terminalLocked,
+                        voidSaleTarget = authorizedVoid,
+                        pendingVoidSale = if (mode == "unlockVoid") null else it.pendingVoidSale,
                         pinModalMode = null,
                         pinBusy = false,
                         pinError = null,
@@ -872,7 +951,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 val evType = if (lockedOut) "PIN_LOCKOUT" else "PIN_FAIL"
                 val summary = if (lockedOut) "PIN temporarily locked after $nextFails failed attempts" else "Failed PIN attempt ($nextFails)"
                 val secLog = SecurityManager.appendSecurityEvent(st.securityLog, evType, "warning", summary)
-                withContext(Dispatchers.IO) { repo.saveSecurityLog(secLog) }
+                withContext(Dispatchers.IO) {
+                    repo.saveSecurityLog(secLog)
+                    repo.savePinLockState(nextFails, lockoutMs)
+                }
                 _state.update {
                     it.copy(
                         securityLog = secLog,
@@ -891,38 +973,126 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             toast("Set a Manager PIN in Settings first", ToastType.WARNING)
             return
         }
-        _state.update { it.copy(terminalLocked = true, settingsUnlocked = false, pinError = null) }
+        _state.update {
+            it.copy(
+                terminalLocked = true,
+                settingsUnlocked = false,
+                pendingVoidSale = null,
+                voidSaleTarget = null,
+                pinError = null
+            )
+        }
     }
 
     fun lockSettingsNow() {
-        _state.update { it.copy(settingsUnlocked = false) }
+        _state.update { it.copy(settingsUnlocked = false, pendingVoidSale = null) }
     }
 
     fun exportBackupJson(): String {
         val st = _state.value
+        val sanitizedSettings = st.settings.copy(adminPinHash = null, adminPinSalt = null)
         val payload = PosBackupPayload(
             exportedAt = Instant.now().toString(),
-            settings = st.settings,
+            settings = sanitizedSettings,
             products = st.products,
             sales = st.sales,
             heldOrders = st.heldOrders,
             sukiCustomers = st.sukiCustomers,
             utangTransactions = st.utangTransactions,
             repackRules = st.repackRules,
+            repackLog = st.repackLog,
             drawerEvents = st.drawerEvents,
             digitalServices = st.digitalServices,
-            stockLog = st.stockLog
+            stockLog = st.stockLog,
+            cashiers = st.cashiers,
+            activeShift = st.activeShift
         )
         return repo.json.encodeToString(payload)
     }
 
+    fun importBackupJson(rawJson: String) {
+        val st = _state.value
+        if (st.pinConfigured && !st.settingsUnlocked) {
+            openPinModal("unlockSettings")
+            toast("Unlock Settings with Manager PIN to restore backup", ToastType.WARNING)
+            return
+        }
+        val parsed = runCatching { repo.json.decodeFromString<PosBackupPayload>(rawJson) }.getOrNull()
+        if (parsed == null) {
+            toast("Invalid or unreadable backup JSON file", ToastType.ERROR)
+            return
+        }
+        val restoredStoreName = parsed.settings.storeName.trim().ifEmpty {
+            st.settings.storeName.trim().ifEmpty { repo.loadPinnedStoreName() ?: "EternalBlue Mart" }
+        }
+        val mergedSettings = parsed.settings.copy(
+            storeName = restoredStoreName,
+            adminPinHash = st.settings.adminPinHash,
+            adminPinSalt = st.settings.adminPinSalt,
+            adminPinIter = st.settings.adminPinIter
+        )
+        val nextCashiers = parsed.cashiers.ifEmpty { st.cashiers }
+        val nextShift = parsed.activeShift ?: st.activeShift
+        val secLog = SecurityManager.appendSecurityEvent(
+            st.securityLog,
+            "BACKUP_RESTORED",
+            "info",
+            "Restored ${parsed.products.size} SKUs & ${parsed.sales.size} sales"
+        )
+
+        repo.saveSettings(mergedSettings)
+        repo.saveProducts(parsed.products)
+        repo.saveSales(parsed.sales)
+        repo.saveHeldOrders(parsed.heldOrders)
+        repo.saveSukiCustomers(parsed.sukiCustomers)
+        repo.saveUtangTx(parsed.utangTransactions)
+        repo.saveRepackRules(parsed.repackRules)
+        if (parsed.repackLog.isNotEmpty()) repo.saveRepackLog(parsed.repackLog)
+        repo.saveDrawerEvents(parsed.drawerEvents)
+        repo.saveDigitalServices(parsed.digitalServices)
+        repo.saveStockLog(parsed.stockLog)
+        repo.saveCashiers(nextCashiers)
+        repo.saveActiveShift(nextShift)
+        repo.saveSecurityLog(secLog)
+
+        _state.update {
+            it.copy(
+                settings = mergedSettings,
+                products = parsed.products,
+                sales = parsed.sales,
+                heldOrders = parsed.heldOrders,
+                sukiCustomers = parsed.sukiCustomers,
+                utangTransactions = parsed.utangTransactions,
+                repackRules = parsed.repackRules,
+                repackLog = parsed.repackLog.ifEmpty { it.repackLog },
+                drawerEvents = parsed.drawerEvents,
+                digitalServices = parsed.digitalServices,
+                stockLog = parsed.stockLog,
+                cashiers = nextCashiers,
+                activeShift = nextShift,
+                securityLog = secLog
+            )
+        }
+        toast("Restored ${parsed.products.size} SKUs & ${parsed.sales.size} sales")
+    }
+
     fun factoryResetAll() {
+        val preservedStoreName = _state.value.settings.storeName.trim()
+            .ifEmpty { repo.loadPinnedStoreName() ?: "EternalBlue Mart" }
         repo.resetAll()
+        repo.savePinLockState(0, 0L)
         val products = repo.loadProducts()
         val sales = repo.loadSales()
-        val settings = repo.loadSettings()
+        val settings = repo.loadSettings().copy(storeName = preservedStoreName)
+        repo.saveSettings(settings)
         val suki = repo.loadSukiCustomers()
         val rules = repo.loadRepackRules()
+        val cashiers = repo.loadCashiers()
+        val activeShift = cashiers.firstOrNull()?.let { c ->
+            ActiveShiftState("SHIFT-INIT", c.id, c.name, c.role, Instant.now().toString(), 1500.0).also {
+                repo.saveActiveShift(it)
+            }
+        }
         _state.update {
             PosUiState(
                 products = products,
@@ -930,11 +1100,13 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 settings = settings,
                 sukiCustomers = suki,
                 repackRules = rules,
+                cashiers = cashiers,
+                activeShift = activeShift,
                 settingsUnlocked = true,
                 assistantMessages = it.assistantMessages
             )
         }
-        toast("Factory reset complete")
+        toast("Factory reset complete (store name preserved)")
     }
 
     // Store AI Assistant
@@ -961,8 +1133,32 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // GitHub App Update Sync & Autonomous OTA
+    // GitHub App Update Sync & Autonomous OTA + Auto-Lock Lifecycle
+    fun onAppBackgrounded() {
+        lastBackgroundedAtMs = System.currentTimeMillis()
+        if (_state.value.pinConfigured) {
+            _state.update { it.copy(settingsUnlocked = false, pendingVoidSale = null) }
+        }
+    }
+
     fun onAppForegrounded(context: Context) {
+        val st = _state.value
+        val timeoutMinutes = st.settings.autoLockMinutes
+        if (st.pinConfigured && st.settings.lockWholePos && timeoutMinutes > 0 && lastBackgroundedAtMs > 0L) {
+            val elapsedMs = System.currentTimeMillis() - lastBackgroundedAtMs
+            if (elapsedMs >= timeoutMinutes * 60_000L) {
+                _state.update {
+                    it.copy(
+                        terminalLocked = true,
+                        settingsUnlocked = false,
+                        pendingVoidSale = null,
+                        pinError = null
+                    )
+                }
+            }
+        }
+        lastBackgroundedAtMs = 0L
+
         val now = System.currentTimeMillis()
         if (now - lastAutoCheckAtMs < 180_000L) return
         lastAutoCheckAtMs = now

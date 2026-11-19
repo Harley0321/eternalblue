@@ -1,5 +1,6 @@
 package com.example
 
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -48,6 +49,9 @@ import com.example.viewmodel.PosViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.decorView.isForceDarkAllowed = false
+        }
         enableEdgeToEdge()
         setContent {
             EternalBlueTheme {
@@ -70,8 +74,10 @@ class MainActivity : ComponentActivity() {
                 val appContext = LocalContext.current.applicationContext
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) {
-                            vm.onAppForegrounded(appContext)
+                        when (event) {
+                            Lifecycle.Event.ON_RESUME -> vm.onAppForegrounded(appContext)
+                            Lifecycle.Event.ON_STOP -> vm.onAppBackgrounded()
+                            else -> Unit
                         }
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
@@ -85,6 +91,7 @@ class MainActivity : ComponentActivity() {
                         topBar = {
                             PosTopBar(
                                 state = state,
+                                isWide = isWide,
                                 onAskAi = { vm.setAssistantOpen(true) },
                                 onLockPos = vm::lockTerminalNow,
                                 onOpenUpdateSettings = { vm.setActiveTab(TabName.SETTINGS) }

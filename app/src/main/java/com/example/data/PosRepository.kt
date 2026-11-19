@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import com.example.domain.PosMath
+import com.example.model.ActiveCartSnapshot
 import com.example.model.ActiveShiftState
 import com.example.model.CashDrawerEvent
 import com.example.model.CashierAccount
@@ -19,124 +20,184 @@ import com.example.model.SukiCustomer
 import com.example.model.UtangTransaction
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.decodeFromJsonElement
 import java.time.Instant
 import java.time.LocalDate
 
 class PosRepository(context: Context) {
-    private val db = PosDatabaseHelper(context.applicationContext)
-    val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-
-    fun loadProducts(): List<Product> {
-        val raw = db.getString("products")
-        if (raw.isNullOrBlank()) {
-            val seed = seedProducts()
-            saveProducts(seed)
-            return seed
-        }
-        return runCatching { json.decodeFromString<List<Product>>(raw) }.getOrElse { seedProducts() }
+    private val appCtx = context.applicationContext
+    private val db = PosDatabaseHelper(appCtx)
+    private val identityPrefs = appCtx.getSharedPreferences("eternalblue_store_identity", Context.MODE_PRIVATE)
+    val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        isLenient = true
+        coerceInputValues = true
     }
+
+    private inline fun <reified T> loadListResilient(
+        key: String,
+        noinline seedProvider: (() -> List<T>)? = null
+    ): List<T> {
+        val raw = db.getString(key)
+        if (raw.isNullOrBlank()) {
+            val prevRaw = db.getString("${key}__prev")
+            if (!prevRaw.isNullOrBlank()) {
+                val fromPrev = runCatching { json.decodeFromString<List<T>>(prevRaw) }.getOrNull()
+                if (fromPrev != null) return fromPrev
+            }
+            if (seedProvider != null) {
+                val seed = seedProvider()
+                db.putString(key, json.encodeToString(seed))
+                return seed
+            }
+            return emptyList()
+        }
+
+        runCatching { json.decodeFromString<List<T>>(raw) }.getOrNull()?.let { return it }
+
+        // Preserve any raw unreadable payload before attempting shadow or per-element recovery
+        db.putString("${key}__corrupt_backup", raw)
+
+        val prevRaw = db.getString("${key}__prev")
+        if (!prevRaw.isNullOrBlank()) {
+            runCatching { json.decodeFromString<List<T>>(prevRaw) }.getOrNull()?.let { return it }
+        }
+
+        val partial = runCatching {
+            val elem = json.parseToJsonElement(raw)
+            if (elem is JsonArray) {
+                elem.mapNotNull { item -> runCatching { json.decodeFromJsonElement<T>(item) }.getOrNull() }
+            } else emptyList()
+        }.getOrNull()
+        if (!partial.isNullOrEmpty()) return partial
+
+        return seedProvider?.invoke() ?: emptyList()
+    }
+
+    fun loadProducts(): List<Product> = loadListResilient("products") { seedProducts() }
 
     fun saveProducts(list: List<Product>) = db.putString("products", json.encodeToString(list))
 
-    fun loadSales(): List<SaleRecord> {
-        val raw = db.getString("sales")
-        if (raw.isNullOrBlank()) {
-            val seed = seedSales()
-            saveSales(seed)
-            return seed
-        }
-        return runCatching { json.decodeFromString<List<SaleRecord>>(raw) }.getOrElse { emptyList() }
-    }
+    fun loadSales(): List<SaleRecord> = loadListResilient("sales") { seedSales() }
 
     fun saveSales(list: List<SaleRecord>) = db.putString("sales", json.encodeToString(list))
 
-    fun loadHeldOrders(): List<HeldOrder> =
-        db.getString("held")?.let { runCatching { json.decodeFromString<List<HeldOrder>>(it) }.getOrNull() } ?: emptyList()
+    fun loadHeldOrders(): List<HeldOrder> = loadListResilient("held")
 
     fun saveHeldOrders(list: List<HeldOrder>) = db.putString("held", json.encodeToString(list))
 
-    fun loadSettings(): StoreSettings =
-        db.getString("settings")?.let { runCatching { json.decodeFromString<StoreSettings>(it) }.getOrNull() } ?: StoreSettings()
-
-    fun saveSettings(s: StoreSettings) = db.putString("settings", json.encodeToString(s))
-
-    fun loadSukiCustomers(): List<SukiCustomer> {
-        val raw = db.getString("suki")
-        if (raw.isNullOrBlank()) {
-            val seed = seedCustomers()
-            saveSukiCustomers(seed)
-            return seed
+    fun loadActiveCart(): ActiveCartSnapshot {
+        val raw = db.getString("active_cart") ?: return ActiveCartSnapshot()
+        return runCatching { json.decodeFromString<ActiveCartSnapshot>(raw) }.getOrElse {
+            db.getString("active_cart__prev")?.let { prev ->
+                runCatching { json.decodeFromString<ActiveCartSnapshot>(prev) }.getOrNull()
+            } ?: ActiveCartSnapshot()
         }
-        return runCatching { json.decodeFromString<List<SukiCustomer>>(raw) }.getOrElse { seedCustomers() }
     }
+
+    fun saveActiveCart(snapshot: ActiveCartSnapshot) = db.putString("active_cart", json.encodeToString(snapshot))
+
+    fun loadPinnedStoreName(): String? =
+        identityPrefs.getString("pinned_store_name", null)?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun savePinnedStoreName(name: String) {
+        val clean = name.trim()
+        if (clean.isNotEmpty()) {
+            identityPrefs.edit().putString("pinned_store_name", clean).apply()
+        }
+    }
+
+    fun loadSettings(): StoreSettings {
+        val pinned = loadPinnedStoreName()
+        val raw = db.getString("settings")
+        val decoded = raw?.let { runCatching { json.decodeFromString<StoreSettings>(it) }.getOrNull() }
+            ?: db.getString("settings__prev")?.let { prev ->
+                runCatching { json.decodeFromString<StoreSettings>(prev) }.getOrNull()
+            }
+        return when {
+            decoded != null -> {
+                val safeName = decoded.storeName.trim().ifEmpty { pinned ?: "EternalBlue Mart" }
+                if (pinned == null && safeName != "EternalBlue Mart") savePinnedStoreName(safeName)
+                if (safeName != decoded.storeName) decoded.copy(storeName = safeName) else decoded
+            }
+            pinned != null -> StoreSettings(storeName = pinned)
+            else -> StoreSettings()
+        }
+    }
+
+    fun saveSettings(s: StoreSettings) {
+        val safeName = s.storeName.trim().ifEmpty { loadPinnedStoreName() ?: "EternalBlue Mart" }
+        val normalized = if (safeName != s.storeName) s.copy(storeName = safeName) else s
+        savePinnedStoreName(safeName)
+        db.putString("settings", json.encodeToString(normalized))
+    }
+
+    fun loadSukiCustomers(): List<SukiCustomer> = loadListResilient("suki") { seedCustomers() }
 
     fun saveSukiCustomers(list: List<SukiCustomer>) = db.putString("suki", json.encodeToString(list))
 
-    fun loadUtangTx(): List<UtangTransaction> =
-        db.getString("utang_tx")?.let { runCatching { json.decodeFromString<List<UtangTransaction>>(it) }.getOrNull() } ?: emptyList()
+    fun loadUtangTx(): List<UtangTransaction> = loadListResilient("utang_tx")
 
     fun saveUtangTx(list: List<UtangTransaction>) = db.putString("utang_tx", json.encodeToString(list))
 
-    fun loadRepackRules(): List<RepackRule> {
-        val raw = db.getString("repack_rules")
-        if (raw.isNullOrBlank()) {
-            val seed = seedRepackRules()
-            saveRepackRules(seed)
-            return seed
-        }
-        return runCatching { json.decodeFromString<List<RepackRule>>(raw) }.getOrElse { emptyList() }
-    }
+    fun loadRepackRules(): List<RepackRule> = loadListResilient("repack_rules") { seedRepackRules() }
 
     fun saveRepackRules(list: List<RepackRule>) = db.putString("repack_rules", json.encodeToString(list))
 
-    fun loadRepackLog(): List<RepackLogEntry> =
-        db.getString("repack_log")?.let { runCatching { json.decodeFromString<List<RepackLogEntry>>(it) }.getOrNull() } ?: emptyList()
+    fun loadRepackLog(): List<RepackLogEntry> = loadListResilient("repack_log")
 
     fun saveRepackLog(list: List<RepackLogEntry>) = db.putString("repack_log", json.encodeToString(list))
 
-    fun loadDrawerEvents(): List<CashDrawerEvent> =
-        db.getString("drawer_events")?.let { runCatching { json.decodeFromString<List<CashDrawerEvent>>(it) }.getOrNull() } ?: emptyList()
+    fun loadDrawerEvents(): List<CashDrawerEvent> = loadListResilient("drawer_events")
 
     fun saveDrawerEvents(list: List<CashDrawerEvent>) = db.putString("drawer_events", json.encodeToString(list))
 
-    fun loadDigitalServices(): List<DigitalServiceEntry> =
-        db.getString("digital_services")?.let { runCatching { json.decodeFromString<List<DigitalServiceEntry>>(it) }.getOrNull() } ?: emptyList()
+    fun loadDigitalServices(): List<DigitalServiceEntry> = loadListResilient("digital_services")
 
     fun saveDigitalServices(list: List<DigitalServiceEntry>) = db.putString("digital_services", json.encodeToString(list))
 
-    fun loadCashiers(): List<CashierAccount> {
-        val raw = db.getString("cashiers")
-        if (raw.isNullOrBlank()) {
-            val now = Instant.now().toString()
-            val seed = listOf(
-                CashierAccount("cashier-owner", "Ate Maria (Owner)", "manager", true, now),
-                CashierAccount("cashier-shift1", "Juan (Cashier)", "cashier", true, now)
-            )
-            saveCashiers(seed)
-            return seed
-        }
-        return runCatching { json.decodeFromString<List<CashierAccount>>(raw) }.getOrElse { emptyList() }
+    fun loadCashiers(): List<CashierAccount> = loadListResilient("cashiers") {
+        val now = Instant.now().toString()
+        listOf(
+            CashierAccount("cashier-owner", "Ate Maria (Owner)", "manager", true, now),
+            CashierAccount("cashier-shift1", "Juan (Cashier)", "cashier", true, now)
+        )
     }
 
     fun saveCashiers(list: List<CashierAccount>) = db.putString("cashiers", json.encodeToString(list))
 
-    fun loadActiveShift(): ActiveShiftState? =
-        db.getString("active_shift")?.let { runCatching { json.decodeFromString<ActiveShiftState>(it) }.getOrNull() }
+    fun loadActiveShift(): ActiveShiftState? {
+        val raw = db.getString("active_shift")?.takeIf { it.isNotBlank() }
+        return raw?.let { runCatching { json.decodeFromString<ActiveShiftState>(it) }.getOrNull() }
+            ?: db.getString("active_shift__prev")?.takeIf { it.isNotBlank() }?.let { prev ->
+                runCatching { json.decodeFromString<ActiveShiftState>(prev) }.getOrNull()
+            }
+    }
 
     fun saveActiveShift(shift: ActiveShiftState?) {
         if (shift == null) db.putString("active_shift", "")
         else db.putString("active_shift", json.encodeToString(shift))
     }
 
-    fun loadStockLog(): List<StockLogEntry> =
-        db.getString("stock_log")?.let { runCatching { json.decodeFromString<List<StockLogEntry>>(it) }.getOrNull() } ?: emptyList()
+    fun loadStockLog(): List<StockLogEntry> = loadListResilient("stock_log")
 
     fun saveStockLog(list: List<StockLogEntry>) = db.putString("stock_log", json.encodeToString(list))
 
-    fun loadSecurityLog(): List<SecurityLogEntry> =
-        db.getString("security_log")?.let { runCatching { json.decodeFromString<List<SecurityLogEntry>>(it) }.getOrNull() } ?: emptyList()
+    fun loadSecurityLog(): List<SecurityLogEntry> = loadListResilient("security_log")
 
     fun saveSecurityLog(list: List<SecurityLogEntry>) = db.putString("security_log", json.encodeToString(list))
+
+    fun loadPinLockState(): Pair<Int, Long> {
+        val raw = db.getString("pin_lock_state") ?: return 0 to 0L
+        val parts = raw.split('|')
+        val fails = parts.getOrNull(0)?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val until = parts.getOrNull(1)?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        return fails to until
+    }
+
+    fun savePinLockState(fails: Int, untilMs: Long) = db.putString("pin_lock_state", "$fails|$untilMs")
 
     fun resetAll() = db.clearAll()
 

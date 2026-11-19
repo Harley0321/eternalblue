@@ -11,6 +11,7 @@ import com.example.model.SukiCustomer
 import com.example.model.UtangTransaction
 import java.time.Instant
 import java.time.LocalDate
+import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -151,7 +152,7 @@ object OpsMath {
                 else -> p
             }
         }
-        val tag = System.currentTimeMillis().toString(36).uppercase()
+        val tag = System.currentTimeMillis().toString(36).uppercase(Locale.ROOT)
         val logs = listOf(
             StockLogEntry(
                 id = "LOG-$tag-OUT",

@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,36 +48,51 @@ import com.example.viewmodel.PosUiState
 @Composable
 fun PosTopBar(
     state: PosUiState,
+    isWide: Boolean,
     onAskAi: () -> Unit,
     onLockPos: () -> Unit,
     onOpenUpdateSettings: () -> Unit
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(SlateTopBar)
             .statusBarsPadding()
             .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
             StoreEmblem(iconKey = state.settings.storeIcon, size = 36.dp)
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GlowingEmeraldStoreName(
-                        text = state.settings.storeName,
-                        fontSize = 16.sp,
+
+            Column(modifier = Modifier.weight(1f)) {
+                GlowingEmeraldStoreName(
+                    text = state.settings.storeName,
+                    fontSize = if (isWide) 19.sp else 17.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    Text(
+                        state.activeShift?.cashierName ?: state.settings.storeAddress,
+                        color = Color(0xFF94A3B8),
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
                     Surface(color = EmeraldPrimary.copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp)) {
                         Text(
-                            "OFFLINE POS",
+                            "OFFLINE",
                             color = Color(0xFF34D399),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                         )
                     }
                     if (state.updateInfo?.isNewer == true) {
@@ -90,35 +106,37 @@ fun PosTopBar(
                                 color = Color(0xFF6EE7B7),
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                             )
                         }
                     }
                 }
-                Text(
-                    state.activeShift?.cashierName ?: state.settings.storeAddress,
-                    color = Color(0xFF94A3B8),
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
             }
-        }
 
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Button(
-                onClick = onAskAi,
-                colors = ButtonDefaults.buttonColors(containerColor = IndigoAccent),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.padding(0.dp)
-            ) {
-                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Ask AI (${state.storePulse.healthScore})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-            if (state.pinConfigured && !state.terminalLocked) {
-                IconButton(onClick = onLockPos) {
-                    Icon(Icons.Filled.Lock, contentDescription = "Lock POS", tint = Color(0xFFCBD5E1))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                Button(
+                    onClick = onAskAi,
+                    colors = ButtonDefaults.buttonColors(containerColor = IndigoAccent),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(
+                        horizontal = if (isWide) 12.dp else 10.dp,
+                        vertical = 6.dp
+                    )
+                ) {
+                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (isWide) "Ask AI (${state.storePulse.healthScore})" else "AI ${state.storePulse.healthScore}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+                if (state.pinConfigured && !state.terminalLocked) {
+                    IconButton(onClick = onLockPos, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Filled.Lock, contentDescription = "Lock POS", tint = Color(0xFFCBD5E1), modifier = Modifier.size(19.dp))
+                    }
                 }
             }
         }

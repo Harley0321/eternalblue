@@ -1,7 +1,6 @@
 package com.example.hardware
 
 import android.app.PendingIntent
-import android.app.admin.DevicePolicyManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -21,10 +20,13 @@ import java.net.URL
 import java.security.MessageDigest
 
 object AndroidDeviceBridge {
+    private val toneGenerator: ToneGenerator? by lazy {
+        runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75) }.getOrNull()
+    }
+
     fun playBeep() {
         runCatching {
-            val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75)
-            tg.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 110)
         }
     }
 
@@ -55,11 +57,6 @@ object AndroidDeviceBridge {
             context.startActivity(intent)
         }
     }
-
-    fun isDeviceOwnerSilentCapable(context: Context): Boolean = runCatching {
-        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
-        dpm?.isDeviceOwnerApp(context.packageName) == true
-    }.getOrDefault(false)
 
     sealed class UpdateCommitOutcome {
         data object SessionCommitted : UpdateCommitOutcome()
@@ -116,9 +113,6 @@ object AndroidDeviceBridge {
                 setAppPackageName(appCtx.packageName)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    setRequestUpdateOwnership(true)
                 }
             }
 

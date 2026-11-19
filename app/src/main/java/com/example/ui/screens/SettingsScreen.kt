@@ -218,9 +218,8 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
                         }
                     }
 
-                    val isSilentMode = remember(ctx) { AndroidDeviceBridge.isDeviceOwnerSilentCapable(ctx) }
                     Text(
-                        "Installed: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE}) • ${if (isSilentMode) "Silent Kiosk Mode" else "Auto 1-Tap Confirm"}",
+                        "Installed: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         color = SlateMuted

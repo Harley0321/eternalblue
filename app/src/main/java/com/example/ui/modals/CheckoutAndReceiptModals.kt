@@ -67,6 +67,10 @@ fun CheckoutModal(state: PosUiState, vm: PosViewModel) {
     val selectedSuki = state.sukiCustomers.getOrNull(selectedSukiIdx)
     val tendered = tenderedStr.toDoubleOrNull() ?: 0.0
     val change = (tendered - totals.grandTotal).coerceAtLeast(0.0)
+    val splitCashParsed = splitCashStr.toDoubleOrNull()
+    val splitValid = splitCashParsed != null && splitCashParsed.isFinite() &&
+        splitCashParsed >= 0.0 && splitCashParsed <= totals.grandTotal + 0.001
+    val cashValid = tendered.isFinite() && tendered + 0.001 >= totals.grandTotal
     val resolvedQr = remember(state.settings, totals.grandTotal) {
         PaymentQr.resolveCheckoutQr(state.settings, totals.grandTotal)
     }
@@ -106,6 +110,9 @@ fun CheckoutModal(state: PosUiState, vm: PosViewModel) {
                                 Text(PosMath.formatPeso(change), fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace, color = EmeraldDark)
                             }
                         }
+                        if (!cashValid) {
+                            Text("Cash tendered must be at least ${PosMath.formatPeso(totals.grandTotal)}", color = RoseDanger, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                     "GCash" -> {
                         QrBitmapCard(qr = resolvedQr)
@@ -127,7 +134,7 @@ fun CheckoutModal(state: PosUiState, vm: PosViewModel) {
                         )
                     }
                     "Split" -> {
-                        val sCash = splitCashStr.toDoubleOrNull() ?: 0.0
+                        val sCash = (splitCashParsed ?: 0.0).coerceIn(0.0, totals.grandTotal)
                         val sDig = (totals.grandTotal - sCash).coerceAtLeast(0.0)
                         OutlinedTextField(
                             value = splitCashStr,
@@ -135,8 +142,12 @@ fun CheckoutModal(state: PosUiState, vm: PosViewModel) {
                             label = { Text("Cash Portion (₱)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
+                            isError = !splitValid,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        if (!splitValid) {
+                            Text("Cash portion must be between ₱0.00 and ${PosMath.formatPeso(totals.grandTotal)}", color = RoseDanger, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
                         Text("Remaining Digital (GCash): ${PosMath.formatPeso(sDig)}", fontWeight = FontWeight.Bold, color = IndigoAccent, fontSize = 13.sp)
                         OutlinedTextField(
                             value = refNo,
@@ -173,9 +184,15 @@ fun CheckoutModal(state: PosUiState, vm: PosViewModel) {
             }
         },
         confirmButton = {
+            val canConfirm = when (method) {
+                "Cash" -> cashValid
+                "Split" -> splitValid
+                "Utang" -> selectedSuki != null
+                else -> true
+            }
             Button(
                 onClick = {
-                    val sCash = splitCashStr.toDoubleOrNull() ?: 0.0
+                    val sCash = (splitCashParsed ?: 0.0).coerceIn(0.0, totals.grandTotal)
                     val sDig = (totals.grandTotal - sCash).coerceAtLeast(0.0)
                     vm.completeCheckout(
                         paymentMethod = method,
@@ -187,6 +204,7 @@ fun CheckoutModal(state: PosUiState, vm: PosViewModel) {
                         utangDueDate = dueDate
                     )
                 },
+                enabled = canConfirm,
                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
             ) {
                 Text("Complete Sale", fontWeight = FontWeight.ExtraBold)
