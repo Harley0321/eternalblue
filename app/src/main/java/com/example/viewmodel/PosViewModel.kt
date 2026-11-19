@@ -11,6 +11,8 @@ import com.example.domain.GitHubUpdateChecker
 import com.example.domain.OpsMath
 import com.example.domain.PosMath
 import com.example.hardware.AndroidDeviceBridge
+import com.example.hardware.UpdateEvents
+import com.example.hardware.UpdateSessionEvent
 import com.example.model.ActiveShiftState
 import com.example.model.CartLine
 import com.example.model.CartTotals
@@ -120,6 +122,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private val repo = PosRepository(application)
     private val _state = MutableStateFlow(PosUiState())
     val state: StateFlow<PosUiState> = _state.asStateFlow()
+    private var lastAutoCheckAtMs: Long = 0L
+    private var autoAppliedTag: String? = null
 
     init {
         val products = repo.loadProducts()
@@ -162,7 +166,24 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 AssistantEngine.ChatMessage(1L, false, welcome.text, emptyList(), welcome.chips)
             )
         )
-        checkForGitHubUpdates(silent = true)
+        viewModelScope.launch {
+            UpdateEvents.events.collect { ev ->
+                when (ev) {
+                    is UpdateSessionEvent.PendingUserConfirmation -> {
+                        _state.update { it.copy(apkDownloading = false) }
+                        toast("Confirm update to finish")
+                    }
+                    is UpdateSessionEvent.Succeeded -> {
+                        _state.update { it.copy(apkDownloading = false) }
+                        toast("Update applied cleanly")
+                    }
+                    is UpdateSessionEvent.Failed -> {
+                        _state.update { it.copy(apkDownloading = false) }
+                        toast(ev.reason, ToastType.ERROR)
+                    }
+                }
+            }
+        }
     }
 
     fun toast(msg: String, type: ToastType = ToastType.INFO) {
@@ -940,9 +961,20 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // GitHub App Update Sync
-    fun checkForGitHubUpdates(silent: Boolean = false, repoOverride: String? = null) {
-        if (_state.value.updateChecking) return
+    // GitHub App Update Sync & Autonomous OTA
+    fun onAppForegrounded(context: Context) {
+        val now = System.currentTimeMillis()
+        if (now - lastAutoCheckAtMs < 180_000L) return
+        lastAutoCheckAtMs = now
+        checkForGitHubUpdates(silent = true, autoApplyContext = context.applicationContext)
+    }
+
+    fun checkForGitHubUpdates(
+        silent: Boolean = false,
+        repoOverride: String? = null,
+        autoApplyContext: Context? = null
+    ) {
+        if (_state.value.updateChecking || _state.value.apkDownloading) return
         val rawRepo = (repoOverride ?: _state.value.settings.githubRepo).trim()
             .ifEmpty { BuildConfig.GITHUB_REPO.ifBlank { "Harley0321/eternalblue" } }
         val normalized = GitHubUpdateChecker.normalizeRepoSlug(rawRepo)
@@ -953,7 +985,11 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
         _state.update { it.copy(updateChecking = true) }
         viewModelScope.launch {
-            val result = GitHubUpdateChecker.checkLatest(normalized, BuildConfig.VERSION_NAME)
+            val result = GitHubUpdateChecker.checkLatest(
+                repoSlug = normalized,
+                currentVersion = BuildConfig.VERSION_NAME,
+                currentVersionCode = BuildConfig.VERSION_CODE
+            )
             val checkedAt = PosMath.formatDateTime(Instant.now().toString())
             _state.update {
                 it.copy(
@@ -963,7 +999,19 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             if (result.isNewer) {
-                toast("GitHub update available: ${result.tagName}", ToastType.INFO)
+                val shouldAutoApply = autoApplyContext != null &&
+                    _state.value.settings.autoUpdateEnabled &&
+                    !result.apkDownloadUrl.isNullOrBlank() &&
+                    autoAppliedTag != result.tagName
+                if (shouldAutoApply) {
+                    autoAppliedTag = result.tagName
+                    toast("Applying update ${result.tagName}...", ToastType.INFO)
+                    applyGitHubUpdate(autoApplyContext!!, autoTriggered = true)
+                } else if (!silent) {
+                    toast("Update available: ${result.tagName}", ToastType.INFO)
+                } else if (autoApplyContext != null && !_state.value.settings.autoUpdateEnabled) {
+                    toast("Update available: ${result.tagName}", ToastType.INFO)
+                }
             } else if (!silent) {
                 val toastType = when (result.status) {
                     GitHubUpdateChecker.SyncStatus.ERROR -> ToastType.ERROR
@@ -975,34 +1023,44 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun downloadAndInstallGitHubUpdate(context: Context) {
+    fun downloadAndInstallGitHubUpdate(context: Context) = applyGitHubUpdate(context, autoTriggered = false)
+
+    fun applyGitHubUpdate(context: Context, autoTriggered: Boolean = false) {
         val st = _state.value
         if (st.apkDownloading) return
         val info = st.updateInfo ?: return
-        val apkUrl = info.apkDownloadUrl
-        if (apkUrl.isNullOrBlank()) {
-            AndroidDeviceBridge.openUrl(context, info.htmlUrl)
-            toast("Opening update on GitHub")
+        val packageUrl = info.apkDownloadUrl
+        if (packageUrl.isNullOrBlank()) {
+            if (!autoTriggered) {
+                AndroidDeviceBridge.openUrl(context, info.htmlUrl)
+                toast("Opening update on GitHub")
+            }
             return
         }
         _state.update { it.copy(apkDownloading = true, apkDownloadProgress = 0) }
         viewModelScope.launch {
-            val outcome = AndroidDeviceBridge.downloadAndInstallApk(
+            val outcome = AndroidDeviceBridge.streamAndCommitPackageUpdate(
                 context = context,
-                apkUrl = apkUrl,
-                expectedFileName = info.apkFileName
+                packageUrl = packageUrl,
+                expectedSha256 = info.expectedSha256,
+                promptPermissionIfMissing = !autoTriggered
             ) { pct ->
                 _state.update { it.copy(apkDownloadProgress = pct) }
             }
-            _state.update { it.copy(apkDownloading = false) }
             when (outcome) {
-                is AndroidDeviceBridge.ApkInstallOutcome.InstallerLaunched -> {
-                    toast("Update ready — confirm to apply")
+                is AndroidDeviceBridge.UpdateCommitOutcome.SessionCommitted -> {
+                    // UpdateResultReceiver handles PendingUserConfirmation / Succeeded / Failed
                 }
-                is AndroidDeviceBridge.ApkInstallOutcome.NeedsInstallPermission -> {
-                    toast("Allow app updates from this source, then tap Update again", ToastType.WARNING)
+                is AndroidDeviceBridge.UpdateCommitOutcome.NeedsInstallPermission -> {
+                    _state.update { it.copy(apkDownloading = false) }
+                    toast(
+                        if (autoTriggered) "Update ${info.tagName} ready — tap Update in Settings to allow auto-updates"
+                        else "Allow app updates from this source, then tap Update again",
+                        ToastType.WARNING
+                    )
                 }
-                is AndroidDeviceBridge.ApkInstallOutcome.Failed -> {
+                is AndroidDeviceBridge.UpdateCommitOutcome.Failed -> {
+                    _state.update { it.copy(apkDownloading = false) }
                     toast("Update failed: ${outcome.reason}", ToastType.ERROR)
                 }
             }

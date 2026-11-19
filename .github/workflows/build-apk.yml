@@ -39,30 +39,47 @@ jobs:
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Build Debug & Release APKs
+      - name: Build signed APK
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: gradle assembleDebug --no-daemon
 
-      - name: Prepare versioned APK artifact
+      - name: Prepare versioned update & OTA manifest
         id: meta
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF_NAME}"
+            VERSION_NAME="${TAG#v}"
           else
             TAG="v2.3.${GITHUB_RUN_NUMBER}"
+            VERSION_NAME="2.3.${GITHUB_RUN_NUMBER}"
           fi
+          APK_NAME="EternalBlue-POS-${TAG}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK_NAME"
+          SHA256=$(sha256sum "$APK_NAME" | awk '{print $1}')
+          cat <<EOF > update-manifest.json
+          {
+            "versionCode": ${GITHUB_RUN_NUMBER},
+            "versionName": "${VERSION_NAME}",
+            "tagName": "${TAG}",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/${TAG}/${APK_NAME}",
+            "sha256": "${SHA256}",
+            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/${TAG}"
+          }
+          EOF
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          cp app/build/outputs/apk/debug/app-debug.apk "EternalBlue-POS-${TAG}.apk"
+          echo "apk=$APK_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Upload APK workflow artifact
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: EternalBlue-POS-${{ steps.meta.outputs.tag }}
-          path: EternalBlue-POS-${{ steps.meta.outputs.tag }}.apk
+          path: |
+            ${{ steps.meta.outputs.apk }}
+            update-manifest.json
 
-      - name: Publish GitHub Release for Mobile & Tablet Auto-Update
+      - name: Publish GitHub Release & OTA manifest
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
@@ -70,4 +87,5 @@ jobs:
           generate_release_notes: true
           make_latest: true
           files: |
-            EternalBlue-POS-${{ steps.meta.outputs.tag }}.apk
+            ${{ steps.meta.outputs.apk }}
+            update-manifest.json

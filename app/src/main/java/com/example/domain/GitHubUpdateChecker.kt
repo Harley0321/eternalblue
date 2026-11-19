@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -25,11 +26,13 @@ object GitHubUpdateChecker {
         val repoSlug: String,
         val status: SyncStatus,
         val tagName: String,
+        val versionCode: Int = 0,
         val releaseNotes: String? = null,
         val htmlUrl: String,
         val apkDownloadUrl: String? = null,
         val apkFileName: String? = null,
         val apkSizeBytes: Long? = null,
+        val expectedSha256: String? = null,
         val latestCommitSha: String? = null,
         val latestCommitMessage: String? = null,
         val message: String
@@ -75,15 +78,17 @@ object GitHubUpdateChecker {
 
     private data class HttpReply(val code: Int, val body: String)
 
-    private fun fetchJson(urlStr: String): HttpReply {
+    private fun fetchUrl(urlStr: String, apiHeaders: Boolean = true): HttpReply {
         val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 8000
             readTimeout = 8000
             requestMethod = "GET"
             setRequestProperty("User-Agent", "EternalBluePOS-Android")
-            setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            if (apiHeaders) {
+                setRequestProperty("Accept", "application/vnd.github+json")
+                setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            }
         }
         val code = conn.responseCode
         val stream = if (code in 200..299) conn.inputStream else conn.errorStream
@@ -106,7 +111,46 @@ object GitHubUpdateChecker {
         return Triple(null, null, null)
     }
 
-    suspend fun checkLatest(repoSlug: String, currentVersion: String): ReleaseInfo = withContext(Dispatchers.IO) {
+    private fun checkCdnManifest(
+        cleanRepo: String,
+        currentVersion: String,
+        currentVersionCode: Int
+    ): ReleaseInfo? {
+        return try {
+            val manifestUrl = "https://github.com/$cleanRepo/releases/latest/download/update-manifest.json"
+            val reply = fetchUrl(manifestUrl, apiHeaders = false)
+            if (reply.code != 200 || reply.body.isBlank()) return null
+            val obj = jsonParser.parseToJsonElement(reply.body).jsonObject
+            val tag = obj["tagName"]?.jsonPrimitive?.content ?: return null
+            val remoteVer = obj["versionName"]?.jsonPrimitive?.content ?: tag.removePrefix("v")
+            val remoteCode = obj["versionCode"]?.jsonPrimitive?.intOrNull ?: 0
+            val apkUrl = obj["apkUrl"]?.jsonPrimitive?.content
+            val sha256 = obj["sha256"]?.jsonPrimitive?.content
+            val releaseUrl = obj["releaseUrl"]?.jsonPrimitive?.content ?: "https://github.com/$cleanRepo/releases"
+
+            val newer = isVersionNewer(remoteVer, currentVersion) ||
+                (remoteCode > currentVersionCode && currentVersionCode > 1 && remoteVer != currentVersion)
+            ReleaseInfo(
+                repoSlug = cleanRepo,
+                status = if (newer) SyncStatus.UPDATE_AVAILABLE else SyncStatus.UP_TO_DATE,
+                tagName = tag,
+                versionCode = remoteCode,
+                htmlUrl = releaseUrl,
+                apkDownloadUrl = apkUrl,
+                apkFileName = apkUrl?.substringAfterLast('/'),
+                expectedSha256 = sha256,
+                message = if (newer) "Update $tag is available." else "App is up to date (installed v$currentVersion, latest $tag)."
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    suspend fun checkLatest(
+        repoSlug: String,
+        currentVersion: String,
+        currentVersionCode: Int = 1
+    ): ReleaseInfo = withContext(Dispatchers.IO) {
         val clean = normalizeRepoSlug(repoSlug)
         if (!clean.contains('/')) {
             return@withContext ReleaseInfo(
@@ -119,15 +163,18 @@ object GitHubUpdateChecker {
         }
         val releasesPageUrl = "https://github.com/$clean/releases"
 
+        // 0. Fast rate-limit-free CDN OTA manifest check
+        checkCdnManifest(clean, currentVersion, currentVersionCode)?.let { return@withContext it }
+
         try {
-            // 1. Check latest official release
-            val latestReply = fetchJson("https://api.github.com/repos/$clean/releases/latest")
+            // 1. Check latest official release via GitHub REST API
+            val latestReply = fetchUrl("https://api.github.com/repos/$clean/releases/latest")
             var releaseObj: JsonObject? = null
             if (latestReply.code == 200) {
                 releaseObj = jsonParser.parseToJsonElement(latestReply.body).jsonObject
             } else if (latestReply.code == 404) {
                 // 2. Fallback to all releases (includes pre-releases)
-                val listReply = fetchJson("https://api.github.com/repos/$clean/releases?per_page=5")
+                val listReply = fetchUrl("https://api.github.com/repos/$clean/releases?per_page=5")
                 if (listReply.code == 200) {
                     val arr = jsonParser.parseToJsonElement(listReply.body).jsonArray
                     releaseObj = arr.firstOrNull {
@@ -184,9 +231,9 @@ object GitHubUpdateChecker {
                 )
             }
 
-            // 3. No GitHub Releases published yet — inspect tags & latest commit so user knows why!
+            // 3. No GitHub Releases published yet — inspect tags & latest commit so user knows why
             var latestTag: String? = null
-            val tagsReply = fetchJson("https://api.github.com/repos/$clean/tags?per_page=1")
+            val tagsReply = fetchUrl("https://api.github.com/repos/$clean/tags?per_page=1")
             if (tagsReply.code == 200) {
                 val arr = jsonParser.parseToJsonElement(tagsReply.body).jsonArray
                 latestTag = arr.firstOrNull()?.jsonObject?.get("name")?.jsonPrimitive?.content
@@ -194,7 +241,7 @@ object GitHubUpdateChecker {
 
             var commitSha: String? = null
             var commitMsg: String? = null
-            val commitsReply = fetchJson("https://api.github.com/repos/$clean/commits?per_page=1")
+            val commitsReply = fetchUrl("https://api.github.com/repos/$clean/commits?per_page=1")
             if (commitsReply.code == 200) {
                 val arr = jsonParser.parseToJsonElement(commitsReply.body).jsonArray
                 val cObj = arr.firstOrNull()?.jsonObject

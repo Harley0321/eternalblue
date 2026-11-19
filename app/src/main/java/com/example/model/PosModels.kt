@@ -171,7 +171,8 @@ data class StoreSettings(
     val qrAccountNumber: String? = null,
     val qrEmvPayload: String? = null,
     val customerDisplayGreeting: String? = null,
-    val githubRepo: String = "Harley0321/eternalblue"
+    val githubRepo: String = "Harley0321/eternalblue",
+    val autoUpdateEnabled: Boolean = true
 )
 
 @Serializable

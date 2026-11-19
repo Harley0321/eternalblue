@@ -1,9 +1,12 @@
 package com.example.hardware
 
+import android.app.PendingIntent
+import android.app.admin.DevicePolicyManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.Uri
@@ -13,9 +16,9 @@ import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 object AndroidDeviceBridge {
     fun playBeep() {
@@ -53,86 +56,127 @@ object AndroidDeviceBridge {
         }
     }
 
-    sealed class ApkInstallOutcome {
-        data object InstallerLaunched : ApkInstallOutcome()
-        data object NeedsInstallPermission : ApkInstallOutcome()
-        data class Failed(val reason: String) : ApkInstallOutcome()
+    fun isDeviceOwnerSilentCapable(context: Context): Boolean = runCatching {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+        dpm?.isDeviceOwnerApp(context.packageName) == true
+    }.getOrDefault(false)
+
+    sealed class UpdateCommitOutcome {
+        data object SessionCommitted : UpdateCommitOutcome()
+        data object NeedsInstallPermission : UpdateCommitOutcome()
+        data class Failed(val reason: String) : UpdateCommitOutcome()
     }
 
-    suspend fun downloadAndInstallApk(
+    suspend fun streamAndCommitPackageUpdate(
         context: Context,
-        apkUrl: String,
-        expectedFileName: String?,
+        packageUrl: String,
+        expectedSha256: String? = null,
+        promptPermissionIfMissing: Boolean = true,
         onProgress: (Int) -> Unit
-    ): ApkInstallOutcome = withContext(Dispatchers.IO) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                !context.packageManager.canRequestPackageInstalls()
-            ) {
+    ): UpdateCommitOutcome = withContext(Dispatchers.IO) {
+        val appCtx = context.applicationContext
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !appCtx.packageManager.canRequestPackageInstalls()
+        ) {
+            if (promptPermissionIfMissing) {
                 withContext(Dispatchers.Main) {
                     val permIntent = Intent(
                         Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:${context.packageName}")
+                        Uri.parse("package:${appCtx.packageName}")
                     ).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
-                    context.startActivity(permIntent)
+                    runCatching { appCtx.startActivity(permIntent) }
                 }
-                return@withContext ApkInstallOutcome.NeedsInstallPermission
             }
+            return@withContext UpdateCommitOutcome.NeedsInstallPermission
+        }
 
-            val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
-            val safeName = (expectedFileName ?: "eternalblue-update.apk").replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            val apkFile = File(updatesDir, safeName)
+        val installer = appCtx.packageManager.packageInstaller
+        var session: PackageInstaller.Session? = null
+        var sessionId = -1
 
-            val conn = (URL(apkUrl).openConnection() as HttpURLConnection).apply {
+        try {
+            val conn = (URL(packageUrl).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = true
                 connectTimeout = 10_000
-                readTimeout = 20_000
+                readTimeout = 25_000
                 setRequestProperty("User-Agent", "EternalBluePOS-Android")
                 setRequestProperty("Accept", "application/octet-stream")
             }
             val code = conn.responseCode
             if (code !in 200..299) {
                 conn.disconnect()
-                return@withContext ApkInstallOutcome.Failed("Update failed (HTTP $code)")
+                return@withContext UpdateCommitOutcome.Failed("Update failed (HTTP $code)")
             }
 
             val totalBytes = conn.contentLengthLong.takeIf { it > 0L } ?: -1L
-            var downloaded = 0L
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+                if (totalBytes > 0L) setSize(totalBytes)
+                setAppPackageName(appCtx.packageName)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    setRequestUpdateOwnership(true)
+                }
+            }
+
+            sessionId = installer.createSession(params)
+            session = installer.openSession(sessionId)
+
+            val digest = if (!expectedSha256.isNullOrBlank()) MessageDigest.getInstance("SHA-256") else null
+            var written = 0L
             var lastPct = -1
+
             conn.inputStream.use { input ->
-                FileOutputStream(apkFile).use { output ->
-                    val buf = ByteArray(16 * 1024)
+                session.openWrite("base.apk", 0L, totalBytes).use { out ->
+                    val buf = ByteArray(32 * 1024)
                     while (true) {
                         val read = input.read(buf)
                         if (read <= 0) break
-                        output.write(buf, 0, read)
-                        downloaded += read
+                        out.write(buf, 0, read)
+                        digest?.update(buf, 0, read)
+                        written += read
                         if (totalBytes > 0L) {
-                            val pct = ((downloaded * 100L) / totalBytes).toInt().coerceIn(0, 100)
+                            val pct = ((written * 100L) / totalBytes).toInt().coerceIn(0, 99)
                             if (pct != lastPct) {
                                 lastPct = pct
                                 withContext(Dispatchers.Main) { onProgress(pct) }
                             }
                         }
                     }
+                    session.fsync(out)
                 }
             }
             conn.disconnect()
+
+            if (digest != null && !expectedSha256.isNullOrBlank()) {
+                val actualHex = digest.digest().joinToString("") { "%02x".format(it) }
+                if (!actualHex.equals(expectedSha256.trim(), ignoreCase = true)) {
+                    runCatching { session.abandon() }
+                    return@withContext UpdateCommitOutcome.Failed("Update integrity check failed (SHA-256 mismatch)")
+                }
+            }
+
             withContext(Dispatchers.Main) { onProgress(100) }
 
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
-            withContext(Dispatchers.Main) {
-                val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, "application/vnd.android.package-archive")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(installIntent)
+            val callbackIntent = Intent(appCtx, UpdateResultReceiver::class.java)
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
             }
-            ApkInstallOutcome.InstallerLaunched
+            val statusIntent = PendingIntent.getBroadcast(appCtx, sessionId, callbackIntent, flags)
+            session.commit(statusIntent.intentSender)
+            UpdateCommitOutcome.SessionCommitted
         } catch (e: Exception) {
-            ApkInstallOutcome.Failed(e.message ?: "Unable to fetch update")
+            if (sessionId != -1) {
+                runCatching { installer.abandonSession(sessionId) }
+            } else {
+                runCatching { session?.abandon() }
+            }
+            UpdateCommitOutcome.Failed(e.message ?: "Unable to apply update")
         }
     }
 }

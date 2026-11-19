@@ -17,7 +17,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.TabName
 import com.example.ui.components.PosBottomBar
@@ -60,6 +64,18 @@ class MainActivity : ComponentActivity() {
                     onDispose {
                         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     }
+                }
+
+                val lifecycleOwner = LocalLifecycleOwner.current
+                val appContext = LocalContext.current.applicationContext
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            vm.onAppForegrounded(appContext)
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {

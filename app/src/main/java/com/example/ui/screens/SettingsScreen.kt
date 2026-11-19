@@ -218,12 +218,24 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
                         }
                     }
 
+                    val isSilentMode = remember(ctx) { AndroidDeviceBridge.isDeviceOwnerSilentCapable(ctx) }
                     Text(
-                        "Installed: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                        "Installed: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE}) • ${if (isSilentMode) "Silent Kiosk Mode" else "Auto 1-Tap Confirm"}",
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         color = SlateMuted
                     )
+
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Auto-Apply GitHub Updates", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Automatically fetch & apply updates after workflow builds", fontSize = 11.sp, color = SlateMuted)
+                        }
+                        Switch(
+                            checked = state.settings.autoUpdateEnabled,
+                            onCheckedChange = { enabled -> vm.updateSettings { it.copy(autoUpdateEnabled = enabled) } }
+                        )
+                    }
 
                     OutlinedTextField(
                         value = githubRepoInput,
