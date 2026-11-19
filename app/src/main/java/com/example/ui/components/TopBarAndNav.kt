@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,7 +48,8 @@ import com.example.viewmodel.PosUiState
 fun PosTopBar(
     state: PosUiState,
     onAskAi: () -> Unit,
-    onLockPos: () -> Unit
+    onLockPos: () -> Unit,
+    onOpenUpdateSettings: () -> Unit
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -76,6 +78,21 @@ fun PosTopBar(
                             fontWeight = FontWeight.ExtraBold,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
+                    }
+                    if (state.updateInfo?.isNewer == true) {
+                        Surface(
+                            color = Color(0xFF00FF85).copy(alpha = 0.22f),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.clickable { onOpenUpdateSettings() }
+                        ) {
+                            Text(
+                                "UPDATE",
+                                color = Color(0xFF6EE7B7),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
                 Text(

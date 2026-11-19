@@ -12,7 +12,7 @@ android {
         val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
         val resolvedVersionCode = ciRunNumber ?: 1
         val resolvedVersionName = if (ciRunNumber != null) "2.3.$ciRunNumber" else "2.3.0"
-        val resolvedGithubRepo = (System.getenv("GITHUB_REPOSITORY") ?: "").replace("\"", "")
+        val resolvedGithubRepo = (System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() } ?: "Harley0321/eternalblue").replace("\"", "")
 
         applicationId = "com.aistudio.eternalbluepos.kxmpzq"
         minSdk = 26

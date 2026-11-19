@@ -70,7 +70,8 @@ class MainActivity : ComponentActivity() {
                             PosTopBar(
                                 state = state,
                                 onAskAi = { vm.setAssistantOpen(true) },
-                                onLockPos = vm::lockTerminalNow
+                                onLockPos = vm::lockTerminalNow,
+                                onOpenUpdateSettings = { vm.setActiveTab(TabName.SETTINGS) }
                             )
                         },
                         bottomBar = {

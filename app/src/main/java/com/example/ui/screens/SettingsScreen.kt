@@ -25,6 +25,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -36,16 +38,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.domain.PosMath
+import com.example.BuildConfig
+import com.example.domain.GitHubUpdateChecker
+import com.example.hardware.AndroidDeviceBridge
 import com.example.ui.components.GlowingEmeraldStoreName
 import com.example.ui.components.StoreEmblem
+import com.example.ui.theme.AmberWarn
+import com.example.ui.theme.EmeraldDark
 import com.example.ui.theme.EmeraldDeepCanvas
 import com.example.ui.theme.EmeraldGlowCore
+import com.example.ui.theme.EmeraldLightBg
 import com.example.ui.theme.EmeraldPrimary
+import com.example.ui.theme.IndigoAccent
+import com.example.ui.theme.RoseDanger
 import com.example.ui.theme.SlateBorder
 import com.example.ui.theme.SlateMuted
 import com.example.ui.theme.SlateSurface
@@ -80,6 +91,8 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
     var qrLabel by remember(state.settings.qrPayLabel) { mutableStateOf(state.settings.qrPayLabel.orEmpty()) }
     var qrAcct by remember(state.settings.qrAccountNumber) { mutableStateOf(state.settings.qrAccountNumber.orEmpty()) }
     var qrEmv by remember(state.settings.qrEmvPayload) { mutableStateOf(state.settings.qrEmvPayload.orEmpty()) }
+    var githubRepoInput by remember(state.settings.githubRepo) { mutableStateOf(state.settings.githubRepo) }
+    val ctx = LocalContext.current
 
     LazyColumn(
         contentPadding = PaddingValues(12.dp),
@@ -175,7 +188,104 @@ fun SettingsScreen(state: PosUiState, vm: PosViewModel) {
         item { SettingsSecuritySection(state, vm) }
 
         item {
-            Text("EternalBlue POS v${PosMath.APP_VERSION} • Offline SQLite Engine", fontSize = 11.sp, color = SlateMuted, modifier = Modifier.padding(4.dp))
+            val info = state.updateInfo
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, SlateBorder)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(14.dp)) {
+                    Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("GitHub App Updates (Mobile & Tablet)", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                        val badgeBg = when (info?.status) {
+                            GitHubUpdateChecker.SyncStatus.UPDATE_AVAILABLE -> EmeraldLightBg
+                            GitHubUpdateChecker.SyncStatus.NO_RELEASE_APK_YET -> Color(0xFFFFFBEB)
+                            GitHubUpdateChecker.SyncStatus.ERROR -> Color(0xFFFFF1F2)
+                            else -> Color(0xFFF1F5F9)
+                        }
+                        val badgeFg = when (info?.status) {
+                            GitHubUpdateChecker.SyncStatus.UPDATE_AVAILABLE -> EmeraldDark
+                            GitHubUpdateChecker.SyncStatus.NO_RELEASE_APK_YET -> AmberWarn
+                            GitHubUpdateChecker.SyncStatus.ERROR -> RoseDanger
+                            else -> SlateMuted
+                        }
+                        val badgeText = when {
+                            state.updateChecking -> "Checking..."
+                            info?.status == GitHubUpdateChecker.SyncStatus.UPDATE_AVAILABLE -> "Update ${info.tagName}"
+                            info?.status == GitHubUpdateChecker.SyncStatus.UP_TO_DATE -> "Up to Date"
+                            info?.status == GitHubUpdateChecker.SyncStatus.NO_RELEASE_APK_YET -> "Release Needed"
+                            info?.status == GitHubUpdateChecker.SyncStatus.ERROR -> "Sync Issue"
+                            else -> "Not Checked"
+                        }
+                        Surface(color = badgeBg, shape = RoundedCornerShape(6.dp)) {
+                            Text(badgeText, color = badgeFg, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                        }
+                    }
+
+                    Text(
+                        "Installed: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = SlateMuted
+                    )
+
+                    OutlinedTextField(
+                        value = githubRepoInput,
+                        onValueChange = { githubRepoInput = it },
+                        label = { Text("GitHub Repository (owner/repo)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (info != null) {
+                        Text(info.message, fontSize = 12.sp, color = if (info.status == GitHubUpdateChecker.SyncStatus.ERROR) RoseDanger else SlateMuted)
+                    }
+                    if (!state.updateCheckedAt.isNullOrBlank()) {
+                        Text("Last checked: ${state.updateCheckedAt}", fontSize = 11.sp, color = SlateMuted)
+                    }
+
+                    if (state.apkDownloading) {
+                        LinearProgressIndicator(
+                            progress = { (state.apkDownloadProgress / 100f).coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("Downloading APK update... ${state.apkDownloadProgress}%", fontSize = 11.sp, color = EmeraldDark, fontWeight = FontWeight.Bold)
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = { vm.checkForGitHubUpdates(silent = false, repoOverride = githubRepoInput) },
+                            enabled = !state.updateChecking && !state.apkDownloading,
+                            colors = ButtonDefaults.buttonColors(containerColor = IndigoAccent),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (state.updateChecking) "Checking..." else "Check GitHub Now", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        if (info?.isNewer == true) {
+                            Button(
+                                onClick = { vm.downloadAndInstallGitHubUpdate(ctx) },
+                                enabled = !state.apkDownloading,
+                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(if (info.apkDownloadUrl != null) "Install ${info.tagName}" else "Open Release", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else if (info != null) {
+                            OutlinedButton(
+                                onClick = { AndroidDeviceBridge.openUrl(ctx, info.htmlUrl) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Open GitHub", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Text(
+                "EternalBlue POS v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE}) • Offline SQLite Engine",
+                fontSize = 11.sp,
+                color = SlateMuted,
+                modifier = Modifier.padding(4.dp)
+            )
         }
     }
 }
