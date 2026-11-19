@@ -1,6 +1,6 @@
 {
-  "name": "OmniMart PH POS",
-  "description": "Offline-first Philippine Supermarket & Sari-Sari Point of Sale, Inventory, Barcode Scanner, and Sales Analytics PWA.",
+  "name": "EternalBlue POS",
+  "description": "Offline-first Philippine Supermarket & Sari-Sari Point of Sale, Inventory, Barcode Scanner, and Sales Analytics app.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
