@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -12,6 +13,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Message
 import android.provider.Settings
+import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.URLUtil
@@ -39,6 +41,12 @@ import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
+
+    private companion object {
+        const val TRUSTED_UPDATE_REPO = "Harley0321/eternalblue"
+        const val TRUSTED_UPDATE_MANIFEST =
+            "https://github.com/$TRUSTED_UPDATE_REPO/releases/latest/download/update-manifest.json"
+    }
 
     private lateinit var webView: WebView
     private var pendingCameraPermissionRequest: PermissionRequest? = null
@@ -151,9 +159,7 @@ class MainActivity : ComponentActivity() {
         view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             if (url.startsWith("https://") || url.startsWith("http://")) {
                 if (url.lowercase().contains(".apk")) {
-                    val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
-                        .ifBlank { "EternalBlue-POS-update.apk" }
-                    startApkDownloadAndInstall(url, fileName, null, null)
+                    enqueueSystemDownload(url, userAgent, contentDisposition, mimeType)
                 } else {
                     enqueueSystemDownload(url, userAgent, contentDisposition, mimeType)
                 }
@@ -183,8 +189,12 @@ class MainActivity : ComponentActivity() {
                 if (uri.host == APP_HOST) return false
                 val urlStr = uri.toString()
                 if (urlStr.lowercase().endsWith(".apk")) {
-                    val fileName = URLUtil.guessFileName(urlStr, null, "application/vnd.android.package-archive")
-                    startApkDownloadAndInstall(urlStr, fileName, null, null)
+                    enqueueSystemDownload(
+                        urlStr,
+                        view.settings.userAgentString,
+                        null,
+                        "application/vnd.android.package-archive"
+                    )
                     return true
                 }
                 openExternalUrl(urlStr)
@@ -208,8 +218,12 @@ class MainActivity : ComponentActivity() {
                     ): Boolean {
                         val url = request.url.toString()
                         if (url.lowercase().endsWith(".apk")) {
-                            val fileName = URLUtil.guessFileName(url, null, "application/vnd.android.package-archive")
-                            startApkDownloadAndInstall(url, fileName, null, null)
+                            enqueueSystemDownload(
+                                url,
+                                subView.settings.userAgentString,
+                                null,
+                                "application/vnd.android.package-archive"
+                            )
                         } else {
                             openExternalUrl(url)
                         }
@@ -369,8 +383,8 @@ class MainActivity : ComponentActivity() {
             return
         }
         val cleanUrl = apkUrl.trim()
-        if (!cleanUrl.startsWith("https://")) {
-            emitUpdateEvent("ERROR", 0, "Invalid update URL. Must use HTTPS.")
+        if (!isOfficialApkUrl(cleanUrl) || manifestUrl?.trim() != TRUSTED_UPDATE_MANIFEST) {
+            emitUpdateEvent("ERROR", 0, "Update must come from the trusted GitHub release.")
             return
         }
 
@@ -379,19 +393,19 @@ class MainActivity : ComponentActivity() {
 
         ioExecutor.execute {
             try {
-                var resolvedSha = expectedSha256?.trim()?.lowercase()?.takeIf { it.length == 64 }
-                var resolvedUrl = cleanUrl
-                if (!manifestUrl.isNullOrBlank() && manifestUrl.startsWith("https://")) {
-                    try {
-                        val manifestJson = fetchTextFollowingRedirects(manifestUrl)
-                        val obj = JSONObject(manifestJson)
-                        val mSha = obj.optString("sha256", "").trim().lowercase()
-                        val mUrl = obj.optString("apkUrl", "").trim()
-                        if (mSha.length == 64) resolvedSha = mSha
-                        if (mUrl.startsWith("https://")) resolvedUrl = mUrl
-                    } catch (_: Exception) {
-                        // Continue with direct apkUrl if manifest fetch fails
-                    }
+                val manifestJson = fetchTextFollowingRedirects(TRUSTED_UPDATE_MANIFEST)
+                val manifest = JSONObject(manifestJson)
+                val resolvedSha = manifest.optString("sha256", "").trim().lowercase()
+                val resolvedUrl = manifest.optString("apkUrl", "").trim()
+                if (!resolvedSha.matches(Regex("^[a-f0-9]{64}$")) || !isOfficialApkUrl(resolvedUrl)) {
+                    throw IOException("The trusted update manifest is invalid.")
+                }
+                if (resolvedUrl != cleanUrl) {
+                    throw IOException("The APK URL does not match the trusted update manifest.")
+                }
+                val suppliedSha = expectedSha256?.trim()?.lowercase()
+                if (!suppliedSha.isNullOrEmpty() && suppliedSha != resolvedSha) {
+                    throw IOException("The APK checksum does not match the trusted update manifest.")
                 }
 
                 val safeName = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_")
@@ -442,13 +456,15 @@ class MainActivity : ComponentActivity() {
                     throw IOException("Downloaded APK is incomplete ($downloaded bytes).")
                 }
 
-                if (resolvedSha != null) {
-                    emitUpdateEvent("VERIFYING", 99, "Verifying SHA-256 checksum...")
-                    val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
-                    if (!actualSha.equals(resolvedSha, ignoreCase = true)) {
-                        tempFile.delete()
-                        throw IOException("Checksum mismatch. File may be corrupted.")
-                    }
+                emitUpdateEvent("VERIFYING", 99, "Verifying SHA-256 checksum...")
+                val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
+                if (!actualSha.equals(resolvedSha, ignoreCase = true)) {
+                    tempFile.delete()
+                    throw IOException("Checksum mismatch. File may be corrupted.")
+                }
+                if (!isTrustedUpdateApk(tempFile)) {
+                    tempFile.delete()
+                    throw IOException("The APK package or signing certificate does not match this app.")
                 }
 
                 if (targetFile.exists()) targetFile.delete()
@@ -515,12 +531,88 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun isOfficialApkUrl(rawUrl: String): Boolean {
+        return try {
+            val url = URL(rawUrl)
+            url.protocol.equals("https", ignoreCase = true) &&
+                url.host.equals("github.com", ignoreCase = true) &&
+                (url.port == -1 || url.port == 443) &&
+                url.userInfo == null &&
+                url.query == null &&
+                url.ref == null &&
+                Regex("^/$TRUSTED_UPDATE_REPO/releases/download/[^/]+/[^/]+\\.apk$")
+                    .matches(url.path)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun isTrustedUpdateApk(apkFile: File): Boolean {
+        val signatureFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
+        val archiveInfo = getPackageInfoForArchive(apkFile.absolutePath, signatureFlag)
+            ?: return false
+        if (archiveInfo.packageName != packageName) return false
+
+        val installedInfo = getInstalledPackageInfo(signatureFlag)
+        if (packageVersionCode(archiveInfo) < packageVersionCode(installedInfo)) return false
+
+        val archiveSigners = packageSignerSet(archiveInfo)
+        return archiveSigners.isNotEmpty() && archiveSigners == packageSignerSet(installedInfo)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun getPackageInfoForArchive(path: String, flags: Int): PackageInfo? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageArchiveInfo(path, PackageManager.PackageInfoFlags.of(flags.toLong()))
+        } else {
+            packageManager.getPackageArchiveInfo(path, flags)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun getInstalledPackageInfo(flags: Int): PackageInfo {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(flags.toLong()))
+        } else {
+            packageManager.getPackageInfo(packageName, flags)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun packageSignerSet(info: PackageInfo): Set<String> {
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners
+        } else {
+            info.signatures
+        } ?: return emptySet()
+        return signatures.map { Base64.encodeToString(it.toByteArray(), Base64.NO_WRAP) }.toSet()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun packageVersionCode(info: PackageInfo): Long {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            info.versionCode.toLong()
+        }
+    }
+
     private fun openFollowingRedirects(startUrl: String): HttpURLConnection {
         var current = startUrl
         for (hop in 0 until 6) {
             val url = URL(current)
-            if (url.protocol.lowercase() != "https") {
-                throw IOException("Blocked non-HTTPS redirect.")
+            if (!url.protocol.equals("https", ignoreCase = true) ||
+                (url.port != -1 && url.port != 443) ||
+                url.userInfo != null ||
+                !(url.host.equals("github.com", ignoreCase = true) ||
+                    url.host.equals("release-assets.githubusercontent.com", ignoreCase = true))
+            ) {
+                throw IOException("Blocked untrusted update redirect.")
             }
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = false
@@ -533,7 +625,14 @@ class MainActivity : ComponentActivity() {
                 val loc = conn.getHeaderField("Location")
                 conn.disconnect()
                 if (loc.isNullOrBlank()) throw IOException("Redirect without Location header.")
-                current = URL(url, loc).toString()
+                val redirect = URL(url, loc)
+                if (!redirect.protocol.equals("https", ignoreCase = true) ||
+                    !(redirect.host.equals("github.com", ignoreCase = true) ||
+                        redirect.host.equals("release-assets.githubusercontent.com", ignoreCase = true))
+                ) {
+                    throw IOException("Blocked untrusted update redirect.")
+                }
+                current = redirect.toString()
                 continue
             }
             if (code !in 200..299) {
@@ -626,7 +725,7 @@ class MainActivity : ComponentActivity() {
         fun fetchUpdateManifestNative(repoSlug: String, callbackId: String) {
             val clean = repoSlug.trim().removePrefix("https://github.com/").removeSuffix(".git").trim('/')
             val safeCb = JSONObject.quote(callbackId)
-            if (!clean.contains('/')) {
+            if (clean != TRUSTED_UPDATE_REPO) {
                 runOnUiThread {
                     if (this@MainActivity::webView.isInitialized) {
                         webView.evaluateJavascript(
@@ -639,8 +738,7 @@ class MainActivity : ComponentActivity() {
             }
             ioExecutor.execute {
                 try {
-                    val manifestUrl = "https://github.com/$clean/releases/latest/download/update-manifest.json"
-                    val json = fetchTextFollowingRedirects(manifestUrl)
+                    val json = fetchTextFollowingRedirects(TRUSTED_UPDATE_MANIFEST)
                     val quotedJson = JSONObject.quote(json)
                     runOnUiThread {
                         if (this@MainActivity::webView.isInitialized) {

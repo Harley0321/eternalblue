@@ -1409,6 +1409,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setState((s) => ({ ...s, pinError: 'PIN must be 4–15 digits' }));
         return;
       }
+      if (SecurityManager.isPinWeak(pin)) {
+        setState((s) => ({ ...s, pinError: 'Choose a less common PIN' }));
+        return;
+      }
       const st = stateRef.current;
       if (st.pinBusy) return;
       setState((s) => ({ ...s, pinBusy: true, pinError: null }));

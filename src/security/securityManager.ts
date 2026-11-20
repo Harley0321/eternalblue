@@ -44,7 +44,8 @@ async function pbkdf2(pin: string, salt: Uint8Array, iterations: number): Promis
   return new Uint8Array(derived);
 }
 
-const DEFAULT_PBKDF2_ITER = 12_000;
+const DEFAULT_PBKDF2_ITER = 600_000;
+const MAX_PBKDF2_ITER = 1_000_000;
 
 async function sha256Hex(input: string): Promise<string> {
   const enc = new TextEncoder().encode(input);
@@ -80,6 +81,7 @@ export const SecurityManager = {
       const salt = fromBase64(storedSalt);
       const expected = fromBase64(storedHash);
       const iter = iterations > 0 ? iterations : DEFAULT_PBKDF2_ITER;
+      if (!Number.isSafeInteger(iter) || iter > MAX_PBKDF2_ITER) return false;
       const actual = await pbkdf2(pin, salt, iter);
       return constantTimeEqual(expected, actual);
     } catch {
