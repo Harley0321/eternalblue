@@ -1292,8 +1292,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setAdminPin = useCallback(
     async (pin: string) => {
-      if (pin.length < 4) {
-        setState((s) => ({ ...s, pinError: 'PIN must be 4–8 digits' }));
+      if (!/^\d{4,15}$/.test(pin)) {
+        setState((s) => ({ ...s, pinError: 'PIN must be 4–15 digits' }));
         return;
       }
       const st = stateRef.current;
@@ -1340,8 +1340,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setState((s) => ({ ...s, pinError: `Too many attempts. Wait ${secs}s.` }));
       return;
     }
-    if (pin.length < 4) {
-      setState((s) => ({ ...s, pinError: 'Enter at least 4 digits' }));
+    if (!/^\d{4,15}$/.test(pin)) {
+      setState((s) => ({ ...s, pinError: 'Enter 4–15 digits' }));
       return;
     }
 

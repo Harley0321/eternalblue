@@ -40,7 +40,7 @@ export const SettingsSecuritySection: React.FC = () => {
         <p className="text-xs text-[#64748B]">
           {pinConfigured
             ? `Manager PIN is active (salted PBKDF2-HMAC-SHA256, ${state.settings.adminPinIter} iterations + lockout).`
-            : 'No Manager PIN configured yet. Set a 4–8 digit PIN to protect Settings and Voids.'}
+            : 'No Manager PIN configured yet. Set a 4–15 digit PIN to protect Settings and Voids.'}
         </p>
 
         <div className="grid grid-cols-2 gap-2">

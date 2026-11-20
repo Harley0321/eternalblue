@@ -32,7 +32,8 @@ const SecurePinPad: React.FC<{
   const remainingMs = Math.max(0, lockoutUntilMs - nowMs);
   const lockoutSecs = remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
   const lockedOut = lockoutSecs > 0;
-  const slots = Math.min(8, Math.max(4, pin.length));
+  const slots = Math.min(15, Math.max(4, pin.length));
+  const compactDots = slots > 8;
 
   return (
     <div className="w-full flex flex-col items-center">
@@ -42,13 +43,17 @@ const SecurePinPad: React.FC<{
           error ? 'border-[#E11D48]' : 'border-[#E2E8F0]'
         }`}
       >
-        <div className="flex-1 flex items-center justify-center gap-2.5">
+        <div
+          className={`flex-1 flex flex-wrap items-center justify-center ${
+            compactDots ? 'gap-1.5' : 'gap-2.5'
+          }`}
+        >
           {Array.from({ length: slots }).map((_, i) => (
             <span
               key={i}
-              className={`w-3.5 h-3.5 rounded-full transition-colors ${
-                i < pin.length ? 'bg-[#059669]' : 'bg-[#CBD5E1]'
-              }`}
+              className={`rounded-full transition-colors ${
+                slots > 10 ? 'w-2.5 h-2.5' : 'w-3 h-3'
+              } ${i < pin.length ? 'bg-[#059669]' : 'bg-[#CBD5E1]'}`}
             />
           ))}
         </div>
@@ -56,7 +61,7 @@ const SecurePinPad: React.FC<{
           <button
             type="button"
             onClick={onClear}
-            className="text-[11px] font-bold text-[#64748B] hover:text-[#0F172A] px-1 cursor-pointer"
+            className="text-[11px] font-bold text-[#64748B] hover:text-[#0F172A] px-1 cursor-pointer shrink-0"
           >
             Clear
           </button>
@@ -76,7 +81,7 @@ const SecurePinPad: React.FC<{
           </span>
         ) : (
           <span className="text-[11px] text-[#64748B]">
-            {isSettingPin ? `Enter 4–8 digits (${pin.length}/8)` : 'Enter your 4–8 digit Manager PIN'}
+            {isSettingPin ? `Enter 4–15 digits (${pin.length}/15)` : 'Enter your 4–15 digit Manager PIN'}
           </span>
         )}
       </div>
@@ -92,7 +97,7 @@ const SecurePinPad: React.FC<{
               <button
                 key={digit}
                 type="button"
-                disabled={busy || lockedOut || pin.length >= 8}
+                disabled={busy || lockedOut || pin.length >= 15}
                 onClick={() => onDigit(digit)}
                 className="h-[52px] rounded-[14px] bg-[#F1F5F9] hover:bg-slate-200 disabled:bg-[#F8FAFC] border border-[#E2E8F0] font-mono font-extrabold text-xl text-[#0F172A] disabled:text-[#64748B] cursor-pointer disabled:cursor-not-allowed"
               >
@@ -114,7 +119,7 @@ const SecurePinPad: React.FC<{
           </button>
           <button
             type="button"
-            disabled={busy || lockedOut || pin.length >= 8}
+            disabled={busy || lockedOut || pin.length >= 15}
             onClick={() => onDigit('0')}
             className="h-[52px] rounded-[14px] bg-[#F1F5F9] hover:bg-slate-200 disabled:bg-[#F8FAFC] border border-[#E2E8F0] font-mono font-extrabold text-xl text-[#0F172A] disabled:text-[#64748B] cursor-pointer disabled:cursor-not-allowed"
           >
@@ -333,7 +338,7 @@ export const SmallModalsHost: React.FC = () => {
               error={state.pinError}
               lockoutUntilMs={state.pinLockoutUntilMs}
               onDigit={(d) => {
-                if (modalPin.length < 8) {
+                if (modalPin.length < 15) {
                   setModalPin((p) => p + d);
                   clearPinError();
                 }
@@ -402,7 +407,7 @@ export const SmallModalsHost: React.FC = () => {
               <GlowingEmeraldStoreName text={state.settings.storeName} className="text-[17px]" />
             </div>
             <div className="mt-1.5 font-extrabold text-[15px] text-[#0F172A]">Terminal Locked</div>
-            <div className="text-xs text-[#64748B] mb-3">Tap your 4–8 digit Manager PIN</div>
+            <div className="text-xs text-[#64748B] mb-3">Tap your 4–15 digit Manager PIN</div>
 
             <SecurePinPad
               pin={lockPin}
@@ -411,7 +416,7 @@ export const SmallModalsHost: React.FC = () => {
               error={state.pinError}
               lockoutUntilMs={state.pinLockoutUntilMs}
               onDigit={(d) => {
-                if (lockPin.length < 8) {
+                if (lockPin.length < 15) {
                   setLockPin((p) => p + d);
                   clearPinError();
                 }
