@@ -41,13 +41,6 @@ import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
-
-    private companion object {
-        const val TRUSTED_UPDATE_REPO = "Harley0321/eternalblue"
-        const val TRUSTED_UPDATE_MANIFEST =
-            "https://github.com/$TRUSTED_UPDATE_REPO/releases/latest/download/update-manifest.json"
-    }
-
     private lateinit var webView: WebView
     private var pendingCameraPermissionRequest: PermissionRequest? = null
     private var pendingCameraBridgeCallbackId: String? = null
@@ -863,5 +856,8 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val APP_HOST = "appassets.androidplatform.net"
+        private const val TRUSTED_UPDATE_REPO = "Harley0321/eternalblue"
+        private const val TRUSTED_UPDATE_MANIFEST =
+            "https://github.com/$TRUSTED_UPDATE_REPO/releases/latest/download/update-manifest.json"
     }
 }
