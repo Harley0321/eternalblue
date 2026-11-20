@@ -78,25 +78,57 @@ async function createNativeDetector(): Promise<NativeBarcodeDetector | null> {
   }
 }
 
-async function acquireCameraStream(facingMode: 'environment' | 'user'): Promise<MediaStream> {
-  const attempts: MediaStreamConstraints[] = [
-    {
-      video: {
-        facingMode: { ideal: facingMode },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-      audio: false,
-    },
-    {
-      video: { facingMode },
-      audio: false,
-    },
-    {
-      video: true,
-      audio: false,
-    },
-  ];
+async function acquireCameraStream(
+  facingMode: 'environment' | 'user',
+  isMobileDevice: boolean
+): Promise<MediaStream> {
+  const attempts: MediaStreamConstraints[] = isMobileDevice
+    ? [
+        {
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 640, max: 1280 },
+            height: { ideal: 480, max: 720 },
+            frameRate: { ideal: 15, max: 24 },
+          },
+          audio: false,
+        },
+        {
+          video: {
+            facingMode,
+            width: { max: 1280 },
+            height: { max: 720 },
+            frameRate: { max: 24 },
+          },
+          audio: false,
+        },
+        {
+          video: {
+            width: { max: 1280 },
+            height: { max: 720 },
+            frameRate: { max: 24 },
+          },
+          audio: false,
+        },
+      ]
+    : [
+        {
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        },
+        {
+          video: { facingMode },
+          audio: false,
+        },
+        {
+          video: true,
+          audio: false,
+        },
+      ];
 
   let lastErr: unknown = null;
   for (const constraints of attempts) {
@@ -144,6 +176,10 @@ export const BarcodeScannerModal: React.FC = () => {
   const lastScanRef = useRef<{ code: string; time: number }>({ code: '', time: 0 });
   const onDetectedRef = useRef(handleBarcodeDetected);
   onDetectedRef.current = handleBarcodeDetected;
+  const isMobileDevice =
+    DeviceBridge.isAndroidHost() ||
+    DeviceBridge.isAndroidBrowser() ||
+    DeviceBridge.isAppleMobileBrowser();
 
   const stopStream = useCallback(() => {
     const stream = streamRef.current;
@@ -198,7 +234,7 @@ export const BarcodeScannerModal: React.FC = () => {
       if (!canvasRef.current) {
         canvasRef.current = document.createElement('canvas');
       }
-      const maxDim = 720;
+      const maxDim = isMobileDevice ? 640 : 720;
       const scale = Math.min(1, maxDim / Math.max(w, h, 1));
       canvasRef.current.width = Math.max(1, Math.round(w * scale));
       canvasRef.current.height = Math.max(1, Math.round(h * scale));
@@ -228,7 +264,7 @@ export const BarcodeScannerModal: React.FC = () => {
 
       try {
         setCameraStatus('Opening camera…');
-        const stream = await acquireCameraStream(facingMode);
+        const stream = await acquireCameraStream(facingMode, isMobileDevice);
         if (cancelled) {
           stream.getTracks().forEach((t) => {
             try {
@@ -341,13 +377,13 @@ export const BarcodeScannerModal: React.FC = () => {
           if (!cancelled) {
             scanTimer = setTimeout(() => {
               void scanFrame();
-            }, 160);
+            }, isMobileDevice ? 300 : 160);
           }
         };
 
         scanTimer = setTimeout(() => {
           void scanFrame();
-        }, 120);
+        }, isMobileDevice ? 250 : 120);
       } catch (err) {
         if (!cancelled) {
           stopStream();
@@ -363,7 +399,7 @@ export const BarcodeScannerModal: React.FC = () => {
       if (scanTimer) clearTimeout(scanTimer);
       stopStream();
     };
-  }, [state.scannerOpen, facingMode, retrySeq, emitCode, stopStream]);
+  }, [state.scannerOpen, facingMode, retrySeq, emitCode, stopStream, isMobileDevice]);
 
   const toggleTorch = async () => {
     const track = streamRef.current?.getVideoTracks()[0];
