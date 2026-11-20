@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Download, ExternalLink, Lock, RefreshCw } from 'lucide-react';
 import { GlowingEmeraldStoreName, StoreEmblem } from '../components/CommonGraphics';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 import { PosMath } from '../domain/posMath';
 import { DeviceBridge } from '../hardware/deviceBridge';
 import { usePos } from '../state/PosContext';
@@ -284,6 +285,21 @@ export const SettingsScreen: React.FC = () => {
       </div>
 
       <SettingsSecuritySection />
+
+      {!DeviceBridge.isAndroidHost() && (
+        <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-extrabold text-[15px] text-[#0F172A]">Install on Phone / Tablet</h3>
+            <span className="px-2 py-0.5 rounded-md bg-[#ECFDF5] text-[#047857] text-[10px] font-extrabold">
+              ISOLATED TERMINAL
+            </span>
+          </div>
+          <p className="text-xs text-[#64748B] leading-relaxed">
+            Install EternalBlue POS on multiple phones or tablets. Each device creates its own separate offline database ({state.deviceIdentity.shortCode} on this unit) with zero cross-device syncing.
+          </p>
+          <PWAInstallButton variant="card" />
+        </div>
+      )}
 
       {/* GitHub Updates */}
       <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3.5 space-y-2.5">

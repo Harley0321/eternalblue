@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Delete, Lock } from 'lucide-react';
+import { Check, Delete, Lock, ShieldAlert } from 'lucide-react';
 import { GlowingEmeraldStoreName } from '../components/CommonGraphics';
 import { PosMath } from '../domain/posMath';
 import { SecurityManager } from '../security/securityManager';
@@ -160,6 +160,8 @@ export const SmallModalsHost: React.FC = () => {
     verifyAndUnlock,
     dismissScannedPrompt,
     openProductModal,
+    confirmCrossDeviceRestore,
+    cancelCrossDeviceRestore,
   } = usePos();
 
   const [holdLabel, setHoldLabel] = useState('');
@@ -437,6 +439,53 @@ export const SmallModalsHost: React.FC = () => {
                 void verifyAndUnlock(entered, 'unlockTerminal');
               }}
             />
+          </div>
+        </div>
+      )}
+      {/* Cross-Device Backup Import Confirmation */}
+      {state.pendingCrossDeviceRestore && (
+        <div className="fixed inset-0 z-50 bg-black/55 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 shadow-2xl border border-[#E2E8F0]">
+            <div className="flex items-center gap-2 text-[#D97706]">
+              <ShieldAlert size={20} className="shrink-0" />
+              <h3 className="font-extrabold text-base text-[#0F172A]">Backup From Another Device</h3>
+            </div>
+            <p className="text-xs text-[#475569] leading-relaxed">
+              This backup belongs to terminal{' '}
+              <span className="font-mono font-bold text-[#0F172A]">
+                {state.pendingCrossDeviceRestore.sourceLabel}
+              </span>
+              , while this device is{' '}
+              <span className="font-mono font-bold text-[#059669]">
+                {state.deviceIdentity.shortCode}
+              </span>
+              .
+            </p>
+            <div className="rounded-xl bg-[#FFFBEB] border border-[#D97706]/30 p-2.5 text-[11px] text-[#92400E] space-y-1">
+              <div className="font-bold">
+                Contains {state.pendingCrossDeviceRestore.productCount} SKUs &amp;{' '}
+                {state.pendingCrossDeviceRestore.saleCount} sales
+              </div>
+              <div>
+                Because devices never auto-sync, restoring will replace the current data on THIS device only. Other devices will not be changed.
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={cancelCrossDeviceRestore}
+                className="px-4 py-2 rounded-xl border border-[#E2E8F0] text-xs font-semibold text-[#64748B] hover:bg-slate-50 cursor-pointer"
+              >
+                Keep Current Data
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmCrossDeviceRestore()}
+                className="px-4 py-2 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-white text-xs font-bold cursor-pointer"
+              >
+                Replace This Device
+              </button>
+            </div>
           </div>
         </div>
       )}

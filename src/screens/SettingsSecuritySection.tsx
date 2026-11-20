@@ -36,7 +36,23 @@ export const SettingsSecuritySection: React.FC = () => {
   return (
     <>
       <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3.5 space-y-2.5">
-        <h3 className="font-extrabold text-[15px] text-[#0F172A]">Security Vault & Backups</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-extrabold text-[15px] text-[#0F172A]">Security Vault & Backups</h3>
+          <span className="px-2 py-0.5 rounded-md bg-[#ECFDF5] text-[#047857] text-[10px] font-extrabold font-mono">
+            {state.deviceIdentity.shortCode}
+          </span>
+        </div>
+
+        <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-2.5 space-y-1">
+          <div className="flex items-center justify-between text-[11px] font-bold text-[#0F172A]">
+            <span>Per-Device Data Isolation Active</span>
+            <span className="text-[#059669]">No Cloud Sync</span>
+          </div>
+          <p className="text-[11px] text-[#64748B] leading-relaxed">
+            Sales, inventory, Suki utang, and shifts stay strictly on this device. Installing this app on other phones or tablets will never sync, merge, or alter another device&apos;s data.
+          </p>
+        </div>
+
         <p className="text-xs text-[#64748B]">
           {pinConfigured
             ? `Manager PIN is active (salted PBKDF2-HMAC-SHA256, ${state.settings.adminPinIter} iterations + lockout).`
@@ -67,7 +83,8 @@ export const SettingsSecuritySection: React.FC = () => {
             type="button"
             onClick={() => {
               const json = exportBackupJson();
-              DeviceBridge.downloadTextFile('eternalblue_backup.json', json, 'application/json');
+              const safeTag = state.deviceIdentity.shortCode.toLowerCase();
+              DeviceBridge.downloadTextFile(`eternalblue_backup_${safeTag}.json`, json, 'application/json');
               toast('Backup JSON downloaded');
             }}
             className="py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
@@ -99,7 +116,7 @@ export const SettingsSecuritySection: React.FC = () => {
         </button>
 
         <div className="text-[11px] text-[#64748B]">
-          Security Audit Entries: {state.securityLog.length}
+          Security Audit Entries: {state.securityLog.length} · Terminal ID: {state.deviceIdentity.shortCode}
         </div>
       </div>
 

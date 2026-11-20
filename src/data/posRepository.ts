@@ -1,9 +1,11 @@
+import { loadOrCreateDeviceIdentity } from '../domain/deviceIdentity';
 import {
   DEFAULT_STORE_SETTINGS,
   type ActiveCartSnapshot,
   type ActiveShiftState,
   type CashDrawerEvent,
   type CashierAccount,
+  type DeviceIdentityInfo,
   type DigitalServiceEntry,
   type HeldOrder,
   type Product,
@@ -82,6 +84,8 @@ function loadListResilient<T>(key: string, seedProvider?: () => T[]): T[] {
 }
 
 export const PosRepository = {
+  loadDeviceIdentity: (): DeviceIdentityInfo => loadOrCreateDeviceIdentity(),
+
   loadProducts: (): Product[] => loadListResilient('products'),
   saveProducts: (list: Product[]) => dbPutString('products', JSON.stringify(list)),
 

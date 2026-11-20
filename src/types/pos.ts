@@ -348,10 +348,18 @@ export interface ActiveCartSnapshot {
   seniorId: string;
 }
 
+export interface DeviceIdentityInfo {
+  deviceId: string;
+  shortCode: string;
+  installedAt: string;
+}
+
 export interface PosBackupPayload {
   app: string;
   version: string;
   exportedAt: string;
+  sourceDeviceId?: string;
+  sourceDeviceLabel?: string;
   settings: StoreSettings;
   products: Product[];
   sales: SaleRecord[];

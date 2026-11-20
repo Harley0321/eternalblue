@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PosRepository } from '../data/posRepository';
 import { AssistantEngine, type AssistantLang, type ChatMessage, type StorePulse } from '../domain/assistantEngine';
+import { analyzeBackupDeviceOrigin } from '../domain/deviceIdentity';
 import { GitHubUpdateChecker, type ReleaseInfo } from '../domain/githubUpdateChecker';
 import { OpsMath } from '../domain/opsMath';
 import { PosMath } from '../domain/posMath';
@@ -12,6 +13,7 @@ import type {
   CartTotals,
   CashDrawerEvent,
   CashierAccount,
+  DeviceIdentityInfo,
   DigitalServiceEntry,
   HeldOrder,
   OperationsSubTab,
@@ -36,9 +38,18 @@ import type {
 
 export type PinModalMode = 'unlockSettings' | 'setPin' | 'unlockTerminal' | 'unlockVoid' | null;
 
+export interface CrossDeviceRestorePrompt {
+  rawJson: string;
+  sourceLabel: string;
+  exportedAt: string;
+  productCount: number;
+  saleCount: number;
+}
+
 export interface PosUiState {
   activeTab: TabName;
   opsSubTab: OperationsSubTab;
+  deviceIdentity: DeviceIdentityInfo;
   products: Product[];
   sales: SaleRecord[];
   heldOrders: HeldOrder[];
@@ -81,6 +92,7 @@ export interface PosUiState {
   holdCartModalOpen: boolean;
   voidSaleTarget: SaleRecord | null;
   pendingVoidSale: SaleRecord | null;
+  pendingCrossDeviceRestore: CrossDeviceRestorePrompt | null;
   pinModalMode: PinModalMode;
   pinBusy: boolean;
   pinError: string | null;
@@ -172,7 +184,9 @@ interface PosContextValue {
   lockTerminalNow: () => void;
   lockSettingsNow: () => void;
   exportBackupJson: () => string;
-  importBackupJson: (rawJson: string) => Promise<void>;
+  importBackupJson: (rawJson: string, forceCrossDeviceConfirm?: boolean) => Promise<void>;
+  confirmCrossDeviceRestore: () => Promise<void>;
+  cancelCrossDeviceRestore: () => void;
   factoryResetAll: () => void;
   setAssistantOpen: (open: boolean) => void;
   setAssistantLang: (lang: AssistantLang) => void;
@@ -185,6 +199,7 @@ interface PosContextValue {
 const PosContext = createContext<PosContextValue | null>(null);
 
 function createInitialState(): PosUiState {
+  const deviceIdentity = PosRepository.loadDeviceIdentity();
   const products = PosRepository.loadProducts();
   const sales = PosRepository.loadSales();
   const heldOrders = PosRepository.loadHeldOrders();
@@ -207,6 +222,7 @@ function createInitialState(): PosUiState {
   return {
     activeTab: 'POS',
     opsSubTab: 'UTANG',
+    deviceIdentity,
     products,
     sales,
     heldOrders,
@@ -249,6 +265,7 @@ function createInitialState(): PosUiState {
     holdCartModalOpen: false,
     voidSaleTarget: null,
     pendingVoidSale: null,
+    pendingCrossDeviceRestore: null,
     pinModalMode: null,
     pinBusy: false,
     pinError: null,
@@ -1535,6 +1552,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       app: 'eternalblue-pos',
       version: PosMath.APP_VERSION,
       exportedAt: new Date().toISOString(),
+      sourceDeviceId: st.deviceIdentity.deviceId,
+      sourceDeviceLabel: st.deviceIdentity.shortCode,
       settings: sanitizedSettings,
       products: st.products,
       sales: st.sales,
@@ -1553,7 +1572,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const importBackupJson = useCallback(
-    async (rawJson: string) => {
+    async (rawJson: string, forceCrossDeviceConfirm = false) => {
       const st = stateRef.current;
       const hasPin = Boolean(st.settings.adminPinHash && st.settings.adminPinHash.trim());
       if (hasPin && !st.settingsUnlocked) {
@@ -1574,6 +1593,22 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toast('Invalid or unreadable backup JSON file', 'ERROR');
         return;
       }
+
+      const origin = analyzeBackupDeviceOrigin(parsed, st.deviceIdentity.deviceId);
+      if (origin.isCrossDevice && !forceCrossDeviceConfirm) {
+        setState((s) => ({
+          ...s,
+          pendingCrossDeviceRestore: {
+            rawJson,
+            sourceLabel: origin.sourceDeviceLabel ?? 'Another Device',
+            exportedAt: parsed!.exportedAt || '',
+            productCount: parsed!.products.length,
+            saleCount: parsed!.sales.length,
+          },
+        }));
+        return;
+      }
+
       const restoredStoreName =
         parsed.settings.storeName?.trim() ||
         st.settings.storeName.trim() ||
@@ -1589,11 +1624,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
       const nextCashiers = parsed.cashiers?.length ? parsed.cashiers : st.cashiers;
       const nextShift = parsed.activeShift ?? st.activeShift;
+      const sourceNote = origin.isCrossDevice && origin.sourceDeviceLabel
+        ? ` (from ${origin.sourceDeviceLabel})`
+        : '';
       const secLog = await SecurityManager.appendSecurityEvent(
         st.securityLog,
         'BACKUP_RESTORED',
         'info',
-        `Restored ${parsed.products.length} SKUs & ${parsed.sales.length} sales`
+        `Restored ${parsed.products.length} SKUs & ${parsed.sales.length} sales${sourceNote}`
       );
 
       PosRepository.saveSettings(mergedSettings);
@@ -1613,6 +1651,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setState((s) => ({
         ...s,
+        pendingCrossDeviceRestore: null,
         settings: mergedSettings,
         products: parsed!.products,
         sales: parsed!.sales,
@@ -1632,6 +1671,17 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     [toast]
   );
+
+  const confirmCrossDeviceRestore = useCallback(async () => {
+    const pending = stateRef.current.pendingCrossDeviceRestore;
+    if (!pending) return;
+    await importBackupJson(pending.rawJson, true);
+  }, [importBackupJson]);
+
+  const cancelCrossDeviceRestore = useCallback(() => {
+    setState((s) => ({ ...s, pendingCrossDeviceRestore: null }));
+    toast('Backup import cancelled — device data unchanged');
+  }, [toast]);
 
   const factoryResetAll = useCallback(() => {
     const preservedStoreName =
@@ -1758,6 +1808,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     lockSettingsNow,
     exportBackupJson,
     importBackupJson,
+    confirmCrossDeviceRestore,
+    cancelCrossDeviceRestore,
     factoryResetAll,
     setAssistantOpen,
     setAssistantLang,

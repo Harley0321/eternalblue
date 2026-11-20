@@ -8,9 +8,11 @@ import {
   Settings,
   Sparkles,
 } from 'lucide-react';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { usePos } from '../state/PosContext';
 import { TAB_LABELS, type TabName } from '../types/pos';
 import { GlowingEmeraldStoreName, StoreEmblem } from './CommonGraphics';
+import { PWAInstallButton } from './PWAInstallButton';
 
 const TAB_ORDER: TabName[] = ['POS', 'INVENTORY', 'OPERATIONS', 'SALES', 'SETTINGS'];
 
@@ -31,6 +33,7 @@ function tabIcon(tab: TabName) {
 
 export const PosTopBar: React.FC = () => {
   const { state, pinConfigured, storePulse, setAssistantOpen, lockTerminalNow, setActiveTab } = usePos();
+  const isOnline = useOnlineStatus();
 
   return (
     <header className="w-full bg-[#020617] px-3.5 py-2.5 shrink-0 z-30">
@@ -42,8 +45,13 @@ export const PosTopBar: React.FC = () => {
             <span className="text-[11px] text-[#94A3B8] truncate">
               {state.activeShift?.cashierName ?? state.settings.storeAddress}
             </span>
-            <span className="bg-[#059669]/20 text-[#34D399] text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0">
-              OFFLINE
+            <span
+              title={`Device ${state.deviceIdentity.shortCode} · Strict local-only storage (no cloud sync)`}
+              className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 ${
+                isOnline ? 'bg-[#059669]/20 text-[#34D399]' : 'bg-[#D97706]/25 text-[#FCD34D]'
+              }`}
+            >
+              {isOnline ? 'LOCAL-ONLY' : 'OFFLINE'}
             </span>
             {state.updateInfo?.isNewer && (
               <button
@@ -56,7 +64,8 @@ export const PosTopBar: React.FC = () => {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <PWAInstallButton variant="compact" />
           <button
             type="button"
             onClick={() => setAssistantOpen(true)}
