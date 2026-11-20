@@ -15,6 +15,7 @@ import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.URLUtil
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -41,6 +42,8 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private var pendingCameraPermissionRequest: PermissionRequest? = null
+    private var pendingCameraBridgeCallbackId: String? = null
+    private var pendingFilePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingApkInstallFile: File? = null
     private val ioExecutor = Executors.newSingleThreadExecutor()
 
@@ -52,10 +55,25 @@ class MainActivity : ComponentActivity() {
             val request = pendingCameraPermissionRequest
             pendingCameraPermissionRequest = null
             if (request != null) {
-                if (granted) {
-                    request.grant(request.resources)
-                } else {
-                    request.deny()
+                safeRespondPermissionRequest(request, granted)
+            }
+            val bridgeCbId = pendingCameraBridgeCallbackId
+            pendingCameraBridgeCallbackId = null
+            if (bridgeCbId != null) {
+                emitCameraPermissionBridgeResult(bridgeCbId, granted)
+            }
+        }
+
+    private val requestFileChooser =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val callback = pendingFilePathCallback
+            pendingFilePathCallback = null
+            if (callback != null) {
+                val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+                try {
+                    callback.onReceiveValue(uris)
+                } catch (_: Throwable) {
+                    // ignore stale callback
                 }
             }
         }
@@ -205,22 +223,90 @@ class MainActivity : ComponentActivity() {
             }
 
             override fun onPermissionRequest(request: PermissionRequest) {
-                val wantsCamera = request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
-                if (!wantsCamera) {
-                    request.deny()
-                    return
+                runOnUiThread {
+                    try {
+                        val wantsCamera = request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                        if (!wantsCamera) {
+                            safeRespondPermissionRequest(request, false)
+                            return@runOnUiThread
+                        }
+                        val granted = ContextCompat.checkSelfPermission(
+                            this@MainActivity,
+                            Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            safeRespondPermissionRequest(request, true)
+                        } else {
+                            pendingCameraPermissionRequest?.let { stale ->
+                                safeRespondPermissionRequest(stale, false)
+                            }
+                            pendingCameraPermissionRequest = request
+                            requestCameraPermission.launch(Manifest.permission.CAMERA)
+                        }
+                    } catch (_: Throwable) {
+                        safeRespondPermissionRequest(request, false)
+                    }
                 }
-                val granted = ContextCompat.checkSelfPermission(
-                    this@MainActivity,
-                    Manifest.permission.CAMERA
-                ) == PackageManager.PERMISSION_GRANTED
-                if (granted) {
-                    request.grant(request.resources)
+            }
+
+            override fun onPermissionRequestCanceled(request: PermissionRequest) {
+                runOnUiThread {
+                    if (pendingCameraPermissionRequest == request) {
+                        pendingCameraPermissionRequest = null
+                    }
+                }
+            }
+
+            override fun onShowFileChooser(
+                webView: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams
+            ): Boolean {
+                pendingFilePathCallback?.let { old ->
+                    try {
+                        old.onReceiveValue(null)
+                    } catch (_: Throwable) {
+                    }
+                }
+                pendingFilePathCallback = filePathCallback
+                return try {
+                    val intent = fileChooserParams.createIntent()
+                    requestFileChooser.launch(intent)
+                    true
+                } catch (_: Throwable) {
+                    pendingFilePathCallback = null
+                    try {
+                        filePathCallback.onReceiveValue(null)
+                    } catch (_: Throwable) {
+                    }
+                    false
+                }
+            }
+        }
+    }
+
+    private fun safeRespondPermissionRequest(request: PermissionRequest, grantVideo: Boolean) {
+        runOnUiThread {
+            try {
+                if (grantVideo && request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {
+                    request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
                 } else {
-                    pendingCameraPermissionRequest?.deny()
-                    pendingCameraPermissionRequest = request
-                    requestCameraPermission.launch(Manifest.permission.CAMERA)
+                    request.deny()
                 }
+            } catch (_: Throwable) {
+                // Ignore IllegalStateException if WebView already invalidated or canceled the request
+            }
+        }
+    }
+
+    private fun emitCameraPermissionBridgeResult(callbackId: String, granted: Boolean) {
+        val safeCb = JSONObject.quote(callbackId)
+        runOnUiThread {
+            if (this::webView.isInitialized) {
+                webView.evaluateJavascript(
+                    "window.__onAndroidCameraPermissionResult && window.__onAndroidCameraPermissionResult($safeCb, $granted);",
+                    null
+                )
             }
         }
     }
@@ -489,6 +575,30 @@ class MainActivity : ComponentActivity() {
         fun isAndroidHost(): Boolean = true
 
         @JavascriptInterface
+        fun requestCameraPermission(callbackId: String) {
+            runOnUiThread {
+                val granted = ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    emitCameraPermissionBridgeResult(callbackId, true)
+                } else {
+                    pendingCameraBridgeCallbackId?.let { staleCb ->
+                        emitCameraPermissionBridgeResult(staleCb, false)
+                    }
+                    pendingCameraBridgeCallbackId = callbackId
+                    try {
+                        requestCameraPermission.launch(Manifest.permission.CAMERA)
+                    } catch (_: Throwable) {
+                        pendingCameraBridgeCallbackId = null
+                        emitCameraPermissionBridgeResult(callbackId, false)
+                    }
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun getInstalledVersionInfo(): String {
             return try {
                 val pInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -636,10 +746,20 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        pendingCameraPermissionRequest?.deny()
+        pendingCameraPermissionRequest?.let { safeRespondPermissionRequest(it, false) }
         pendingCameraPermissionRequest = null
+        pendingCameraBridgeCallbackId = null
+        pendingFilePathCallback?.let { cb ->
+            try {
+                cb.onReceiveValue(null)
+            } catch (_: Throwable) {
+            }
+        }
+        pendingFilePathCallback = null
         ioExecutor.shutdownNow()
-        webView.destroy()
+        if (this::webView.isInitialized) {
+            webView.destroy()
+        }
         super.onDestroy()
     }
 

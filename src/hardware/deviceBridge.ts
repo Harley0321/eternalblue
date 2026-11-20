@@ -12,6 +12,7 @@ export interface NativeUpdateManifest {
 export interface AndroidPosBridgeApi {
   isAndroidHost?: () => boolean;
   getInstalledVersionInfo?: () => string;
+  requestCameraPermission?: (callbackId: string) => void;
   fetchUpdateManifestNative?: (repoSlug: string, callbackId: string) => void;
   downloadAndInstallApk?: (
     apkUrl: string,
@@ -34,12 +35,18 @@ declare global {
     AndroidPosBridge?: AndroidPosBridgeApi;
     __onAndroidUpdateProgress?: (event: UpdateProgressEvent) => void;
     __onAndroidManifestResult?: (callbackId: string, jsonStr: string | null, errorMsg: string | null) => void;
+    __onAndroidCameraPermissionResult?: (callbackId: string, granted: boolean) => void;
   }
 }
 
 const pendingManifestCallbacks = new Map<
   string,
   { resolve: (val: NativeUpdateManifest | null) => void }
+>();
+
+const pendingCameraPermissionCallbacks = new Map<
+  string,
+  { resolve: (granted: boolean) => void }
 >();
 
 if (typeof window !== 'undefined') {
@@ -57,6 +64,13 @@ if (typeof window !== 'undefined') {
       pending.resolve(null);
     }
   };
+
+  window.__onAndroidCameraPermissionResult = (callbackId, granted) => {
+    const pending = pendingCameraPermissionCallbacks.get(callbackId);
+    if (!pending) return;
+    pendingCameraPermissionCallbacks.delete(callbackId);
+    pending.resolve(Boolean(granted));
+  };
 }
 
 let audioCtx: AudioContext | null = null;
@@ -68,6 +82,33 @@ export const DeviceBridge = {
     } catch {
       return false;
     }
+  },
+
+  ensureAndroidCameraPermission(): Promise<boolean> {
+    const fn = window.AndroidPosBridge?.requestCameraPermission;
+    if (!fn) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const cbId = `cam_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const timer = setTimeout(() => {
+        if (pendingCameraPermissionCallbacks.has(cbId)) {
+          pendingCameraPermissionCallbacks.delete(cbId);
+          resolve(false);
+        }
+      }, 30_000);
+      pendingCameraPermissionCallbacks.set(cbId, {
+        resolve: (granted) => {
+          clearTimeout(timer);
+          resolve(granted);
+        },
+      });
+      try {
+        fn.call(window.AndroidPosBridge, cbId);
+      } catch {
+        clearTimeout(timer);
+        pendingCameraPermissionCallbacks.delete(cbId);
+        resolve(false);
+      }
+    });
   },
 
   isAndroidBrowser(): boolean {
