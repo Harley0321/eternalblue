@@ -61,10 +61,13 @@ export const PosMath = {
 
   toCents(n?: number | null): number {
     if (n == null || !Number.isFinite(n)) return 0;
-    return Math.round(n * 100);
+    const sign = n < 0 ? -1 : 1;
+    const res = sign * Math.round((Math.abs(n) + 1e-9) * 100);
+    return res === 0 ? 0 : res;
   },
 
   fromCents(c: number): number {
+    if (!Number.isFinite(c) || c === 0) return 0;
     return c / 100;
   },
 
@@ -72,15 +75,29 @@ export const PosMath = {
     return PosMath.fromCents(PosMath.toCents(n));
   },
 
-  round3(n?: number | null): number {
+  toMilli(n?: number | null): number {
     if (n == null || !Number.isFinite(n)) return 0;
-    return Math.round(n * 1000) / 1000;
+    const sign = n < 0 ? -1 : 1;
+    const res = sign * Math.round((Math.abs(n) + 1e-12) * 1000);
+    return res === 0 ? 0 : res;
+  },
+
+  fromMilli(m: number): number {
+    if (!Number.isFinite(m) || m === 0) return 0;
+    return m / 1000;
+  },
+
+  round3(n?: number | null): number {
+    return PosMath.fromMilli(PosMath.toMilli(n));
   },
 
   lineCents(unitPrice: number, qty: number): number {
-    const qMilli = Number.isFinite(qty) ? Math.round(qty * 1000) : 0;
+    const qMilli = PosMath.toMilli(qty);
     const unitC = PosMath.toCents(unitPrice);
-    return Math.round((unitC * qMilli) / 1000);
+    const prod = unitC * qMilli;
+    if (prod === 0) return 0;
+    const sign = prod < 0 ? -1 : 1;
+    return sign * Math.floor((Math.abs(prod) + 500) / 1000);
   },
 
   lineTotalPeso(unitPrice: number, qty: number): number {
@@ -88,7 +105,7 @@ export const PosMath = {
   },
 
   formatPeso(amount?: number | null): string {
-    const clean = amount != null && Number.isFinite(amount) ? amount : 0;
+    const clean = amount != null && Number.isFinite(amount) ? PosMath.round2(amount) : 0;
     return (
       '₱' +
       clean.toLocaleString('en-US', {
@@ -111,9 +128,13 @@ export const PosMath = {
     const capital = p?.capital ?? 0;
     const rawMin = p?.wholesaleMinQty ?? item.wholesaleMinQty;
     const minQty = rawMin > 0 ? rawMin : 10;
-    if (wholesale <= 0 || wholesale >= retail) return 'NONE';
-    if (capital > 0 && wholesale < capital) return 'COST';
-    if (item.qty + 1e-9 < minQty) return 'QTY';
+    if (PosMath.toCents(wholesale) <= 0 || PosMath.toCents(wholesale) >= PosMath.toCents(retail)) {
+      return 'NONE';
+    }
+    if (PosMath.toCents(capital) > 0 && PosMath.toCents(wholesale) < PosMath.toCents(capital)) {
+      return 'COST';
+    }
+    if (PosMath.toMilli(item.qty) < PosMath.toMilli(minQty)) return 'QTY';
     return null;
   },
 
@@ -163,7 +184,7 @@ export const PosMath = {
       if (isSeniorPwd) {
         const eligible = p ? PosMath.scEligibleProduct(p) : PosMath.scSuggest(item.name, null);
         if (eligible) {
-          eligC += lineRetailC - lineSavingC;
+          eligC += lineEffC;
           eligKinds++;
         } else {
           otherLines++;
@@ -172,7 +193,7 @@ export const PosMath = {
     }
 
     const netC = retailC - savingsC;
-    const rawSeniorC = isSeniorPwd ? Math.round((eligC * 5) / 100) : 0;
+    const rawSeniorC = isSeniorPwd ? Math.floor((eligC * 5 + 50) / 100) : 0;
     const capC = PosMath.toCents(settings.scDiscountCap > 0 ? settings.scDiscountCap : 125);
     const seniorC = Math.min(rawSeniorC, capC);
     const grandC = Math.max(0, netC - seniorC);
@@ -189,6 +210,63 @@ export const PosMath = {
       scKinds: eligKinds,
       scOtherLines: otherLines,
     };
+  },
+
+  allocateSaleLineNetCents(sale: SaleRecord, productMap?: Map<string, Product>): number[] {
+    if (sale.items.length === 0) return [];
+    const gross = sale.items.map((it) => Math.max(0, PosMath.toCents(it.lineTotal)));
+    const grossSum = gross.reduce((acc, c) => acc + c, 0);
+    const grandC = Math.max(0, PosMath.toCents(sale.grandTotal));
+    const totalDisc = Math.max(0, grossSum - grandC);
+    if (totalDisc === 0 || grossSum === 0) return gross;
+
+    const distribute = (weights: number[], total: number): number[] => {
+      const sumW = weights.reduce((a, b) => a + b, 0);
+      if (sumW <= 0 || total <= 0) return weights.map(() => 0);
+      const out = new Array<number>(weights.length).fill(0);
+      const rems: Array<{ idx: number; rem: number }> = [];
+      let assigned = 0;
+      for (let i = 0; i < weights.length; i++) {
+        const w = weights[i];
+        if (w <= 0) continue;
+        const num = w * total;
+        const share = Math.floor(num / sumW);
+        out[i] = share;
+        assigned += share;
+        rems.push({ idx: i, rem: num % sumW });
+      }
+      rems.sort((a, b) => b.rem - a.rem || a.idx - b.idx);
+      let left = total - assigned;
+      for (let k = 0; k < rems.length && left > 0; k++) {
+        if (out[rems[k].idx] < weights[rems[k].idx]) {
+          out[rems[k].idx] += 1;
+          left -= 1;
+        }
+      }
+      return out;
+    };
+
+    const seniorC = Math.min(totalDisc, Math.max(0, PosMath.toCents(sale.seniorDiscount)));
+    if (seniorC > 0 && productMap) {
+      const eligWeights = sale.items.map((it, idx) => {
+        const p = it.productId ? productMap.get(it.productId) : undefined;
+        const elig = p ? PosMath.scEligibleProduct(p) : PosMath.scSuggest(it.name, it.category);
+        return elig ? gross[idx] : 0;
+      });
+      const eligSum = eligWeights.reduce((a, b) => a + b, 0);
+      const baseMatches =
+        sale.seniorBase != null ? Math.abs(eligSum - PosMath.toCents(sale.seniorBase)) <= 1 : eligSum > 0;
+      if (baseMatches && eligSum >= seniorC) {
+        const scDiscs = distribute(eligWeights, seniorC);
+        const afterSc = gross.map((g, idx) => Math.max(0, g - scDiscs[idx]));
+        const otherDisc = totalDisc - seniorC;
+        const otherDiscs = distribute(afterSc, otherDisc);
+        return afterSc.map((g, idx) => Math.max(0, g - otherDiscs[idx]));
+      }
+    }
+
+    const discs = distribute(gross, totalDisc);
+    return gross.map((g, idx) => Math.max(0, g - discs[idx]));
   },
 
   expiryInfo(p?: Product | null, warnDays = 30): ExpiryStatus {
@@ -286,7 +364,7 @@ export const PosMath = {
   computeProductVelocities(products: Product[], sales: SaleRecord[], days = 30): Record<string, number> {
     const cutoff = Date.now() - days * PosMath.DAY_MS;
     const byId = new Map(products.map((p) => [p.id, p]));
-    const unitsSold: Record<string, number> = {};
+    const unitsSoldMilli: Record<string, number> = {};
     for (const s of sales) {
       if (s.voided === true) continue;
       if (PosMath.parseIsoMs(s.dateIso) < cutoff) continue;
@@ -295,14 +373,14 @@ export const PosMath = {
           (it.productId && byId.has(it.productId) ? it.productId : undefined) ??
           products.find((p) => p.name.toLowerCase() === it.name.toLowerCase())?.id;
         if (id) {
-          unitsSold[id] = (unitsSold[id] ?? 0) + it.qty;
+          unitsSoldMilli[id] = (unitsSoldMilli[id] ?? 0) + PosMath.toMilli(it.qty);
         }
       }
     }
     const div = Math.max(1, days);
     const out: Record<string, number> = {};
-    for (const [k, qty] of Object.entries(unitsSold)) {
-      out[k] = PosMath.round3(qty / div);
+    for (const [k, qtyMilli] of Object.entries(unitsSoldMilli)) {
+      out[k] = PosMath.round3(qtyMilli / (1000 * div));
     }
     return out;
   },
@@ -316,7 +394,7 @@ export const PosMath = {
     let revC = 0;
     let costC = 0;
     let orders = 0;
-    let qtySum = 0;
+    let qtyMilli = 0;
 
     for (const s of sales) {
       if (s.voided === true) continue;
@@ -325,21 +403,22 @@ export const PosMath = {
       orders++;
       revC += PosMath.toCents(s.grandTotal);
       for (const it of s.items) {
-        qtySum += it.qty;
+        qtyMilli += PosMath.toMilli(it.qty);
         const cap = it.capital ?? (it.productId ? productMap.get(it.productId)?.capital : undefined) ?? 0;
         if (cap > 0) costC += PosMath.lineCents(cap, it.qty);
       }
     }
 
+    const profitC = revC - costC;
     const rev = PosMath.fromCents(revC);
-    const profit = PosMath.fromCents(revC - costC);
-    const margin = rev > 0 ? PosMath.round2((profit / rev) * 100) : 0;
-    const avg = orders > 0 ? PosMath.round2(rev / orders) : 0;
+    const profit = PosMath.fromCents(profitC);
+    const margin = revC > 0 ? PosMath.round2((profitC / revC) * 100) : 0;
+    const avg = orders > 0 ? PosMath.fromCents(Math.round(revC / orders)) : 0;
     return {
       revenue: rev,
       profit,
       orders,
-      itemsCount: PosMath.round3(qtySum),
+      itemsCount: PosMath.fromMilli(qtyMilli),
       marginPct: margin,
       avgTicket: avg,
     };
@@ -363,12 +442,12 @@ export const PosMath = {
     let costValC = 0;
 
     for (const p of products) {
-      const stock = Math.max(0, p.stock);
+      const stock = Math.max(0, PosMath.round3(p.stock));
       retailValC += PosMath.lineCents(p.retailPrice, stock);
       const cap = p.capital ?? 0;
-      if (cap > 0) {
+      if (PosMath.toCents(cap) > 0) {
         costValC += PosMath.lineCents(cap, stock);
-        if (p.retailPrice < cap) loss++;
+        if (PosMath.toCents(p.retailPrice) < PosMath.toCents(cap)) loss++;
       } else {
         noCap++;
       }
@@ -403,9 +482,13 @@ export const PosMath = {
   isWholeSaleNearThreshold(item: CartLine, productMap: Map<string, Product>): number | null {
     const p = productMap.get(item.productId);
     if (!p) return null;
-    if (p.wholesalePrice <= 0 || p.wholesalePrice >= p.retailPrice) return null;
-    if (p.capital != null && p.capital > 0 && p.wholesalePrice < p.capital) return null;
-    const diff = p.wholesaleMinQty - item.qty;
-    return diff > 0 && diff <= Math.max(2, Math.abs(p.wholesaleMinQty) * 0.4) ? PosMath.round3(diff) : null;
+    if (PosMath.toCents(p.wholesalePrice) <= 0 || PosMath.toCents(p.wholesalePrice) >= PosMath.toCents(p.retailPrice)) {
+      return null;
+    }
+    if (p.capital != null && PosMath.toCents(p.capital) > 0 && PosMath.toCents(p.wholesalePrice) < PosMath.toCents(p.capital)) {
+      return null;
+    }
+    const diff = PosMath.round3(p.wholesaleMinQty - item.qty);
+    return diff > 0 && diff <= Math.max(2, Math.abs(p.wholesaleMinQty) * 0.4) ? diff : null;
   },
 };

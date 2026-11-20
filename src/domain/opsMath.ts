@@ -33,12 +33,13 @@ export interface ShiftLedgerSummary {
 
 export const OpsMath = {
   computeLoyaltyPointsEarned(grandTotal: number, pesoPerPoint = 50): number {
-    const rate = pesoPerPoint > 0 ? pesoPerPoint : 50;
-    return Math.floor(Math.max(0, grandTotal) / rate);
+    const rateC = PosMath.toCents(pesoPerPoint > 0 ? pesoPerPoint : 50);
+    const totalC = Math.max(0, PosMath.toCents(grandTotal));
+    return rateC > 0 ? Math.floor(totalC / rateC) : 0;
   },
 
   isCustomerOverdue(customer: SukiCustomer, todayYmd = PosMath.todayYmd()): boolean {
-    if (customer.balance <= 0 || !customer.dueDate || !customer.dueDate.trim()) return false;
+    if (PosMath.toCents(customer.balance) <= 0 || !customer.dueDate || !customer.dueDate.trim()) return false;
     return todayYmd > customer.dueDate.trim();
   },
 
@@ -51,18 +52,22 @@ export const OpsMath = {
     cashierName?: string | null,
     allowOverLimit = false
   ): UtangResult {
-    const charge = PosMath.round2(amount);
-    if (charge <= 0) return { ok: false, error: 'Charge amount must be greater than ₱0.00' };
-    const nextBal = PosMath.round2(customer.balance + charge);
-    if (!allowOverLimit && customer.creditLimit > 0 && nextBal > customer.creditLimit + 1e-6) {
+    const chargeC = PosMath.toCents(amount);
+    if (chargeC <= 0) return { ok: false, error: 'Charge amount must be greater than ₱0.00' };
+    const curC = PosMath.toCents(customer.balance);
+    const nextBalC = curC + chargeC;
+    const limitC = PosMath.toCents(customer.creditLimit);
+    if (!allowOverLimit && limitC > 0 && nextBalC > limitC) {
       return { ok: false, error: `Exceeds credit limit (${PosMath.formatPeso(customer.creditLimit)}).` };
     }
+    const charge = PosMath.fromCents(chargeC);
+    const nextBal = PosMath.fromCents(nextBalC);
     const nowIso = new Date().toISOString();
     const next: SukiCustomer = {
       ...customer,
       balance: nextBal,
       dueDate: dueDate && dueDate.trim().length > 0 ? dueDate.trim() : customer.dueDate,
-      totalSpent: PosMath.round2(customer.totalSpent + charge),
+      totalSpent: PosMath.fromCents(PosMath.toCents(customer.totalSpent) + chargeC),
       updatedAt: nowIso,
     };
     const tx: UtangTransaction = {
@@ -87,17 +92,19 @@ export const OpsMath = {
     note?: string | null,
     cashierName?: string | null
   ): UtangResult {
-    const pay = PosMath.round2(amount);
-    if (pay <= 0) return { ok: false, error: 'Payment must be greater than ₱0.00' };
-    const cur = PosMath.round2(customer.balance);
-    if (cur <= 0) return { ok: false, error: `${customer.name} has zero balance.` };
-    const applied = Math.min(cur, pay);
-    const nextBal = PosMath.round2(Math.max(0, cur - applied));
+    const payC = PosMath.toCents(amount);
+    if (payC <= 0) return { ok: false, error: 'Payment must be greater than ₱0.00' };
+    const curC = PosMath.toCents(customer.balance);
+    if (curC <= 0) return { ok: false, error: `${customer.name} has zero balance.` };
+    const appliedC = Math.min(curC, payC);
+    const nextBalC = Math.max(0, curC - appliedC);
+    const applied = PosMath.fromCents(appliedC);
+    const nextBal = PosMath.fromCents(nextBalC);
     const nowIso = new Date().toISOString();
     const next: SukiCustomer = {
       ...customer,
       balance: nextBal,
-      dueDate: nextBal <= 0 ? null : customer.dueDate,
+      dueDate: nextBalC <= 0 ? null : customer.dueDate,
       updatedAt: nowIso,
     };
     const tx: UtangTransaction = {
@@ -121,31 +128,41 @@ export const OpsMath = {
     masterQtyToUnpack: number,
     cashierName?: string | null
   ): RepackResult {
-    const unpack = PosMath.round3(masterQtyToUnpack);
-    if (unpack <= 0) return { ok: false, error: 'Unpack quantity must be > 0.' };
+    const unpackMilli = PosMath.toMilli(masterQtyToUnpack);
+    if (unpackMilli <= 0) return { ok: false, error: 'Unpack quantity must be > 0.' };
+    const yieldMilli = PosMath.toMilli(rule.yieldQty);
+    if (yieldMilli <= 0) return { ok: false, error: 'Repack yield must be > 0.' };
+
     const master = products.find((p) => p.id === rule.masterProductId);
     if (!master) return { ok: false, error: 'Master SKU not found.' };
     const target = products.find((p) => p.id === rule.targetProductId);
     if (!target) return { ok: false, error: 'Target SKU not found.' };
-    if (master.stock + 1e-6 < unpack) {
+
+    const masterStockMilli = PosMath.toMilli(master.stock);
+    if (masterStockMilli < unpackMilli) {
       return { ok: false, error: `Not enough ${master.name} in stock.` };
     }
 
-    const added = PosMath.round3(unpack * rule.yieldQty);
-    const nextMasterStock = Math.max(0, PosMath.round3(master.stock - unpack));
-    const nextTargetStock = PosMath.round3(target.stock + added);
+    const unpack = PosMath.fromMilli(unpackMilli);
+    const addedMilli = Math.floor((unpackMilli * yieldMilli + 500) / 1000);
+    const added = PosMath.fromMilli(addedMilli);
+    const nextMasterStock = Math.max(0, PosMath.fromMilli(masterStockMilli - unpackMilli));
+    const prevTargetStockMilli = Math.max(0, PosMath.toMilli(target.stock));
+    const nextTargetStock = PosMath.fromMilli(prevTargetStockMilli + addedMilli);
+
     const masterCap = master.capital ?? 0;
-    const derivedCost = masterCap > 0 && rule.yieldQty > 0 ? PosMath.round2(masterCap / rule.yieldQty) : 0;
+    const incomingBatchCostC = masterCap > 0 ? PosMath.lineCents(masterCap, unpack) : 0;
+    const derivedCost =
+      incomingBatchCostC > 0 && added > 0
+        ? PosMath.fromCents(Math.round(incomingBatchCostC / added))
+        : 0;
 
     let nextTargetCap = target.capital ?? null;
-    if (rule.autoComputeCost && derivedCost > 0) {
-      const prevStock = Math.max(0, target.stock);
+    if (rule.autoComputeCost && incomingBatchCostC > 0 && nextTargetStock > 0) {
+      const prevStock = PosMath.fromMilli(prevTargetStockMilli);
       const prevCap = target.capital ?? 0;
-      if (prevStock > 0 && prevCap > 0 && nextTargetStock > 0) {
-        nextTargetCap = PosMath.round2((prevStock * prevCap + added * derivedCost) / nextTargetStock);
-      } else {
-        nextTargetCap = derivedCost;
-      }
+      const prevCostC = prevStock > 0 && prevCap > 0 ? PosMath.lineCents(prevCap, prevStock) : 0;
+      nextTargetCap = PosMath.fromCents(Math.round((prevCostC + incomingBatchCostC) / nextTargetStock));
     }
 
     const nowIso = new Date().toISOString();
@@ -199,12 +216,13 @@ export const OpsMath = {
   },
 
   suggestServiceFee(kind: string, amount: number): number {
-    if (amount <= 0) return 0;
-    if (kind === 'ELOAD') return amount >= 100 ? 5 : 3;
+    const amtC = PosMath.toCents(amount);
+    if (amtC <= 0) return 0;
+    if (kind === 'ELOAD') return amtC >= 10000 ? 5 : 3;
     if (kind === 'BILLS_PAY') return 15;
-    if (amount <= 500) return 10;
-    if (amount <= 1000) return 15;
-    return Math.ceil(amount / 1000) * 20;
+    if (amtC <= 50000) return 10;
+    if (amtC <= 100000) return 15;
+    return Math.ceil(amtC / 100000) * 20;
   },
 
   summarizeShiftDrawer(

@@ -70,7 +70,13 @@ export const UtangSubTab: React.FC = () => {
           type="button"
           disabled={!name.trim()}
           onClick={() => {
-            addSukiCustomer(name, phone, '', parseFloat(limit) || 2000);
+            const parsedLimit = parseFloat(limit);
+            addSukiCustomer(
+              name,
+              phone,
+              '',
+              Number.isFinite(parsedLimit) && parsedLimit >= 0 ? PosMath.round2(parsedLimit) : 2000
+            );
             setName('');
             setPhone('');
           }}
@@ -188,7 +194,10 @@ export const RepackSubTab: React.FC = () => {
               />
               <button
                 type="button"
-                onClick={() => runRepackRule(r, parseFloat(unpackQty) || 1)}
+                onClick={() => {
+                  const parsed = parseFloat(unpackQty);
+                  runRepackRule(r, Number.isFinite(parsed) ? parsed : 0);
+                }}
                 className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
               >
                 Convert Now
@@ -235,11 +244,12 @@ export const RepackSubTab: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                const parsedYield = parseFloat(yieldStr);
                 addRepackRule(
                   ruleName,
                   state.products[safeMasterIdx].id,
                   state.products[safeTargetIdx].id,
-                  parseFloat(yieldStr) || 10
+                  Number.isFinite(parsedYield) ? parsedYield : 0
                 );
                 setRuleName('');
               }}
@@ -293,7 +303,7 @@ export const ShiftSubTab: React.FC = () => {
     () =>
       PosMath.fromCents(
         PosMath.PH_DENOMINATIONS.reduce(
-          (acc, d) => acc + PosMath.toCents(d * Math.max(0, Math.floor(denomCounts[d] ?? 0))),
+          (acc, d) => acc + PosMath.toCents(d) * Math.max(0, Math.floor(denomCounts[d] ?? 0)),
           0
         )
       ),
@@ -306,10 +316,11 @@ export const ShiftSubTab: React.FC = () => {
     return showDenoms ? denomTotal : 0;
   }, [countedCashInput, denomTotal, showDenoms]);
 
-  const variance = useMemo(
-    () => PosMath.round2(countedCash - ledger.expectedDrawerCash),
+  const varianceCents = useMemo(
+    () => PosMath.toCents(countedCash) - PosMath.toCents(ledger.expectedDrawerCash),
     [countedCash, ledger.expectedDrawerCash]
   );
+  const variance = PosMath.fromCents(varianceCents);
 
   const todaySalesStats = useMemo(() => {
     const active = state.sales.filter((s) => {
@@ -331,9 +342,9 @@ export const ShiftSubTab: React.FC = () => {
   const buildZReadReport = (zNumber: number) => {
     const cashier = state.activeShift?.cashierName ?? 'Cashier';
     const varianceTag =
-      Math.abs(variance) < 0.01
+      varianceCents === 0
         ? 'BALANCED'
-        : variance > 0
+        : varianceCents > 0
         ? `OVER +${PosMath.formatPeso(variance)}`
         : `SHORT -${PosMath.formatPeso(Math.abs(variance))}`;
     return [
@@ -471,7 +482,7 @@ export const ShiftSubTab: React.FC = () => {
                               setDenomCounts(nextMap);
                               const nextSum = PosMath.fromCents(
                                 PosMath.PH_DENOMINATIONS.reduce(
-                                  (acc, d) => acc + PosMath.toCents(d * Math.max(0, Math.floor(nextMap[d] ?? 0))),
+                                  (acc, d) => acc + PosMath.toCents(d) * Math.max(0, Math.floor(nextMap[d] ?? 0)),
                                   0
                                 )
                               );
@@ -533,9 +544,9 @@ export const ShiftSubTab: React.FC = () => {
                   </div>
                   <div
                     className={`rounded-xl border p-2 ${
-                      Math.abs(variance) < 0.01
+                      varianceCents === 0
                         ? 'bg-[#ECFDF5] border-[#059669]/30'
-                        : variance > 0
+                        : varianceCents > 0
                         ? 'bg-[#EEF2FF] border-[#4F46E5]/30'
                         : 'bg-[#FFF1F2] border-[#E11D48]/30'
                     }`}
@@ -543,16 +554,16 @@ export const ShiftSubTab: React.FC = () => {
                     <div className="text-[10px] font-semibold text-[#64748B]">Variance</div>
                     <div
                       className={`font-mono font-extrabold text-xs ${
-                        Math.abs(variance) < 0.01
+                        varianceCents === 0
                           ? 'text-[#047857]'
-                          : variance > 0
+                          : varianceCents > 0
                           ? 'text-[#4F46E5]'
                           : 'text-[#E11D48]'
                       }`}
                     >
-                      {Math.abs(variance) < 0.01
+                      {varianceCents === 0
                         ? 'Balanced'
-                        : `${variance > 0 ? '+' : '-'}${PosMath.formatPeso(Math.abs(variance))}`}
+                        : `${varianceCents > 0 ? '+' : '-'}${PosMath.formatPeso(Math.abs(variance))}`}
                     </div>
                   </div>
                 </div>
@@ -561,13 +572,20 @@ export const ShiftSubTab: React.FC = () => {
                   <div className="flex justify-between">
                     <span className="text-[#64748B]">Opening Float + Top-ups</span>
                     <span className="font-mono font-bold text-[#0F172A]">
-                      {PosMath.formatPeso(PosMath.round2(ledger.openingFloat + ledger.cashTopUps))}
+                      {PosMath.formatPeso(
+                        PosMath.fromCents(PosMath.toCents(ledger.openingFloat) + PosMath.toCents(ledger.cashTopUps))
+                      )}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[#64748B]">Cash Sales + Utang Paid</span>
                     <span className="font-mono font-bold text-[#047857]">
-                      +{PosMath.formatPeso(PosMath.round2(ledger.cashSales + ledger.utangCollectedCash))}
+                      +
+                      {PosMath.formatPeso(
+                        PosMath.fromCents(
+                          PosMath.toCents(ledger.cashSales) + PosMath.toCents(ledger.utangCollectedCash)
+                        )
+                      )}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -579,7 +597,10 @@ export const ShiftSubTab: React.FC = () => {
                   <div className="flex justify-between">
                     <span className="text-[#64748B]">Gastos & Vault Drops</span>
                     <span className="font-mono font-bold text-[#E11D48]">
-                      -{PosMath.formatPeso(PosMath.round2(ledger.expenses + ledger.cashDrops))}
+                      -
+                      {PosMath.formatPeso(
+                        PosMath.fromCents(PosMath.toCents(ledger.expenses) + PosMath.toCents(ledger.cashDrops))
+                      )}
                     </span>
                   </div>
                 </div>
@@ -634,7 +655,7 @@ export const ShiftSubTab: React.FC = () => {
                             'drop',
                             `Z-Read #${finalizedZ} Close`,
                             countedCash,
-                            zCloseNote.trim() || `Blind close (${Math.abs(variance) < 0.01 ? 'Balanced' : `Var ${variance}`})`
+                            zCloseNote.trim() || `Blind close (${varianceCents === 0 ? 'Balanced' : `Var ${variance}`})`
                           );
                         }
                         setBlindFinalized(true);

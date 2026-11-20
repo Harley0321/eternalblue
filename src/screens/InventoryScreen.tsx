@@ -97,9 +97,9 @@ export const InventoryScreen: React.FC = () => {
         const daysCover = v > 0 ? p.stock / v : null;
         const fastDraining = daysCover !== null && daysCover <= coverCutoff;
         const needsReorder = out || low || fastDraining;
-        const byVel = v > 0 ? Math.ceil(v * targetDays - p.stock) : 0;
+        const byVel = v > 0 ? Math.ceil(Math.max(0, PosMath.round3(v * targetDays - p.stock))) : 0;
         const thresh = p.lowStockThreshold ?? state.settings.lowStockThreshold;
-        const byThresh = Math.ceil(Math.max(thresh * 2, 1) - p.stock);
+        const byThresh = Math.ceil(Math.max(0, PosMath.round3(Math.max(thresh * 2, 1) - p.stock)));
         const suggestedQty = needsReorder ? Math.max(1, byVel, byThresh) : 0;
         return {
           product: p,
@@ -137,12 +137,12 @@ export const InventoryScreen: React.FC = () => {
       visiblePoItems
         .map((item) => {
           const qty = getPoQty(item.product.id, item.suggestedQty);
-          const unitCost = item.product.capital ?? item.product.retailPrice * 0.8;
+          const unitCost = PosMath.round2(item.product.capital ?? item.product.retailPrice * 0.8);
           return {
             ...item,
             orderQty: qty,
             unitCost,
-            lineTotal: PosMath.round2(qty * unitCost),
+            lineTotal: PosMath.lineTotalPeso(unitCost, qty),
           };
         })
         .filter((line) => line.orderQty > 0),
@@ -501,7 +501,7 @@ export const InventoryScreen: React.FC = () => {
                 visiblePoItems.map((item) => {
                   const p = item.product;
                   const qty = getPoQty(p.id, item.suggestedQty);
-                  const unitCost = p.capital ?? p.retailPrice * 0.8;
+                  const unitCost = PosMath.round2(p.capital ?? p.retailPrice * 0.8);
                   return (
                     <div
                       key={p.id}
@@ -517,7 +517,8 @@ export const InventoryScreen: React.FC = () => {
                           {item.daysCover !== null ? ` · ${Math.round(item.daysCover)}d cover` : ''}
                         </div>
                         <div className="text-[11px] text-[#047857] font-mono">
-                          Unit Cost {PosMath.formatPeso(unitCost)} · Line {PosMath.formatPeso(qty * unitCost)}
+                          Unit Cost {PosMath.formatPeso(unitCost)} · Line{' '}
+                          {PosMath.formatPeso(PosMath.lineTotalPeso(unitCost, qty))}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">

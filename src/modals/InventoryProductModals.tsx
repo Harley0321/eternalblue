@@ -41,10 +41,11 @@ export const ProductModal: React.FC = () => {
   const canSave = name.trim().length > 0 && Number.isFinite(retailParsed) && retailParsed > 0;
 
   const handleSave = () => {
-    const retailVal = Math.max(0, retailParsed || 0);
+    const retailVal = PosMath.round2(Math.max(0, retailParsed || 0));
     const wsParsed = parseFloat(wholesale);
-    const wsVal = Number.isFinite(wsParsed) ? Math.max(0, wsParsed) : retailVal;
+    const wsVal = Number.isFinite(wsParsed) ? PosMath.round2(Math.max(0, wsParsed)) : retailVal;
     const capParsed = parseFloat(capital);
+    const minQtyParsed = parseFloat(minQty);
 
     saveProduct({
       id: existing?.id ?? `p-${Date.now()}`,
@@ -52,11 +53,13 @@ export const ProductModal: React.FC = () => {
       name: name.trim(),
       category: category.trim() || 'General',
       unit: unit.trim() || 'pc',
-      capital: Number.isFinite(capParsed) ? Math.max(0, capParsed) : null,
+      capital: Number.isFinite(capParsed) ? PosMath.round2(Math.max(0, capParsed)) : null,
       retailPrice: retailVal,
       wholesalePrice: wsVal,
-      wholesaleMinQty: Math.max(1, parseFloat(minQty) || 10),
-      stock: Math.max(0, parseFloat(stock) || 0),
+      wholesaleMinQty: PosMath.round3(
+        Math.max(1, Number.isFinite(minQtyParsed) ? minQtyParsed : 10)
+      ),
+      stock: PosMath.round3(Math.max(0, parseFloat(stock) || 0)),
       lowStockThreshold: existing?.lowStockThreshold ?? null,
       expiry: expiry.trim() || null,
       scEligible: scElig,
@@ -258,9 +261,13 @@ export const StockAdjustModal: React.FC = () => {
 
   if (!p) return null;
 
-  const qty = parseFloat(qtyStr) || 0;
+  const qty = Math.max(0, PosMath.round3(parseFloat(qtyStr) || 0));
   const previewStock =
-    mode === 'add' ? p.stock + qty : mode === 'sub' ? Math.max(0, p.stock - qty) : Math.max(0, qty);
+    mode === 'add'
+      ? PosMath.round3(p.stock + qty)
+      : mode === 'sub'
+      ? PosMath.round3(Math.max(0, p.stock - qty))
+      : qty;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">

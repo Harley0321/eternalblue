@@ -484,6 +484,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addToCart = useCallback(
     (product: Product, qtyDelta = 1) => {
+      if (!Number.isFinite(qtyDelta) || qtyDelta <= 0) return;
       if (product.stock <= 0.0001) {
         toast(`${product.name} is out of stock.`, 'WARNING');
         return;
@@ -494,7 +495,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const nextCart = existing
           ? prev.cart.map((c) =>
               c.productId === product.id
-                ? { ...c, qty: Math.min(product.stock, PosMath.round3(c.qty + qtyDelta)) }
+                ? { ...c, qty: PosMath.round3(Math.min(product.stock, PosMath.round3(c.qty + qtyDelta))) }
                 : c
             )
           : [
@@ -507,7 +508,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 wholesalePrice: product.wholesalePrice,
                 wholesaleMinQty: product.wholesaleMinQty,
                 priceType: prev.priceMode,
-                qty: Math.min(product.stock, qtyDelta),
+                qty: PosMath.round3(Math.min(product.stock, qtyDelta)),
               },
             ];
         const next = { ...prev, cart: nextCart };
@@ -528,7 +529,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           clean <= 0
             ? prev.cart.filter((l) => l.productId !== productId)
             : prev.cart.map((l) =>
-                l.productId === productId ? { ...l, qty: Math.min(maxStock, clean) } : l
+                l.productId === productId ? { ...l, qty: PosMath.round3(Math.min(maxStock, clean)) } : l
               );
         const next = { ...prev, cart: nextCart };
         persistCart(next);
@@ -662,28 +663,36 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const totals = PosMath.computeCartTotals(st.cart, map, st.isSeniorPwd, st.settings);
         const suki = customerId ? st.sukiCustomers.find((c) => c.id === customerId) : undefined;
         const pointVal = st.settings.loyaltyPointValue > 0 ? st.settings.loyaltyPointValue : 1;
+        const pointValC = PosMath.toCents(pointVal);
+        const grandC = PosMath.toCents(totals.grandTotal);
+        const maxRedeemable = pointValC > 0 ? Math.floor(grandC / pointValC) : 0;
         const usedPoints =
-          suki && redeemPoints > 0
-            ? Math.min(redeemPoints, suki.points, Math.floor(totals.grandTotal / pointVal))
+          suki && redeemPoints > 0 && paymentMethod !== 'Utang'
+            ? Math.min(Math.floor(redeemPoints), suki.points, maxRedeemable)
             : 0;
-        const pointsDiscount = PosMath.round2(usedPoints * pointVal);
-        const payable = Math.max(0, PosMath.round2(totals.grandTotal - pointsDiscount));
+        const pointsDiscountC = Math.min(grandC, usedPoints * pointValC);
+        const pointsDiscount = PosMath.fromCents(pointsDiscountC);
+        const payableC = Math.max(0, grandC - pointsDiscountC);
+        const payable = PosMath.fromCents(payableC);
 
         if (!Number.isFinite(payable)) {
           toast('Invalid checkout total', 'ERROR');
           return;
         }
-        if (paymentMethod === 'Cash' && (!Number.isFinite(tendered) || tendered + 0.001 < payable)) {
+        const tenderedC = PosMath.toCents(tendered);
+        if (paymentMethod === 'Cash' && (!Number.isFinite(tendered) || tenderedC < payableC)) {
           toast('Insufficient cash tendered', 'ERROR');
           return;
         }
+        const splitCashC = PosMath.toCents(splitCash);
+        const splitDigitalC = PosMath.toCents(splitDigital);
         if (paymentMethod === 'Split') {
           const splitValid =
             Number.isFinite(splitCash) &&
             Number.isFinite(splitDigital) &&
-            splitCash >= 0 &&
-            splitDigital >= 0 &&
-            Math.abs(splitCash + splitDigital - payable) <= 0.05;
+            splitCashC >= 0 &&
+            splitDigitalC >= 0 &&
+            splitCashC + splitDigitalC === payableC;
           if (!splitValid) {
             toast(`Split amounts must be non-negative and equal ${PosMath.formatPeso(payable)}`, 'ERROR');
             return;
@@ -703,7 +712,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             productId: line.productId,
             category: p?.category ?? null,
             name: line.name,
-            qty: line.qty,
+            qty: PosMath.round3(line.qty),
             unit: line.unit,
             unitPrice,
             priceType: PosMath.isWholesaleLine(line, map) ? 'wholesale' : 'retail',
@@ -723,7 +732,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           let updatedSuki: SukiCustomer = {
             ...suki,
             points: Math.max(0, suki.points - usedPoints + earnedPoints),
-            totalSpent: paymentMethod !== 'Utang' ? PosMath.round2(suki.totalSpent + payable) : suki.totalSpent,
+            totalSpent:
+              paymentMethod !== 'Utang'
+                ? PosMath.fromCents(PosMath.toCents(suki.totalSpent) + payableC)
+                : suki.totalSpent,
             updatedAt: nowIso,
           };
           if (paymentMethod === 'Utang') {
@@ -745,7 +757,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           nextCustomers = nextCustomers.map((c) => (c.id === updatedSuki.id ? updatedSuki : c));
         }
 
-        const change = paymentMethod === 'Cash' ? Math.max(0, PosMath.round2(tendered - payable)) : 0;
+        const cleanTendered = paymentMethod === 'Cash' ? PosMath.fromCents(tenderedC) : payable;
+        const change =
+          paymentMethod === 'Cash' ? PosMath.fromCents(Math.max(0, tenderedC - payableC)) : 0;
 
         const sale: SaleRecord = {
           receiptNo,
@@ -757,12 +771,16 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           seniorDiscount: totals.seniorDiscount,
           grandTotal: payable,
           paymentMethod,
-          tendered: paymentMethod === 'Cash' ? tendered : payable,
+          tendered: cleanTendered,
           change,
           refNo: refNo.trim() || null,
           splitDetails:
             paymentMethod === 'Split'
-              ? { cash: PosMath.round2(splitCash), digital: PosMath.round2(splitDigital), digitalMethod: splitMethod }
+              ? {
+                  cash: PosMath.fromCents(splitCashC),
+                  digital: PosMath.fromCents(splitDigitalC),
+                  digitalMethod: splitMethod,
+                }
               : null,
           seniorId: totals.isSeniorPwd ? st.seniorId.trim() || null : null,
           seniorBase: totals.isSeniorPwd ? totals.seniorBase : null,
@@ -1024,7 +1042,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addRepackRule = useCallback(
     (name: string, masterId: string, targetId: string, yieldQty: number) => {
-      if (masterId === targetId || yieldQty <= 0) {
+      const cleanYield = PosMath.round3(yieldQty);
+      if (masterId === targetId || cleanYield <= 0) {
         toast('Select distinct SKUs and yield > 0', 'WARNING');
         return;
       }
@@ -1033,7 +1052,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         name: name.trim() || 'Bulk → Tingi Repack',
         masterProductId: masterId,
         targetProductId: targetId,
-        yieldQty,
+        yieldQty: cleanYield,
         autoComputeCost: true,
         updatedAt: new Date().toISOString(),
       };
@@ -1098,18 +1117,19 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const startShift = useCallback(
     (cashier: CashierAccount, openingFloat: number) => {
+      const cleanFloat = Math.max(0, PosMath.round2(openingFloat));
       const shift: ActiveShiftState = {
         shiftId: `SHIFT-${Date.now()}`,
         cashierId: cashier.id,
         cashierName: cashier.name,
         cashierRole: cashier.role,
         openedAt: new Date().toISOString(),
-        openingFloat: Math.max(0, openingFloat),
+        openingFloat: cleanFloat,
       };
       PosRepository.saveActiveShift(shift);
       setState((s) => ({ ...s, activeShift: shift }));
-      if (openingFloat > 0) {
-        recordDrawerEvent('float', 'Opening Float', openingFloat, `Shift opened by ${cashier.name}`);
+      if (cleanFloat > 0) {
+        recordDrawerEvent('float', 'Opening Float', cleanFloat, `Shift opened by ${cashier.name}`);
       } else {
         toast(`Shift active: ${cashier.name}`);
       }
@@ -1228,19 +1248,89 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return;
       }
       const now = new Date().toISOString();
-      const restoreQty: Record<string, number> = {};
+      const restoreQtyMilli: Record<string, number> = {};
       for (const it of target.items) {
-        if (it.productId) restoreQty[it.productId] = (restoreQty[it.productId] ?? 0) + it.qty;
+        if (it.productId) {
+          restoreQtyMilli[it.productId] = (restoreQtyMilli[it.productId] ?? 0) + PosMath.toMilli(it.qty);
+        }
       }
+      const voidStockLogs: StockLogEntry[] = [];
       const nextProducts = st.products.map((p) => {
-        const add = restoreQty[p.id] ?? 0;
-        return add > 0 ? { ...p, stock: PosMath.round3(p.stock + add), updatedAt: now } : p;
+        const addMilli = restoreQtyMilli[p.id] ?? 0;
+        if (addMilli <= 0) return p;
+        const add = PosMath.fromMilli(addMilli);
+        const newStock = PosMath.fromMilli(PosMath.toMilli(p.stock) + addMilli);
+        voidStockLogs.push({
+          id: `LOG-${Date.now()}-${p.id}`,
+          dateIso: now,
+          productId: p.id,
+          productName: p.name,
+          delta: add,
+          prevStock: p.stock,
+          newStock,
+          reason: 'Sale Void',
+          note: `Voided ${target.receiptNo}${reason.trim() ? ` (${reason.trim()})` : ''}`,
+        });
+        return { ...p, stock: newStock, updatedAt: now };
       });
+      const nextLogs = [...voidStockLogs, ...st.stockLog].slice(0, 300);
+
       const nextSales = st.sales.map((s) =>
         s.receiptNo === target.receiptNo
           ? { ...s, voided: true, voidedAt: now, voidReason: reason.trim() || 'Voided by manager' }
           : s
       );
+
+      let nextCustomers = st.sukiCustomers;
+      let nextUtang = st.utangTransactions;
+      if (target.customerId) {
+        const suki = st.sukiCustomers.find((c) => c.id === target.customerId);
+        if (suki) {
+          const grandC = PosMath.toCents(target.grandTotal);
+          const nextPoints = Math.max(0, suki.points - (target.pointsEarned ?? 0) + (target.pointsRedeemed ?? 0));
+          const nextSpent = PosMath.fromCents(Math.max(0, PosMath.toCents(suki.totalSpent) - grandC));
+          let nextBal = suki.balance;
+          let nextDueDate = suki.dueDate;
+          if (target.paymentMethod.toLowerCase() === 'utang') {
+            const curBalC = PosMath.toCents(suki.balance);
+            const revC = Math.min(curBalC, grandC);
+            const nextBalC = Math.max(0, curBalC - revC);
+            nextBal = PosMath.fromCents(nextBalC);
+            if (nextBalC <= 0) nextDueDate = null;
+            if (revC > 0) {
+              nextUtang = [
+                {
+                  id: `UVD-${Date.now()}`,
+                  customerId: suki.id,
+                  customerName: suki.name,
+                  type: 'payment',
+                  amount: PosMath.fromCents(revC),
+                  balanceAfter: nextBal,
+                  receiptNo: target.receiptNo,
+                  paymentMethod: 'Void Reversal',
+                  note: `Voided ${target.receiptNo}`,
+                  dateIso: now,
+                  cashierName: st.activeShift?.cashierName ?? null,
+                },
+                ...nextUtang,
+              ];
+            }
+          }
+          nextCustomers = st.sukiCustomers.map((c) =>
+            c.id === suki.id
+              ? {
+                  ...c,
+                  points: nextPoints,
+                  totalSpent: nextSpent,
+                  balance: nextBal,
+                  dueDate: nextDueDate,
+                  updatedAt: now,
+                }
+              : c
+          );
+        }
+      }
+
       const secLog = await SecurityManager.appendSecurityEvent(
         st.securityLog,
         'SALE_VOIDED',
@@ -1248,12 +1338,18 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         `Voided ${target.receiptNo}: ${reason}`
       );
       PosRepository.saveProducts(nextProducts);
+      PosRepository.saveStockLog(nextLogs);
       PosRepository.saveSales(nextSales);
+      PosRepository.saveSukiCustomers(nextCustomers);
+      PosRepository.saveUtangTx(nextUtang);
       PosRepository.saveSecurityLog(secLog);
       setState((s) => ({
         ...s,
         products: nextProducts,
+        stockLog: nextLogs,
         sales: nextSales,
+        sukiCustomers: nextCustomers,
+        utangTransactions: nextUtang,
         securityLog: secLog,
         voidSaleTarget: null,
         receiptModalSale: null,

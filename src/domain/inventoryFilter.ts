@@ -42,9 +42,9 @@ export const InventoryFilter = {
         case 'SOON':
           return exp.status === 'SOON';
         case 'NO_CAP':
-          return cap <= 0;
+          return PosMath.toCents(cap) <= 0;
         case 'LOSS':
-          return cap > 0 && p.retailPrice < cap;
+          return PosMath.toCents(cap) > 0 && PosMath.toCents(p.retailPrice) < PosMath.toCents(cap);
       }
     });
 
@@ -65,7 +65,11 @@ export const InventoryFilter = {
       case 'VELOCITY_DESC':
         return sorted.sort((a, b) => (velocities[b.id] ?? 0) - (velocities[a.id] ?? 0));
       case 'VALUE_DESC':
-        return sorted.sort((a, b) => Math.max(0, b.stock) * b.retailPrice - Math.max(0, a.stock) * a.retailPrice);
+        return sorted.sort(
+          (a, b) =>
+            PosMath.lineCents(b.retailPrice, Math.max(0, b.stock)) -
+            PosMath.lineCents(a.retailPrice, Math.max(0, a.stock))
+        );
       case 'EXPIRY_ASC':
         return sorted.sort(
           (a, b) =>

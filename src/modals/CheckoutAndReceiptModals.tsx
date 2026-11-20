@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { QrBitmapCard } from '../components/CommonGraphics';
+import { OpsMath } from '../domain/opsMath';
 import { PaymentQr } from '../domain/paymentQr';
 import { PosMath } from '../domain/posMath';
 import { DeviceBridge } from '../hardware/deviceBridge';
@@ -11,7 +12,9 @@ export const CheckoutModal: React.FC = () => {
   const [method, setMethod] = useState<'Cash' | 'GCash' | 'Card' | 'Split' | 'Utang'>('Cash');
   const [tenderedStr, setTenderedStr] = useState(String(cartTotals.grandTotal));
   const [refNo, setRefNo] = useState('');
-  const [splitCashStr, setSplitCashStr] = useState(String(PosMath.round2(cartTotals.grandTotal / 2)));
+  const [splitCashStr, setSplitCashStr] = useState(
+    String(PosMath.fromCents(Math.round(PosMath.toCents(cartTotals.grandTotal) / 2)))
+  );
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [redeemPointsStr, setRedeemPointsStr] = useState('0');
   const [dueDate, setDueDate] = useState(() => PosMath.addDaysYmd(7));
@@ -26,29 +29,34 @@ export const CheckoutModal: React.FC = () => {
     return null;
   }, [selectedCustomerId, state.sukiCustomers, method]);
 
+  const ptVal = state.settings.loyaltyPointValue > 0 ? state.settings.loyaltyPointValue : 1;
+  const ptValC = PosMath.toCents(ptVal);
+  const grandC = PosMath.toCents(cartTotals.grandTotal);
+
   const maxRedeemablePoints = useMemo(() => {
-    if (!selectedSuki || method === 'Utang') return 0;
-    const ptVal = state.settings.loyaltyPointValue > 0 ? state.settings.loyaltyPointValue : 1;
-    const maxByTotal = Math.floor(cartTotals.grandTotal / ptVal);
+    if (!selectedSuki || method === 'Utang' || ptValC <= 0) return 0;
+    const maxByTotal = Math.floor(grandC / ptValC);
     return Math.max(0, Math.min(selectedSuki.points, maxByTotal));
-  }, [selectedSuki, method, state.settings.loyaltyPointValue, cartTotals.grandTotal]);
+  }, [selectedSuki, method, ptValC, grandC]);
 
   const appliedPoints = Math.max(
     0,
     Math.min(maxRedeemablePoints, parseInt(redeemPointsStr || '0', 10) || 0)
   );
-  const ptVal = state.settings.loyaltyPointValue > 0 ? state.settings.loyaltyPointValue : 1;
-  const pointsDiscount = PosMath.round2(appliedPoints * ptVal);
-  const payable = Math.max(0, PosMath.round2(cartTotals.grandTotal - pointsDiscount));
+  const pointsDiscountC = Math.min(grandC, appliedPoints * ptValC);
+  const payableC = Math.max(0, grandC - pointsDiscountC);
+  const pointsDiscount = PosMath.fromCents(pointsDiscountC);
+  const payable = PosMath.fromCents(payableC);
   const pointsToEarn =
     selectedSuki && method !== 'Utang'
-      ? Math.floor(payable / (state.settings.loyaltyPesoPerPoint > 0 ? state.settings.loyaltyPesoPerPoint : 50))
+      ? OpsMath.computeLoyaltyPointsEarned(payable, state.settings.loyaltyPesoPerPoint)
       : 0;
 
   useEffect(() => {
     if (state.checkoutOpen) {
-      setTenderedStr(String(cartTotals.grandTotal));
-      setSplitCashStr(String(PosMath.round2(cartTotals.grandTotal / 2)));
+      const initC = PosMath.toCents(cartTotals.grandTotal);
+      setTenderedStr(String(PosMath.fromCents(initC)));
+      setSplitCashStr(String(PosMath.fromCents(Math.round(initC / 2))));
       setRefNo('');
       setRedeemPointsStr('0');
     }
@@ -57,9 +65,9 @@ export const CheckoutModal: React.FC = () => {
   useEffect(() => {
     if (state.checkoutOpen) {
       setTenderedStr(String(payable));
-      setSplitCashStr(String(PosMath.round2(payable / 2)));
+      setSplitCashStr(String(PosMath.fromCents(Math.round(payableC / 2))));
     }
-  }, [payable, state.checkoutOpen]);
+  }, [payable, payableC, state.checkoutOpen]);
 
   const resolvedQr = useMemo(
     () => PaymentQr.resolveCheckoutQr(state.settings, payable),
@@ -68,14 +76,17 @@ export const CheckoutModal: React.FC = () => {
 
   if (!state.checkoutOpen) return null;
 
-  const tendered = parseFloat(tenderedStr) || 0;
-  const change = Math.max(0, tendered - payable);
+  const tenderedRaw = parseFloat(tenderedStr);
+  const tenderedC = Number.isFinite(tenderedRaw) ? PosMath.toCents(tenderedRaw) : -1;
+  const tendered = tenderedC >= 0 ? PosMath.fromCents(tenderedC) : 0;
+  const change = PosMath.fromCents(Math.max(0, tenderedC - payableC));
   const splitCashParsed = parseFloat(splitCashStr);
-  const splitValid =
-    Number.isFinite(splitCashParsed) &&
-    splitCashParsed >= 0 &&
-    splitCashParsed <= payable + 0.001;
-  const cashValid = Number.isFinite(tendered) && tendered + 0.001 >= payable;
+  const splitCashC = Number.isFinite(splitCashParsed) ? PosMath.toCents(splitCashParsed) : -1;
+  const splitValid = Number.isFinite(splitCashParsed) && splitCashC >= 0 && splitCashC <= payableC;
+  const cashValid = Number.isFinite(tenderedRaw) && tenderedC >= payableC;
+  const splitDigitalDisplay = PosMath.fromCents(
+    Math.max(0, payableC - (splitCashC >= 0 ? Math.min(payableC, splitCashC) : 0))
+  );
 
   const canConfirm =
     method === 'Cash'
@@ -87,16 +98,14 @@ export const CheckoutModal: React.FC = () => {
       : true;
 
   const handleConfirm = () => {
-    const sCash = Number.isFinite(splitCashParsed)
-      ? Math.max(0, Math.min(payable, splitCashParsed))
-      : 0;
-    const sDig = Math.max(0, PosMath.round2(payable - sCash));
+    const sCashC = Number.isFinite(splitCashParsed) ? Math.max(0, Math.min(payableC, splitCashC)) : 0;
+    const sDigC = Math.max(0, payableC - sCashC);
     completeCheckout({
       paymentMethod: method,
       tendered,
       refNo,
-      splitCash: sCash,
-      splitDigital: sDig,
+      splitCash: PosMath.fromCents(sCashC),
+      splitDigital: PosMath.fromCents(sDigC),
       customerId: selectedSuki?.id ?? null,
       utangDueDate: dueDate,
       redeemPoints: appliedPoints,
@@ -299,16 +308,7 @@ export const CheckoutModal: React.FC = () => {
                 </p>
               )}
               <div className="font-bold text-[13px] text-[#4F46E5]">
-                Remaining Digital (GCash):{' '}
-                {PosMath.formatPeso(
-                  Math.max(
-                    0,
-                    payable -
-                      (Number.isFinite(splitCashParsed)
-                        ? Math.max(0, Math.min(payable, splitCashParsed))
-                        : 0)
-                  )
-                )}
+                Remaining Digital (GCash): {PosMath.formatPeso(splitDigitalDisplay)}
               </div>
               <input
                 type="text"

@@ -57,22 +57,30 @@ export const SalesScreen: React.FC = () => {
   }, [filteredSales]);
 
   const topSkus = useMemo(() => {
-    const agg = new Map<string, { name: string; qty: number; revCents: number; profitCents: number }>();
+    const agg = new Map<
+      string,
+      { key: string; name: string; qtyMilli: number; revCents: number; profitCents: number }
+    >();
     for (const s of filteredSales) {
       if (s.voided === true) continue;
-      for (const it of s.items) {
+      const netCents = PosMath.allocateSaleLineNetCents(s, productMap);
+      s.items.forEach((it, idx) => {
         const key = it.productId || it.name;
-        const cur = agg.get(key) ?? { name: it.name, qty: 0, revCents: 0, profitCents: 0 };
-        const revC = PosMath.toCents(it.lineTotal);
+        const cur = agg.get(key) ?? { key, name: it.name, qtyMilli: 0, revCents: 0, profitCents: 0 };
+        const revC = netCents[idx] ?? PosMath.toCents(it.lineTotal);
         const cap = it.capital ?? (it.productId ? productMap.get(it.productId)?.capital : undefined) ?? 0;
         const costC = cap > 0 ? PosMath.lineCents(cap, it.qty) : 0;
-        cur.qty = PosMath.round3(cur.qty + it.qty);
+        cur.qtyMilli += PosMath.toMilli(it.qty);
         cur.revCents += revC;
         cur.profitCents += revC - costC;
         agg.set(key, cur);
-      }
+      });
     }
     return Array.from(agg.values())
+      .map((entry) => ({
+        ...entry,
+        qty: PosMath.fromMilli(entry.qtyMilli),
+      }))
       .sort((a, b) => b.revCents - a.revCents)
       .slice(0, 5);
   }, [filteredSales, productMap]);
@@ -90,9 +98,11 @@ export const SalesScreen: React.FC = () => {
 
   const peak = Math.max(1, ...dayBuckets.map((b) => b.amount));
 
-  const denomTotal = PosMath.PH_DENOMINATIONS.reduce(
-    (sum, d) => sum + d * (parseInt(counts[d] ?? '0', 10) || 0),
-    0
+  const denomTotal = PosMath.fromCents(
+    PosMath.PH_DENOMINATIONS.reduce(
+      (sum, d) => sum + PosMath.toCents(d) * Math.max(0, parseInt(counts[d] ?? '0', 10) || 0),
+      0
+    )
   );
 
   const handleExportSalesCsv = () => {
@@ -239,7 +249,7 @@ export const SalesScreen: React.FC = () => {
           <div className="font-bold text-sm text-[#0F172A]">Top Performing SKUs</div>
           <div className="divide-y divide-[#E2E8F0]">
             {topSkus.map((sku, idx) => (
-              <div key={sku.name} className="py-1.5 flex items-center justify-between gap-2 text-xs">
+              <div key={sku.key} className="py-1.5 flex items-center justify-between gap-2 text-xs">
                 <div className="min-w-0">
                   <span className="font-mono font-bold text-[#64748B] mr-1.5">#{idx + 1}</span>
                   <span className="font-bold text-[#0F172A] truncate">{sku.name}</span>

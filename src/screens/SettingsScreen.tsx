@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Download, ExternalLink, Lock, RefreshCw } from 'lucide-react';
 import { GlowingEmeraldStoreName, StoreEmblem } from '../components/CommonGraphics';
+import { PosMath } from '../domain/posMath';
 import { DeviceBridge } from '../hardware/deviceBridge';
 import { usePos } from '../state/PosContext';
 import { SettingsSecuritySection } from './SettingsSecuritySection';
@@ -232,8 +233,8 @@ export const SettingsScreen: React.FC = () => {
               storeName: storeName.trim() || 'EternalBlue Mart',
               storeAddress: storeAddr.trim(),
               receiptFooter: storeFooter.trim(),
-              scDiscountCap: parseFloat(scCap) || 125,
-              lowStockThreshold: parseFloat(lowThresh) || 10,
+              scDiscountCap: PosMath.round2(Math.max(1, parseFloat(scCap) || 125)),
+              lowStockThreshold: PosMath.round3(Math.max(1, parseFloat(lowThresh) || 10)),
             }))
           }
           className="w-full py-2.5 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
