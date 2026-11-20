@@ -26,6 +26,54 @@ export const GlowingEmeraldStoreName: React.FC<{
   </span>
 );
 
+export const GlowingEmeraldDateTime: React.FC<{ className?: string }> = ({ className = '' }) => {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const timeWithSecs = now.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+  const timeShort = now.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  const dateFull = now.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const dateShort = now.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+
+  return (
+    <div
+      aria-label={`${timeWithSecs}, ${dateFull}`}
+      title={`${timeWithSecs} · ${dateFull}`}
+      className={`text-right leading-none select-none shrink-0 ${className}`}
+    >
+      <div className="emerald-store-glow font-mono font-extrabold tracking-tight text-[11px] sm:text-[13px] md:text-[14px] whitespace-nowrap">
+        <span className="hidden sm:inline">{timeWithSecs}</span>
+        <span className="sm:hidden">{timeShort}</span>
+      </div>
+      <div className="emerald-store-glow font-semibold tracking-tight text-[9px] sm:text-[10px] md:text-[11px] mt-0.5 whitespace-nowrap opacity-90">
+        <span className="hidden sm:inline">{dateFull}</span>
+        <span className="sm:hidden">{dateShort}</span>
+      </div>
+    </div>
+  );
+};
+
 export const StoreEmblem: React.FC<{ iconKey?: string | null; size?: number }> = ({ iconKey, size = 36 }) => {
   if (iconKey === 'brand') {
     return (
@@ -94,9 +142,9 @@ export const ProductCategoryBadge: React.FC<{ category: string; size?: number }>
   return (
     <div
       style={{ width: size, height: size }}
-      className={`rounded-[10px] border flex items-center justify-center shrink-0 ${bg}`}
+      className={`${size <= 24 ? 'rounded-md' : 'rounded-[10px]'} border flex items-center justify-center shrink-0 ${bg}`}
     >
-      <Icon size={Math.round(size * 0.52)} className={fg} />
+      <Icon size={Math.round(size * 0.54)} className={fg} />
     </div>
   );
 };

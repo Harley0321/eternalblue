@@ -8,10 +8,9 @@ import {
   Settings,
   Sparkles,
 } from 'lucide-react';
-import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { usePos } from '../state/PosContext';
 import { TAB_LABELS, type TabName } from '../types/pos';
-import { GlowingEmeraldStoreName, StoreEmblem } from './CommonGraphics';
+import { GlowingEmeraldDateTime, GlowingEmeraldStoreName, StoreEmblem } from './CommonGraphics';
 import { PWAInstallButton } from './PWAInstallButton';
 
 const TAB_ORDER: TabName[] = ['POS', 'INVENTORY', 'OPERATIONS', 'SALES', 'SETTINGS'];
@@ -31,39 +30,51 @@ function tabIcon(tab: TabName) {
   }
 }
 
+const HeaderNavButtons: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
+  const { state, setActiveTab } = usePos();
+  return (
+    <>
+      {TAB_ORDER.map((tab) => {
+        const Icon = tabIcon(tab);
+        const active = state.activeTab === tab;
+        return (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            className={`inline-flex items-center justify-center gap-1.5 rounded-[10px] font-bold whitespace-nowrap transition-colors cursor-pointer border ${
+              compact ? 'flex-1 py-1.5 px-2.5 text-xs' : 'py-1.5 px-3 text-xs'
+            } ${
+              active
+                ? 'bg-[#059669]/25 border-[#34D399]/40 text-[#34D399]'
+                : 'border-transparent text-[#CBD5E1] hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <Icon size={16} />
+            <span>{TAB_LABELS[tab]}</span>
+          </button>
+        );
+      })}
+    </>
+  );
+};
+
 export const PosTopBar: React.FC = () => {
-  const { state, pinConfigured, storePulse, setAssistantOpen, lockTerminalNow, setActiveTab } = usePos();
-  const isOnline = useOnlineStatus();
+  const { state, pinConfigured, storePulse, setAssistantOpen, lockTerminalNow } = usePos();
 
   return (
-    <header className="w-full bg-[#020617] px-3.5 py-2.5 shrink-0 z-30">
-      <div className="flex items-center gap-2.5 w-full">
-        <StoreEmblem iconKey={state.settings.storeIcon} size={36} />
-        <div className="flex-1 min-w-0">
-          <GlowingEmeraldStoreName text={state.settings.storeName} />
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <span className="text-[11px] text-[#94A3B8] truncate">
-              {state.activeShift?.cashierName ?? state.settings.storeAddress}
-            </span>
-            <span
-              title={`Device ${state.deviceIdentity.shortCode} · Strict local-only storage (no cloud sync)`}
-              className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 ${
-                isOnline ? 'bg-[#059669]/20 text-[#34D399]' : 'bg-[#D97706]/25 text-[#FCD34D]'
-              }`}
-            >
-              {isOnline ? 'LOCAL-ONLY' : 'OFFLINE'}
-            </span>
-            {state.updateInfo?.isNewer && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('SETTINGS')}
-                className="bg-[#00FF85]/20 text-[#6EE7B7] text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 hover:bg-[#00FF85]/30 cursor-pointer"
-              >
-                UPDATE
-              </button>
-            )}
-          </div>
+    <header className="w-full bg-[#020617] px-3.5 py-2.5 md:px-4 md:py-2.5 shrink-0 z-30">
+      <div className="flex items-center gap-2.5 md:gap-3 w-full">
+        <StoreEmblem iconKey={state.settings.storeIcon} size={40} />
+        <div className="flex-1 min-w-0 flex items-center">
+          <GlowingEmeraldStoreName
+            text={state.settings.storeName}
+            className="text-[17px] md:text-[26px] lg:text-[28px] leading-tight"
+          />
         </div>
+        <nav aria-label="Primary navigation" className="hidden lg:flex items-center gap-1 shrink-0">
+          <HeaderNavButtons />
+        </nav>
         <div className="flex items-center gap-1.5 shrink-0">
           <PWAInstallButton variant="compact" />
           <button
@@ -75,6 +86,7 @@ export const PosTopBar: React.FC = () => {
             <span className="hidden sm:inline">Ask AI ({storePulse.healthScore})</span>
             <span className="sm:hidden">AI {storePulse.healthScore}</span>
           </button>
+          <GlowingEmeraldDateTime className="pl-1" />
           {pinConfigured && !state.terminalLocked && (
             <button
               type="button"
@@ -88,34 +100,13 @@ export const PosTopBar: React.FC = () => {
           )}
         </div>
       </div>
+      <nav
+        aria-label="Tablet navigation"
+        className="hidden md:flex lg:hidden items-center gap-1.5 mt-2 pt-2 border-t border-white/10"
+      >
+        <HeaderNavButtons compact />
+      </nav>
     </header>
-  );
-};
-
-export const PosNavRail: React.FC = () => {
-  const { state, setActiveTab } = usePos();
-  return (
-    <nav className="hidden md:flex flex-col items-center w-20 bg-white border-r border-[#E2E8F0] py-3 gap-2 shrink-0">
-      {TAB_ORDER.map((tab) => {
-        const Icon = tabIcon(tab);
-        const active = state.activeTab === tab;
-        return (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setActiveTab(tab)}
-            className={`w-16 py-2 rounded-xl flex flex-col items-center gap-1 transition-colors cursor-pointer ${
-              active
-                ? 'bg-[#ECFDF5] text-[#059669]'
-                : 'text-[#64748B] hover:bg-slate-100 hover:text-[#0F172A]'
-            }`}
-          >
-            <Icon size={20} />
-            <span className="text-[11px] font-bold leading-none whitespace-nowrap">{TAB_LABELS[tab]}</span>
-          </button>
-        );
-      })}
-    </nav>
   );
 };
 

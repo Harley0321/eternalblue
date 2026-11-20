@@ -1,6 +1,6 @@
 import React from 'react';
 import { ToastHostOverlay } from './components/CommonGraphics';
-import { PosBottomBar, PosNavRail, PosTopBar } from './components/TopBarAndNav';
+import { PosBottomBar, PosTopBar } from './components/TopBarAndNav';
 import { AssistantSheet } from './modals/AssistantSheet';
 import { BarcodeScannerModal } from './modals/BarcodeScannerModal';
 import { CheckoutModal, ReceiptModal } from './modals/CheckoutAndReceiptModals';
@@ -21,7 +21,6 @@ const PosShell: React.FC = () => {
     <div className="h-[100dvh] w-full flex flex-col overflow-hidden bg-[#F4F6F8]">
       <PosTopBar />
       <div className="flex-1 flex min-h-0 overflow-hidden">
-        <PosNavRail />
         <main className="flex-1 min-w-0 min-h-0 overflow-hidden">
           {state.activeTab === 'POS' && <PosScreen />}
           {state.activeTab === 'INVENTORY' && <InventoryScreen />}

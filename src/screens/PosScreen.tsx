@@ -34,7 +34,7 @@ const ProductQuickCard: React.FC<{
       type="button"
       disabled={out}
       onClick={onClick}
-      className={`text-left w-full rounded-[14px] p-3 flex flex-col justify-between transition-colors ${
+      className={`text-left w-full h-full min-w-0 overflow-hidden rounded-[14px] p-3 flex flex-col justify-between gap-2 transition-colors ${
         out
           ? 'bg-[#F8FAFC] opacity-75 cursor-not-allowed border border-[#E2E8F0]'
           : inCartQty > 0
@@ -42,32 +42,39 @@ const ProductQuickCard: React.FC<{
           : 'bg-white border border-[#E2E8F0] cursor-pointer hover:border-[#059669]/50'
       }`}
     >
-      <div className="flex items-center justify-between w-full">
-        <ProductCategoryBadge category={product.category} size={34} />
-        {inCartQty > 0 ? (
-          <span className="bg-[#059669] text-white text-[11px] font-extrabold px-2 py-0.5 rounded-lg font-mono">
-            {PosMath.formatQty(inCartQty)}
-          </span>
-        ) : (
-          <span
-            className={`text-[10px] font-bold font-mono ${
-              out ? 'text-[#E11D48]' : low ? 'text-[#D97706]' : 'text-[#64748B]'
-            }`}
-          >
-            {out ? 'OUT' : PosMath.formatQty(product.stock, product.unit)}
-          </span>
-        )}
+      <div className="w-full min-w-0 space-y-1.5">
+        <div className="flex items-center justify-between gap-1.5 w-full min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <ProductCategoryBadge category={product.category} size={20} />
+            <span className="text-[10px] font-bold uppercase tracking-wide text-[#64748B] truncate">
+              {product.category}
+            </span>
+          </div>
+          {inCartQty > 0 ? (
+            <span className="bg-[#059669] text-white text-[11px] font-extrabold px-2 py-0.5 rounded-lg font-mono shrink-0">
+              {PosMath.formatQty(inCartQty)}
+            </span>
+          ) : (
+            <span
+              className={`text-[10px] font-bold font-mono shrink-0 ${
+                out ? 'text-[#E11D48]' : low ? 'text-[#D97706]' : 'text-[#64748B]'
+              }`}
+            >
+              {out ? 'OUT' : PosMath.formatQty(product.stock, product.unit)}
+            </span>
+          )}
+        </div>
+
+        <div
+          className={`text-[13px] font-bold leading-snug break-words ${
+            out ? 'text-[#64748B]' : 'text-[#0F172A]'
+          }`}
+        >
+          {product.name}
+        </div>
       </div>
 
-      <div
-        className={`mt-2 text-[13px] font-bold leading-snug line-clamp-2 min-h-[36px] ${
-          out ? 'text-[#64748B]' : 'text-[#0F172A]'
-        }`}
-      >
-        {product.name}
-      </div>
-
-      <div className="mt-1.5 flex items-end justify-between w-full gap-1">
+      <div className="flex flex-wrap items-baseline justify-between w-full gap-x-2 gap-y-0.5">
         <span
           className={`text-base font-extrabold font-mono ${
             out ? 'text-[#64748B]' : 'text-[#047857]'
@@ -427,7 +434,7 @@ export const PosScreen: React.FC = () => {
               No matching products found.
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5">
               {filteredProducts.map((p) => {
                 const out = StockAlerts.isOutOfStock(p);
                 const low = StockAlerts.isLowStock(p, state.settings);
@@ -484,7 +491,7 @@ export const PosScreen: React.FC = () => {
       </div>
 
       {/* Desktop Right Cart Pane */}
-      <aside className="hidden md:flex flex-col w-[360px] bg-white border-l border-[#E2E8F0] h-full shrink-0">
+      <aside className="hidden md:flex flex-col w-[310px] lg:w-[350px] bg-white border-l border-[#E2E8F0] h-full shrink-0">
         <CartPanelContent />
       </aside>
 
