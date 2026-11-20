@@ -108,7 +108,7 @@ export const SettingsSecuritySection: React.FC = () => {
           <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 shadow-xl">
             <h3 className="font-bold text-base text-[#0F172A]">Reset Store Data?</h3>
             <p className="text-xs text-[#64748B]">
-              This clears all sales and restores default Philippine retail seed data while keeping your Store Name.
+              This clears all products, sales, Suki customers, shifts, and logs back to zero while keeping your Store Name.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button

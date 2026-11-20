@@ -196,23 +196,7 @@ function createInitialState(): PosUiState {
   const drawerEvents = PosRepository.loadDrawerEvents();
   const digitalServices = PosRepository.loadDigitalServices();
   const cashiers = PosRepository.loadCashiers();
-  const existingShift = PosRepository.loadActiveShift();
-  const activeShift =
-    existingShift ??
-    (cashiers[0]
-      ? (() => {
-          const s: ActiveShiftState = {
-            shiftId: 'SHIFT-INIT',
-            cashierId: cashiers[0].id,
-            cashierName: cashiers[0].name,
-            cashierRole: cashiers[0].role,
-            openedAt: new Date().toISOString(),
-            openingFloat: 1500,
-          };
-          PosRepository.saveActiveShift(s);
-          return s;
-        })()
-      : null);
+  const activeShift = PosRepository.loadActiveShift();
   const stockLog = PosRepository.loadStockLog();
   const securityLog = PosRepository.loadSecurityLog();
   const cartSnap = PosRepository.loadActiveCart();
@@ -1558,40 +1542,18 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       stateRef.current.settings.storeName.trim() || PosRepository.loadPinnedStoreName() || 'EternalBlue Mart';
     PosRepository.resetAll();
     PosRepository.savePinLockState(0, 0);
-    const products = PosRepository.loadProducts();
-    const sales = PosRepository.loadSales();
     const settings = { ...PosRepository.loadSettings(), storeName: preservedStoreName };
     PosRepository.saveSettings(settings);
-    const suki = PosRepository.loadSukiCustomers();
-    const rules = PosRepository.loadRepackRules();
-    const cashiers = PosRepository.loadCashiers();
-    const activeShift: ActiveShiftState | null = cashiers[0]
-      ? {
-          shiftId: 'SHIFT-INIT',
-          cashierId: cashiers[0].id,
-          cashierName: cashiers[0].name,
-          cashierRole: cashiers[0].role,
-          openedAt: new Date().toISOString(),
-          openingFloat: 1500,
-        }
-      : null;
-    PosRepository.saveActiveShift(activeShift);
     const welcome = AssistantEngine.welcome('EN');
     setState((prev) => ({
       ...createInitialState(),
-      products,
-      sales,
       settings,
-      sukiCustomers: suki,
-      repackRules: rules,
-      cashiers,
-      activeShift,
       settingsUnlocked: true,
       assistantMessages: prev.assistantMessages.length
         ? prev.assistantMessages
         : [{ id: 1, isUser: false, text: welcome.text, metrics: [], chips: welcome.chips }],
     }));
-    toast('Factory reset complete (store name preserved)');
+    toast('Zero-based reset complete (store name preserved)');
   }, [toast]);
 
   const setAssistantOpen = useCallback((open: boolean) => setState((s) => ({ ...s, assistantOpen: open })), []);

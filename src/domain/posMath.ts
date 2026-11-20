@@ -260,7 +260,7 @@ export const PosMath = {
   },
 
   nextReceiptNo(sales: SaleRecord[]): string {
-    let maxNum = 1000;
+    let maxNum = 0;
     for (const s of sales) {
       const digits = s.receiptNo.replace(/[^0-9]/g, '');
       const num = parseInt(digits, 10);

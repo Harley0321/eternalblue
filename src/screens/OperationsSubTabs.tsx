@@ -680,6 +680,11 @@ export const ShiftSubTab: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {state.cashiers.length === 0 && (
+            <p className="text-xs text-[#64748B]">
+              No cashier accounts yet. Add an Owner or Cashier below to start tracking shifts.
+            </p>
+          )}
           {state.cashiers.map((c) => {
             const active = state.activeShift?.cashierId === c.id;
             const isOwner = c.role === 'owner' || c.role === 'manager';
@@ -695,7 +700,7 @@ export const ShiftSubTab: React.FC = () => {
               >
                 <button
                   type="button"
-                  onClick={() => startShift(c, 1500)}
+                  onClick={() => startShift(c, 0)}
                   className={`px-3 py-1.5 text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer ${
                     active ? 'text-[#047857]' : 'text-[#0F172A] hover:bg-slate-50'
                   }`}

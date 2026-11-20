@@ -331,7 +331,7 @@ const CartPanelContent: React.FC<{ onCloseAfterAction?: () => void }> = ({ onClo
 };
 
 export const PosScreen: React.FC = () => {
-  const { state, cartTotals, setPosSearch, setPosCategory, openScanner, addToCart, openCheckout } = usePos();
+  const { state, cartTotals, setPosSearch, setPosCategory, openScanner, openProductModal, addToCart, openCheckout } = usePos();
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
 
   const categories = useMemo(
@@ -407,7 +407,22 @@ export const PosScreen: React.FC = () => {
 
         {/* Product Grid */}
         <div className="flex-1 overflow-y-auto p-3">
-          {filteredProducts.length === 0 ? (
+          {state.products.length === 0 ? (
+            <div className="h-52 flex flex-col items-center justify-center text-center gap-2.5 px-4">
+              <p className="text-sm font-semibold text-[#0F172A]">No products in inventory yet</p>
+              <p className="text-xs text-[#64748B]">
+                Start adding items manually or scan a barcode to register your first SKU.
+              </p>
+              <button
+                type="button"
+                onClick={() => openProductModal(null)}
+                className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus size={14} />
+                <span>Add First Product</span>
+              </button>
+            </div>
+          ) : filteredProducts.length === 0 ? (
             <div className="h-40 flex items-center justify-center text-sm text-[#64748B]">
               No matching products found.
             </div>
