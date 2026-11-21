@@ -7,7 +7,7 @@ Offline-first Philippine Supermarket & Sari-Sari Point of Sale, Inventory, Barco
 - **Inventory & Audit**: Clickable Stock Health KPIs (All, Low, Out, Fast-Low, Expiring), Batch Receive & Physical Cycle Count, Stock Movement Log, Product Add/Edit with EAN-13 generator, and Quick Stock Adjustment.
 - **Operations & Suki (`Ops & Suki`)**: Suki Customer & Utang Ledger with SMS reminders, Bulk-to-Tingi Repack Rules with weighted-average capital calculation, Shift & Cash Drawer (`Gastos` / `Float` / `Drop`), GCash/Maya/E-Load/Bills Pay fee logger, and Thermal Receipt formatting (58mm/80mm) & Shelf Label CSV export.
 - **Sales Analytics & Security**: Net Revenue & Profit KPIs, 7-day daily sales trend, PH Cash Denomination Counter, Void Receipt with stock restoration, PBKDF2-HMAC-SHA256 Manager PIN lock, hash-chained security audit log, JSON backup export/restore, and offline bilingual (EN / Tagalog) Store AI.
-- **Resilient Local Persistence**: Browser `localStorage` persistence with primary + shadow (`__prev`) recovery, corrupt backup preservation, and pinned store identity.
+- **Resilient Local Persistence**: Browser `localStorage` persistence with primary + shadow (`__prev`) recovery, corrupt backup preservation, pinned store identity, and a visible warning when device storage rejects a save. PWA updates wait for the user to apply them so an active sale is not unexpectedly interrupted.
 
 ## Scripts
 ```bash

@@ -21,6 +21,16 @@ import {
 
 const STORAGE_PREFIX = 'ebpos_v1:';
 const IDENTITY_KEY = 'eternalblue_store_identity:pinned_store_name';
+export const POS_STORAGE_WRITE_ERROR_EVENT = 'eternalblue:storage-write-error';
+let lastStorageWriteErrorAt = 0;
+
+function notifyStorageWriteError(): void {
+  if (typeof window === 'undefined') return;
+  const now = Date.now();
+  if (now - lastStorageWriteErrorAt < 5000) return;
+  lastStorageWriteErrorAt = now;
+  window.dispatchEvent(new Event(POS_STORAGE_WRITE_ERROR_EVENT));
+}
 
 function dbGetString(key: string): string | null {
   try {
@@ -39,7 +49,7 @@ function dbPutString(key: string, value: string): void {
     }
     localStorage.setItem(fullKey, value);
   } catch {
-    // Storage quota or restricted mode
+    notifyStorageWriteError();
   }
 }
 
