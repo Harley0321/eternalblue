@@ -42,8 +42,8 @@ const SC_NAME_YES =
 const SC_CAT_YES = /(meat|rice|staple|fish|seafood|egg|vegetable|fruit|noodle|canned)/i;
 
 export const PosMath = {
-  APP_VERSION: '2.3.0',
-  BUILD_CODE: 1,
+  APP_VERSION: '2.3.17',
+  BUILD_CODE: 2,
   DAY_MS: 86_400_000,
 
   BASE_CATEGORIES: [
