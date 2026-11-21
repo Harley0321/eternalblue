@@ -19,6 +19,7 @@ export const SettingsScreen: React.FC = () => {
     installAppUpdate,
     refreshWebApp,
   } = usePos();
+  const showAppUpdateControls = !DeviceBridge.isMobileOrTablet();
 
   const [storeName, setStoreName] = useState(state.settings.storeName);
   const [storeAddr, setStoreAddr] = useState(state.settings.storeAddress);
@@ -99,9 +100,11 @@ export const SettingsScreen: React.FC = () => {
           <Lock className="text-[#059669]" size={26} />
           <h2 className="mt-2 font-extrabold text-lg text-[#0F172A]">Settings Locked</h2>
           <p className="mt-1 text-xs text-[#64748B]">
-            Enter Manager PIN to edit store profile, QR Ph, security, and app updates.
+            {showAppUpdateControls
+              ? 'Enter Manager PIN to edit store profile, QR Ph, security, and app updates.'
+              : 'Enter Manager PIN to edit store profile, QR Ph, and security.'}
           </p>
-          {state.updateInfo?.isNewer && (
+          {showAppUpdateControls && state.updateInfo?.isNewer && (
             <div className="mt-3 w-full rounded-xl bg-[#ECFDF5] border border-[#059669]/30 px-3 py-2 text-[11px] font-bold text-[#047857]">
               Update {state.updateInfo.tagName} is available — unlock Settings to download &amp; install.
             </div>
@@ -142,7 +145,7 @@ export const SettingsScreen: React.FC = () => {
 
   return (
     <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
-      {info?.isNewer && (
+      {showAppUpdateControls && info?.isNewer && (
         <div className="bg-[#ECFDF5] border border-[#059669]/35 rounded-[14px] p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="min-w-0">
             <div className="text-xs font-extrabold text-[#047857]">
@@ -353,8 +356,10 @@ export const SettingsScreen: React.FC = () => {
         </div>
       )}
 
-      {/* GitHub Updates */}
-      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3.5 space-y-2.5">
+      {showAppUpdateControls && (
+        <>
+          {/* GitHub Updates */}
+          <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3.5 space-y-2.5">
         <div className="flex items-center justify-between gap-2">
           <h3 className="font-extrabold text-[15px] text-[#0F172A]">GitHub Release Sync</h3>
           <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${badgeStyle}`}>
@@ -482,7 +487,9 @@ export const SettingsScreen: React.FC = () => {
             </button>
           )}
         </div>
-      </div>
+          </div>
+        </>
+      )}
 
       <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3.5 space-y-2.5">
         <div className="flex items-start gap-2.5">

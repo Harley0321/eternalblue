@@ -6,6 +6,7 @@ import { CheckoutModal, ReceiptModal } from './modals/CheckoutAndReceiptModals';
 import { BatchStockModal, StockLogModal } from './modals/InventoryBatchModals';
 import { ProductModal, StockAdjustModal } from './modals/InventoryProductModals';
 import { PwaUpdatePrompt } from './components/PwaUpdatePrompt';
+import { DeviceBridge } from './hardware/deviceBridge';
 import { SmallModalsHost } from './modals/SmallModals';
 import { PosProvider, usePos } from './state/PosContext';
 
@@ -67,7 +68,7 @@ const PosShell: React.FC = () => {
       <BatchStockModal />
       <StockLogModal />
       <SmallModalsHost />
-      <PwaUpdatePrompt />
+      {!DeviceBridge.isMobileOrTablet() && <PwaUpdatePrompt />}
       <ToastHostOverlay toasts={state.toasts} />
     </div>
   );

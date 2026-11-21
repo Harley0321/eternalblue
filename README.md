@@ -28,4 +28,6 @@ When a version change reaches `main` (or a `v*` tag is pushed), GitHub Actions b
 
 Without those secrets, Actions builds a debug-signed APK artifact and skips GitHub Release publishing. Debug APKs may require uninstalling the previous app and cannot guarantee in-place updates across builds.
 
-The app checks GitHub Releases on launch and when it returns to the foreground. Android requires the user to confirm APK installation on the device; it cannot silently install updates.
+On desktop, the app checks GitHub Releases on launch and when it returns to the foreground. Android requires the user to confirm APK installation on the device; it cannot silently install updates.
+
+Manual release checks, APK downloads, and the PWA update prompt are hidden on mobile and tablet devices. The offline service worker remains enabled for app-shell caching.
