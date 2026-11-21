@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { PosRepository } from '../data/posRepository';
+import { POS_STORAGE_WRITE_ERROR_EVENT, PosRepository } from '../data/posRepository';
 import { AssistantEngine, type AssistantLang, type ChatMessage, type StorePulse } from '../domain/assistantEngine';
 import { analyzeBackupDeviceOrigin } from '../domain/deviceIdentity';
 import { GitHubUpdateChecker, type ReleaseInfo } from '../domain/githubUpdateChecker';
@@ -312,6 +312,13 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }));
     }, 2800);
   }, []);
+
+  useEffect(() => {
+    const reportStorageWriteError = () =>
+      toast('Could not save your latest changes. Free up device storage and export a backup.', 'ERROR');
+    window.addEventListener(POS_STORAGE_WRITE_ERROR_EVENT, reportStorageWriteError);
+    return () => window.removeEventListener(POS_STORAGE_WRITE_ERROR_EVENT, reportStorageWriteError);
+  }, [toast]);
 
   const productMap = useMemo(() => new Map(state.products.map((p) => [p.id, p])), [state.products]);
   const cartTotals = useMemo(
