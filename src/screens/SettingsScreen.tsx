@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Download, ExternalLink, Lock, RefreshCw } from 'lucide-react';
+import { Download, ExternalLink, Lock, RefreshCw, ShieldCheck } from 'lucide-react';
 import { GlowingEmeraldStoreName, StoreEmblem } from '../components/CommonGraphics';
 import { PWAInstallButton } from '../components/PWAInstallButton';
 import { PosMath } from '../domain/posMath';
 import { DeviceBridge } from '../hardware/deviceBridge';
 import { usePos } from '../state/PosContext';
 import { SettingsSecuritySection } from './SettingsSecuritySection';
+
+type StorageProtectionStatus = 'checking' | 'protected' | 'not-protected' | 'unsupported' | 'error';
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -27,6 +29,8 @@ export const SettingsScreen: React.FC = () => {
   const [qrAcct, setQrAcct] = useState(state.settings.qrAccountNumber ?? '');
   const [qrEmv, setQrEmv] = useState(state.settings.qrEmvPayload ?? '');
   const [githubRepoInput, setGithubRepoInput] = useState(state.settings.githubRepo);
+  const [storageProtection, setStorageProtection] = useState<StorageProtectionStatus>('checking');
+  const [requestingStorageProtection, setRequestingStorageProtection] = useState(false);
 
   useEffect(() => {
     setStoreName(state.settings.storeName);
@@ -39,6 +43,54 @@ export const SettingsScreen: React.FC = () => {
     setQrEmv(state.settings.qrEmvPayload ?? '');
     setGithubRepoInput(state.settings.githubRepo);
   }, [state.settings]);
+
+  useEffect(() => {
+    let active = true;
+    const storage = navigator.storage;
+    if (!storage || typeof storage.persisted !== 'function') {
+      setStorageProtection('unsupported');
+      return;
+    }
+
+    void storage.persisted().then(
+      (persisted) => {
+        if (active) setStorageProtection(persisted ? 'protected' : 'not-protected');
+      },
+      () => {
+        if (active) setStorageProtection('error');
+      }
+    );
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const requestStorageProtection = async () => {
+    const storage = navigator.storage;
+    if (!storage || typeof storage.persist !== 'function') {
+      setStorageProtection('unsupported');
+      return;
+    }
+
+    setRequestingStorageProtection(true);
+    try {
+      const persisted = await storage.persist();
+      setStorageProtection(persisted ? 'protected' : 'not-protected');
+    } catch {
+      setStorageProtection('error');
+    } finally {
+      setRequestingStorageProtection(false);
+    }
+  };
+
+  const storageProtectionText = {
+    checking: 'Checking browser storage protection...',
+    protected: "Automatic browser eviction is disabled for this app's data.",
+    'not-protected': 'The browser may clear local data under storage pressure.',
+    unsupported: 'This browser does not support persistent storage requests.',
+    error: 'Could not check or request storage protection.',
+  }[storageProtection];
 
   if (pinConfigured && !state.settingsUnlocked) {
     return (
@@ -430,6 +482,31 @@ export const SettingsScreen: React.FC = () => {
             </button>
           )}
         </div>
+      </div>
+
+      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3.5 space-y-2.5">
+        <div className="flex items-start gap-2.5">
+          <ShieldCheck className="mt-0.5 shrink-0 text-[#059669]" size={17} />
+          <div className="min-w-0 flex-1">
+            <h3 className="font-extrabold text-[14px] text-[#0F172A]">Local Data Protection</h3>
+            <p className="mt-1 text-[11px] leading-relaxed text-[#64748B]">
+              Ask the browser to protect this device's POS data from automatic eviction. This does not replace regular backups.
+            </p>
+            <p aria-live="polite" className="mt-1.5 text-[11px] font-semibold text-[#475569]">
+              {storageProtectionText}
+            </p>
+          </div>
+        </div>
+        {storageProtection !== 'unsupported' && storageProtection !== 'protected' && (
+          <button
+            type="button"
+            onClick={() => void requestStorageProtection()}
+            disabled={requestingStorageProtection || storageProtection === 'checking'}
+            className="w-full min-h-[40px] rounded-xl border border-[#059669]/30 bg-[#ECFDF5] px-3 py-2 text-xs font-bold text-[#047857] hover:bg-[#D1FAE5] disabled:opacity-60 cursor-pointer"
+          >
+            {requestingStorageProtection ? 'Requesting protection...' : 'Request storage protection'}
+          </button>
+        )}
       </div>
 
       <div className="text-[11px] text-[#64748B] px-1 pb-4">
