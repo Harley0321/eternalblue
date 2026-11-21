@@ -19,11 +19,13 @@ npm run build    # Builds production bundle into dist/
 ```
 
 ## Android APK updates
-GitHub Actions builds and publishes a signed APK when a version change reaches `main` (or when a `v*` tag is pushed). Configure these repository Actions secrets so Android can install each APK as an update to the existing app:
+When a version change reaches `main` (or a `v*` tag is pushed), GitHub Actions builds an APK artifact. It publishes a GitHub Release only when all four signing secrets are configured, so Android can update the existing app:
 
 - `ANDROID_KEYSTORE_BASE64`: Base64-encoded original signing keystore.
 - `ANDROID_KEYSTORE_PASSWORD`: Keystore password.
 - `ANDROID_KEY_ALIAS`: Signing key alias.
 - `ANDROID_KEY_PASSWORD`: Signing key password.
+
+Without those secrets, Actions builds a debug-signed APK artifact and skips GitHub Release publishing. Debug APKs may require uninstalling the previous app and cannot guarantee in-place updates across builds.
 
 The app checks GitHub Releases on launch and when it returns to the foreground. Android requires the user to confirm APK installation on the device; it cannot silently install updates.
