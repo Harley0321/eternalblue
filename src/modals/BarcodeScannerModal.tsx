@@ -7,7 +7,7 @@ import {
   HybridBinarizer,
   MultiFormatReader,
 } from '@zxing/library';
-import { Camera, Flashlight, ImagePlus, RefreshCw, SwitchCamera } from 'lucide-react';
+import { Camera, Flashlight, ImagePlus, RefreshCw, ScanLine, SwitchCamera } from 'lucide-react';
 import { DeviceBridge } from '../hardware/deviceBridge';
 import { usePos } from '../state/PosContext';
 
@@ -166,6 +166,8 @@ export const BarcodeScannerModal: React.FC = () => {
   const [canSwitchCamera, setCanSwitchCamera] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  const [continuousScan, setContinuousScan] = useState(false);
+  const [batchScanCount, setBatchScanCount] = useState(0);
   const [retrySeq, setRetrySeq] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -174,6 +176,11 @@ export const BarcodeScannerModal: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const zxingReaderRef = useRef<MultiFormatReader | null>(null);
   const lastScanRef = useRef<{ code: string; time: number }>({ code: '', time: 0 });
+  const lastContinuousScanRef = useRef<{ code: string; time: number }>({ code: '', time: 0 });
+  const continuousScanRef = useRef(continuousScan);
+  continuousScanRef.current = continuousScan;
+  const scannerTargetRef = useRef(state.scannerTarget);
+  scannerTargetRef.current = state.scannerTarget;
   const onDetectedRef = useRef(handleBarcodeDetected);
   onDetectedRef.current = handleBarcodeDetected;
   const isMobileDevice =
@@ -207,23 +214,44 @@ export const BarcodeScannerModal: React.FC = () => {
     setCameraActive(false);
   }, []);
 
-  const emitCode = useCallback((rawText: string) => {
+  const emitCode = useCallback((rawText: string, allowContinuous = true) => {
     const raw = rawText.trim();
     if (!raw) return false;
     const now = Date.now();
-    if (raw !== lastScanRef.current.code || now - lastScanRef.current.time > 1400) {
-      lastScanRef.current = { code: raw, time: now };
-      onDetectedRef.current(raw);
-      return true;
+    const keepOpen =
+      allowContinuous && continuousScanRef.current && scannerTargetRef.current === 'pos';
+    if (keepOpen) {
+      const previous = lastContinuousScanRef.current;
+      if (raw === previous.code && now - previous.time < 1200) {
+        previous.time = now;
+        return false;
+      }
+      lastContinuousScanRef.current = { code: raw, time: now };
+      setBatchScanCount((count) => count + 1);
+    } else if (raw === lastScanRef.current.code && now - lastScanRef.current.time <= 1400) {
+      return false;
     }
-    return false;
+    lastScanRef.current = { code: raw, time: now };
+    onDetectedRef.current(raw, keepOpen);
+    return true;
   }, []);
+
+  const toggleContinuousScan = () => {
+    const next = !continuousScanRef.current;
+    continuousScanRef.current = next;
+    lastContinuousScanRef.current = { code: '', time: 0 };
+    setBatchScanCount(0);
+    setContinuousScan(next);
+  };
 
   useEffect(() => {
     if (!state.scannerOpen) {
       stopStream();
       setCameraError(null);
+      setContinuousScan(false);
+      setBatchScanCount(0);
       lastScanRef.current = { code: '', time: 0 };
+      lastContinuousScanRef.current = { code: '', time: 0 };
       return;
     }
 
@@ -444,7 +472,7 @@ export const BarcodeScannerModal: React.FC = () => {
           const hits = await nativeDetector.detect(canvas);
           const first = hits.find((h) => Boolean(h.rawValue?.trim()));
           if (first?.rawValue) {
-            emitCode(first.rawValue);
+            emitCode(first.rawValue, false);
             return;
           }
         } catch {
@@ -462,7 +490,7 @@ export const BarcodeScannerModal: React.FC = () => {
         const res = reader.decode(bitmap);
         const txt = res?.getText()?.trim();
         if (txt) {
-          emitCode(txt);
+          emitCode(txt, false);
           return;
         }
       } catch {
@@ -552,6 +580,29 @@ export const BarcodeScannerModal: React.FC = () => {
             </div>
           )}
         </div>
+
+        {state.scannerTarget === 'pos' && (
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={toggleContinuousScan}
+              aria-pressed={continuousScan}
+              className={`min-h-[36px] px-3 rounded-xl border text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer ${
+                continuousScan
+                  ? 'bg-[#ECFDF5] border-[#34D399] text-[#047857]'
+                  : 'bg-white border-[#E2E8F0] text-[#334155] hover:bg-slate-50'
+              }`}
+            >
+              <ScanLine size={14} />
+              <span>{continuousScan ? 'Continuous scan: On' : 'Continuous scan'}</span>
+            </button>
+            {continuousScan && (
+              <span className="text-[11px] font-semibold text-[#64748B]">
+                Scanned: {batchScanCount}
+              </span>
+            )}
+          </div>
+        )}
 
         <input
           ref={fileInputRef}

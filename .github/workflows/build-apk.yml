@@ -11,6 +11,8 @@ on:
 
 jobs:
   build-apk:
+    outputs:
+      tag_name: ${{ steps.pkg.outputs.tag_name }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,7 +45,37 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
+      - name: Configure APK signing key
+        if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || -z "$ANDROID_KEY_ALIAS" || -z "$ANDROID_KEY_PASSWORD" ]]; then
+            echo "::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD repository secrets."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android-signing.keystore
+          chmod 600 android-signing.keystore
+
+      - name: Build signed Release APK
+        if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew assembleRelease --no-daemon
+          else
+            gradle assembleRelease --no-daemon
+          fi
+
       - name: Ensure debug keystore exists
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: |
           if [ ! -f debug.keystore ]; then
             keytool -genkeypair -v \
@@ -57,7 +89,8 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Build Debug APK
+      - name: Build Debug APK for validation
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: |
           if [ -f gradlew ]; then
             chmod +x gradlew
@@ -77,7 +110,12 @@ jobs:
           fi
           mkdir -p release-assets
           APK_NAME="EternalBlue-POS-${TAG_NAME}.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "release-assets/${APK_NAME}"
+          if [[ "$GITHUB_EVENT_NAME" == "push" && ( "$GITHUB_REF_TYPE" == "tag" || "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == "refs/heads/master" ) ]]; then
+            APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          else
+            APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+          fi
+          cp "$APK_PATH" "release-assets/${APK_NAME}"
           SHA256=$(sha256sum "release-assets/${APK_NAME}" | awk '{print $1}')
           APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/${APK_NAME}"
           RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG_NAME}"
@@ -104,14 +142,14 @@ jobs:
           path: release-assets/*
 
       - name: Upload release artifact
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-assets
           path: release-assets/*
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
     needs: build-apk
     runs-on: ubuntu-latest
     permissions:
@@ -123,9 +161,22 @@ jobs:
           name: release-assets
           path: release-assets
 
+      - name: Check whether release already exists
+        id: release-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.build-apk.outputs.tag_name }}
+        run: |
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish GitHub Release
+        if: steps.release-check.outputs.exists != 'true'
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.build-apk.outputs.tag_name }}
           generate_release_notes: true
           files: release-assets/*
