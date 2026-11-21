@@ -162,7 +162,7 @@ interface PosContextValue {
   openScanner: (target?: 'pos' | 'inventory' | 'productForm') => void;
   closeScanner: () => void;
   dismissScannedPrompt: () => void;
-  handleBarcodeDetected: (rawCode: string) => void;
+  handleBarcodeDetected: (rawCode: string, keepScannerOpen?: boolean) => void;
   addSukiCustomer: (name: string, phone: string, address: string, limit: number) => void;
   recordUtangPayment: (customerId: string, amount: number, method: string, note: string) => void;
   addRepackRule: (name: string, masterId: string, targetId: string, yieldQty: number) => void;
@@ -980,7 +980,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const dismissScannedPrompt = useCallback(() => setState((s) => ({ ...s, scannedProductPromptCode: null })), []);
 
   const handleBarcodeDetected = useCallback(
-    (rawCode: string) => {
+    (rawCode: string, keepScannerOpen = false) => {
       const clean = rawCode.trim();
       if (!clean) return;
       const st = stateRef.current;
@@ -995,6 +995,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setState((s) => ({ ...s, scannerOpen: false, stockSearch: clean, activeTab: 'INVENTORY' }));
           toast(`Found ${match.name}`);
         } else {
+          if (!keepScannerOpen) {
+            setState((s) => ({ ...s, scannerOpen: false }));
+          }
           addToCart(match, 1);
           toast(`Added ${match.name}`);
         }
