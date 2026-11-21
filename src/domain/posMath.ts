@@ -17,6 +17,7 @@ export interface SalesStats {
   itemsCount: number;
   marginPct: number;
   avgTicket: number;
+  uncostedLines: number;
 }
 
 export interface StockHealthSummary {
@@ -73,6 +74,13 @@ export const PosMath = {
 
   round2(n?: number | null): number {
     return PosMath.fromCents(PosMath.toCents(n));
+  },
+
+  computeProductMarginPct(product: Product): number | null {
+    const retailCents = PosMath.toCents(product.retailPrice);
+    const capitalCents = PosMath.toCents(product.capital);
+    if (retailCents <= 0 || capitalCents <= 0) return null;
+    return PosMath.round2(((retailCents - capitalCents) / retailCents) * 100);
   },
 
   toMilli(n?: number | null): number {
@@ -395,6 +403,7 @@ export const PosMath = {
     let costC = 0;
     let orders = 0;
     let qtyMilli = 0;
+    let uncostedLines = 0;
 
     for (const s of sales) {
       if (s.voided === true) continue;
@@ -406,6 +415,7 @@ export const PosMath = {
         qtyMilli += PosMath.toMilli(it.qty);
         const cap = it.capital ?? (it.productId ? productMap.get(it.productId)?.capital : undefined) ?? 0;
         if (cap > 0) costC += PosMath.lineCents(cap, it.qty);
+        else uncostedLines++;
       }
     }
 
@@ -421,6 +431,7 @@ export const PosMath = {
       itemsCount: PosMath.fromMilli(qtyMilli),
       marginPct: margin,
       avgTicket: avg,
+      uncostedLines,
     };
   },
 

@@ -64,6 +64,14 @@ export const InventoryFilter = {
         return sorted.sort((a, b) => b.stock - a.stock);
       case 'VELOCITY_DESC':
         return sorted.sort((a, b) => (velocities[b.id] ?? 0) - (velocities[a.id] ?? 0));
+      case 'MARGIN_ASC':
+        return sorted.sort((a, b) => {
+          const marginA = PosMath.computeProductMarginPct(a);
+          const marginB = PosMath.computeProductMarginPct(b);
+          if (marginA === null) return marginB === null ? 0 : 1;
+          if (marginB === null) return -1;
+          return marginA - marginB;
+        });
       case 'VALUE_DESC':
         return sorted.sort(
           (a, b) =>

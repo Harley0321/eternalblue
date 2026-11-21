@@ -1,6 +1,12 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  AUTO_SAFETY_BACKUPS_UPDATED_EVENT,
+  AutoSafetyBackupRepository,
+  type AutoSafetyBackupSummary,
+} from '../data/autoSafetyBackups';
 import { DeviceBridge } from '../hardware/deviceBridge';
 import { usePos } from '../state/PosContext';
+import type { PosBackupPayload } from '../types/pos';
 
 export const SettingsSecuritySection: React.FC = () => {
   const {
@@ -15,7 +21,33 @@ export const SettingsSecuritySection: React.FC = () => {
   } = usePos();
 
   const [confirmReset, setConfirmReset] = useState(false);
+  const [autoBackups, setAutoBackups] = useState<AutoSafetyBackupSummary[]>([]);
+  const [autoBackupStatus, setAutoBackupStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [restoreBackup, setRestoreBackup] = useState<AutoSafetyBackupSummary | null>(null);
+  const [restoringAutoBackup, setRestoringAutoBackup] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const refreshAutoBackups = async () => {
+      try {
+        const backups = await AutoSafetyBackupRepository.list();
+        if (active) {
+          setAutoBackups(backups);
+          setAutoBackupStatus('ready');
+        }
+      } catch {
+        if (active) setAutoBackupStatus('error');
+      }
+    };
+
+    void refreshAutoBackups();
+    window.addEventListener(AUTO_SAFETY_BACKUPS_UPDATED_EVENT, refreshAutoBackups);
+    return () => {
+      active = false;
+      window.removeEventListener(AUTO_SAFETY_BACKUPS_UPDATED_EVENT, refreshAutoBackups);
+    };
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -31,6 +63,25 @@ export const SettingsSecuritySection: React.FC = () => {
       e.target.value = '';
     };
     reader.readAsText(file);
+  };
+
+  const handleRestoreAutoBackup = async () => {
+    if (!restoreBackup) return;
+    setRestoringAutoBackup(true);
+    try {
+      const payload = await AutoSafetyBackupRepository.load(restoreBackup.id);
+      if (!payload) throw new Error('The selected safety copy is no longer available.');
+      const parsed = JSON.parse(payload) as Partial<PosBackupPayload>;
+      if (!Array.isArray(parsed.products) || !Array.isArray(parsed.sales) || !parsed.settings) {
+        throw new Error('The selected safety copy is invalid.');
+      }
+      await importBackupJson(payload);
+      setRestoreBackup(null);
+    } catch {
+      toast('Could not restore the automatic safety copy.', 'ERROR');
+    } finally {
+      setRestoringAutoBackup(false);
+    }
   };
 
   return (
@@ -107,6 +158,47 @@ export const SettingsSecuritySection: React.FC = () => {
           />
         </div>
 
+        <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-2.5 space-y-2">
+          <div className="font-bold text-[11px] text-[#0F172A]">Automatic Safety Copies</div>
+          <p className="text-[10px] leading-relaxed text-[#64748B]">
+            Kept in this browser separately from the POS database: latest copy plus up to three daily restore points. This does not protect against losing or clearing the device.
+          </p>
+          {autoBackupStatus === 'loading' && (
+            <div className="text-[10px] text-[#64748B]">Checking local safety copies...</div>
+          )}
+          {autoBackupStatus === 'error' && (
+            <div role="status" className="text-[10px] font-semibold text-amber-800">
+              Automatic copies are unavailable in this browser.
+            </div>
+          )}
+          {autoBackupStatus === 'ready' && autoBackups.length === 0 && (
+            <div className="text-[10px] text-[#64748B]">A copy will be created after you add products or record sales.</div>
+          )}
+          {autoBackups.map((backup) => (
+            <div
+              key={backup.id}
+              className="flex items-center justify-between gap-2 border-t border-[#E2E8F0] pt-1.5"
+            >
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold text-[#0F172A]">
+                  {backup.kind === 'latest' ? 'Latest copy' : backup.dayKey}
+                </div>
+                <div className="text-[10px] text-[#64748B]">
+                  {backup.productCount} SKUs · {backup.saleCount} sales · {new Date(backup.createdAt).toLocaleString()}
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label={`Restore ${backup.kind === 'latest' ? 'latest' : backup.dayKey} automatic copy`}
+                onClick={() => setRestoreBackup(backup)}
+                className="shrink-0 rounded-lg border border-[#E2E8F0] bg-white px-2 py-1 text-[10px] font-bold text-[#334155] hover:bg-slate-50 cursor-pointer"
+              >
+                Restore
+              </button>
+            </div>
+          ))}
+        </div>
+
         <button
           type="button"
           onClick={() => setConfirmReset(true)}
@@ -139,11 +231,48 @@ export const SettingsSecuritySection: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setConfirmReset(false);
-                  factoryResetAll();
+                  void factoryResetAll();
                 }}
                 className="px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-[#E11D48] cursor-pointer"
               >
                 Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {restoreBackup && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="restore-safety-copy-title"
+            className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 shadow-xl"
+          >
+            <h3 id="restore-safety-copy-title" className="font-bold text-base text-[#0F172A]">
+              Restore Automatic Copy?
+            </h3>
+            <p className="text-xs text-[#64748B]">
+              This replaces current inventory, sales, customers, and settings with the {restoreBackup.dayKey} copy
+              ({restoreBackup.productCount} SKUs, {restoreBackup.saleCount} sales).
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={restoringAutoBackup}
+                onClick={() => setRestoreBackup(null)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[#64748B] hover:bg-slate-100 disabled:opacity-60 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={restoringAutoBackup}
+                onClick={() => void handleRestoreAutoBackup()}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-[#059669] hover:bg-[#047857] disabled:opacity-60 cursor-pointer"
+              >
+                {restoringAutoBackup ? 'Restoring...' : 'Restore Copy'}
               </button>
             </div>
           </div>

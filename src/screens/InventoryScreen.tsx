@@ -28,6 +28,7 @@ const STOCK_SORT_OPTIONS: Array<{ value: StockSort; label: string }> = [
   { value: 'STOCK_ASC', label: 'Stock Qty (Low → High)' },
   { value: 'STOCK_DESC', label: 'Stock Qty (High → Low)' },
   { value: 'VELOCITY_DESC', label: 'Fastest Selling' },
+  { value: 'MARGIN_ASC', label: 'Gross Margin (Lowest)' },
   { value: 'VALUE_DESC', label: 'Highest Stock Value' },
   { value: 'EXPIRY_ASC', label: 'Expiring Soonest' },
   { value: 'NAME_ASC', label: 'Name (A → Z)' },
@@ -67,6 +68,20 @@ export const InventoryScreen: React.FC = () => {
     () => PosMath.computeStockHealthSummary(state.products, state.sales, state.settings),
     [state.products, state.sales, state.settings]
   );
+
+  const endToday = PosMath.startOfDayMs() + PosMath.DAY_MS;
+  const gmroiStats = useMemo(() => {
+    return PosMath.computeSalesStats(
+      state.sales,
+      endToday - 30 * PosMath.DAY_MS,
+      endToday,
+      new Map(state.products.map((product) => [product.id, product]))
+    );
+  }, [endToday, state.products, state.sales]);
+  const gmroi =
+    summary.costValue > 0 && gmroiStats.itemsCount > 0 && gmroiStats.uncostedLines === 0
+      ? PosMath.round2(gmroiStats.profit / summary.costValue)
+      : null;
 
   const velocities = useMemo(
     () => PosMath.computeProductVelocities(state.products, state.sales, 30),
@@ -232,6 +247,22 @@ export const InventoryScreen: React.FC = () => {
           className="min-w-[136px] shrink-0"
         />
         <KpiCard
+          title="Capital in Stock"
+          value={PosMath.formatPeso(summary.costValue)}
+          sub="Current inventory cost"
+          className="min-w-[150px] shrink-0"
+        />
+        <KpiCard
+          title="GMROI (30d est.)"
+          value={gmroi === null ? '—' : `${gmroi.toFixed(2)}x`}
+          sub={
+            gmroiStats.uncostedLines > 0
+              ? 'Add capital to all sold items'
+              : '30d profit ÷ current inventory cost'
+          }
+          className="min-w-[158px] shrink-0"
+        />
+        <KpiCard
           title="Low Stock"
           value={String(summary.lowCount)}
           valueClass="text-[#D97706]"
@@ -264,6 +295,9 @@ export const InventoryScreen: React.FC = () => {
           className="min-w-[116px] shrink-0"
         />
       </div>
+      <p className="shrink-0 px-3 text-[10px] text-[#64748B]">
+        GMROI is an estimate using current inventory cost; standard GMROI uses average inventory cost.
+      </p>
 
       {/* Toolbar */}
       <div className="bg-white px-3 py-2.5 border-y border-[#E2E8F0] space-y-2 shrink-0">
@@ -369,6 +403,7 @@ export const InventoryScreen: React.FC = () => {
           const low = StockAlerts.isLowStock(p, state.settings);
           const vel = velocities[p.id] ?? 0;
           const coverDays = vel > 0 ? Math.max(0, Math.round(p.stock / vel)) : null;
+          const margin = PosMath.computeProductMarginPct(p);
           return (
             <div
               key={p.id}
@@ -389,6 +424,9 @@ export const InventoryScreen: React.FC = () => {
                       Cap {PosMath.formatPeso(p.capital)}
                     </span>
                   )}
+                  <span className="text-[11px] font-mono text-[#64748B]">
+                    Margin {margin === null ? '—' : `${margin.toFixed(2)}%`}
+                  </span>
                   {vel > 0 && (
                     <span className="text-[11px] font-mono text-[#4F46E5]">
                       ~{vel.toFixed(1)}/day{coverDays !== null ? ` · ${coverDays}d cover` : ''}
