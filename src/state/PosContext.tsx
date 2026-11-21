@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AutoSafetyBackupRepository } from '../data/autoSafetyBackups';
 import { POS_STORAGE_WRITE_ERROR_EVENT, PosRepository } from '../data/posRepository';
 import { AssistantEngine, type AssistantLang, type ChatMessage, type StorePulse } from '../domain/assistantEngine';
 import { analyzeBackupDeviceOrigin } from '../domain/deviceIdentity';
@@ -7,6 +8,7 @@ import { OpsMath } from '../domain/opsMath';
 import { PosMath } from '../domain/posMath';
 import { DeviceBridge, type UpdateProgressEvent } from '../hardware/deviceBridge';
 import { SecurityManager } from '../security/securityManager';
+import { DEFAULT_STORE_SETTINGS } from '../types/pos';
 import type {
   ActiveShiftState,
   CartLine,
@@ -187,7 +189,7 @@ interface PosContextValue {
   importBackupJson: (rawJson: string, forceCrossDeviceConfirm?: boolean) => Promise<void>;
   confirmCrossDeviceRestore: () => Promise<void>;
   cancelCrossDeviceRestore: () => void;
-  factoryResetAll: () => void;
+  factoryResetAll: () => Promise<void>;
   setAssistantOpen: (open: boolean) => void;
   setAssistantLang: (lang: AssistantLang) => void;
   askAssistant: (query: string) => void;
@@ -289,6 +291,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const checkoutBusyRef = useRef(false);
   const lastBackgroundedAtRef = useRef(0);
   const lastAutoCheckAtRef = useRef(0);
+  const lastSafetyBackupErrorAtRef = useRef(0);
 
   const persistCart = useCallback((next: PosUiState) => {
     PosRepository.saveActiveCart({
@@ -995,6 +998,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const clean = rawCode.trim();
       if (!clean) return;
       const st = stateRef.current;
+      if (st.settings.vibrateOnScan) DeviceBridge.vibrateOnScan();
       if (st.scannerTarget === 'productForm') {
         setState((s) => ({ ...s, scannerOpen: false, productModalScannedBarcode: clean }));
         toast(`Barcode captured: ${clean}`);
@@ -1589,6 +1593,56 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return JSON.stringify(payload, null, 2);
   }, []);
 
+  useEffect(() => {
+    const hasBusinessData = [
+      state.products,
+      state.sales,
+      state.heldOrders,
+      state.sukiCustomers,
+      state.utangTransactions,
+      state.repackRules,
+      state.repackLog,
+      state.drawerEvents,
+      state.digitalServices,
+      state.stockLog,
+      state.cashiers,
+    ].some((items) => items.length > 0) || state.activeShift !== null;
+    const settingKeys = Object.keys(DEFAULT_STORE_SETTINGS) as Array<keyof StoreSettings>;
+    const hasCustomSettings = settingKeys.some(
+      (key) => state.settings[key] !== DEFAULT_STORE_SETTINGS[key]
+    );
+    if (!hasBusinessData && !hasCustomSettings) return;
+    const timer = setTimeout(() => {
+      void AutoSafetyBackupRepository.saveLatestAndDaily(
+        exportBackupJson(),
+        state.products.length,
+        state.sales.length
+      ).catch(() => {
+        const now = Date.now();
+        if (now - lastSafetyBackupErrorAtRef.current < 60_000) return;
+        lastSafetyBackupErrorAtRef.current = now;
+        toast('Automatic safety copy failed. Export a backup and check device storage.', 'WARNING');
+      });
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [
+    exportBackupJson,
+    state.activeShift,
+    state.cashiers,
+    state.digitalServices,
+    state.drawerEvents,
+    state.heldOrders,
+    state.products,
+    state.repackLog,
+    state.repackRules,
+    state.sales,
+    state.settings,
+    state.stockLog,
+    state.sukiCustomers,
+    state.utangTransactions,
+    toast,
+  ]);
+
   const importBackupJson = useCallback(
     async (rawJson: string, forceCrossDeviceConfirm = false) => {
       const st = stateRef.current;
@@ -1701,7 +1755,13 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toast('Backup import cancelled — device data unchanged');
   }, [toast]);
 
-  const factoryResetAll = useCallback(() => {
+  const factoryResetAll = useCallback(async () => {
+    try {
+      await AutoSafetyBackupRepository.clear();
+    } catch {
+      toast('Could not clear automatic safety copies. Reset was canceled.', 'ERROR');
+      return;
+    }
     const preservedStoreName =
       stateRef.current.settings.storeName.trim() || PosRepository.loadPinnedStoreName() || 'EternalBlue Mart';
     PosRepository.resetAll();

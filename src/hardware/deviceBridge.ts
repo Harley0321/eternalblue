@@ -129,6 +129,10 @@ export const DeviceBridge = {
     );
   },
 
+  isVibrationSupported(): boolean {
+    return DeviceBridge.isMobileOrTablet() && typeof navigator.vibrate === 'function';
+  },
+
   getInstalledVersionInfo(): { versionName: string; versionCode: number } {
     try {
       const raw = window.AndroidPosBridge?.getInstalledVersionInfo?.();
@@ -259,6 +263,11 @@ export const DeviceBridge = {
     } catch {
       // ignore audio errors
     }
+  },
+
+  vibrateOnScan(): void {
+    if (!DeviceBridge.isVibrationSupported()) return;
+    navigator.vibrate(45);
   },
 
   async copyText(text: string): Promise<boolean> {

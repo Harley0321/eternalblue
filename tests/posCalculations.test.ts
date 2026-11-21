@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PosMath } from '../src/domain/posMath';
 import { OpsMath } from '../src/domain/opsMath';
+import { InventoryFilter } from '../src/domain/inventoryFilter';
+import {
+  computeCategorySales,
+  computeHourlySales,
+  computeProductProfitRanking,
+  getSalesPeriodRange,
+} from '../src/domain/salesAnalytics';
 import { DEFAULT_STORE_SETTINGS, type CartLine, type Product, type RepackRule, type SaleRecord, type SukiCustomer } from '../src/types/pos';
 
 function makeProduct(overrides: Partial<Product> = {}): Product {
@@ -34,6 +41,114 @@ test('PosMath integer-cent and milli-unit rounding eliminates IEEE-754 drift', (
   assert.equal(PosMath.lineTotalPeso(3.35, 1.5), 5.03);
   assert.equal(PosMath.lineCents(10.01, 1.5), 1502);
   assert.equal(PosMath.lineCents(10.05, 0.5), 503);
+});
+
+test('product gross margin uses retail price as the denominator and requires a known positive cost', () => {
+  assert.equal(PosMath.computeProductMarginPct(makeProduct({ capital: 40, retailPrice: 50 })), 20);
+  assert.equal(PosMath.computeProductMarginPct(makeProduct({ capital: 60, retailPrice: 50 })), -20);
+  assert.equal(PosMath.computeProductMarginPct(makeProduct({ capital: null })), null);
+});
+
+test('inventory margin sorting puts the lowest known margin first and unknown costs last', () => {
+  const products = [
+    makeProduct({ id: 'high', capital: 50, retailPrice: 100 }),
+    makeProduct({ id: 'unknown', capital: null, retailPrice: 100 }),
+    makeProduct({ id: 'loss', capital: 120, retailPrice: 100 }),
+    makeProduct({ id: 'low', capital: 90, retailPrice: 100 }),
+  ];
+  const sorted = InventoryFilter.filterAndSort(
+    products,
+    [],
+    DEFAULT_STORE_SETTINGS,
+    '',
+    'ALL',
+    'MARGIN_ASC'
+  );
+  assert.deepEqual(sorted.map((product) => product.id), ['loss', 'low', 'high', 'unknown']);
+});
+
+test('sales analytics allocate net sales, exclude uncosted lines from ABC profit, and use local sale hour', () => {
+  const costed = makeProduct({ id: 'costed', name: 'Costed', category: 'Staples', capital: 10 });
+  const loss = makeProduct({ id: 'loss', name: 'Loss', category: 'Snacks', capital: 25 });
+  const map = new Map([
+    [costed.id, costed],
+    [loss.id, loss],
+  ]);
+  const saleTime = new Date(2026, 10, 21, 14).toISOString();
+  const sale: SaleRecord = {
+    receiptNo: 'OR-000002',
+    dateIso: saleTime,
+    dateFormatted: 'Today',
+    items: [
+      {
+        productId: costed.id,
+        category: costed.category,
+        name: costed.name,
+        qty: 1,
+        unit: 'pc',
+        unitPrice: 100,
+        priceType: 'retail',
+        capital: 10,
+        lineTotal: 100,
+      },
+      {
+        productId: loss.id,
+        category: loss.category,
+        name: loss.name,
+        qty: 1,
+        unit: 'pc',
+        unitPrice: 20,
+        priceType: 'retail',
+        capital: 25,
+        lineTotal: 20,
+      },
+      {
+        name: 'Uncosted',
+        category: 'Other',
+        qty: 1,
+        unit: 'pc',
+        unitPrice: 30,
+        priceType: 'retail',
+        capital: null,
+        lineTotal: 30,
+      },
+    ],
+    retailSubtotal: 150,
+    wholesaleSavings: 0,
+    seniorDiscount: 0,
+    grandTotal: 140,
+    paymentMethod: 'Cash',
+    tendered: 140,
+    change: 0,
+  };
+  const from = new Date(2026, 10, 21).getTime();
+  const to = new Date(2026, 10, 22).getTime();
+
+  const ranking = computeProductProfitRanking([sale], from, to, map);
+  assert.equal(ranking.costedLines, 2);
+  assert.equal(ranking.uncostedLines, 1);
+  assert.equal(ranking.products.find((item) => item.key === costed.id)?.profitCents, 8333);
+  assert.equal(ranking.products.find((item) => item.key === loss.id)?.profitCents, -633);
+  assert.equal(ranking.products.find((item) => item.key === loss.id)?.grade, 'C');
+  assert.equal(PosMath.computeSalesStats([sale], from, to, map).uncostedLines, 1);
+
+  const categories = computeCategorySales([sale], from, to, map);
+  assert.equal(categories.reduce((sum, item) => sum + item.revenueCents, 0), 14000);
+  assert.equal(categories.find((item) => item.category === 'Other')?.revenueCents, 2800);
+
+  const hours = computeHourlySales([sale], from, to);
+  assert.equal(hours[new Date(saleTime).getHours()].orders, 1);
+});
+
+test('sales period ranges use local calendar days and include the selected custom end date', () => {
+  const now = new Date(2026, 10, 21, 14, 30);
+  const yesterday = getSalesPeriodRange('YESTERDAY', now);
+  assert.equal(yesterday.fromMs, new Date(2026, 10, 20).getTime());
+  assert.equal(yesterday.toMs, new Date(2026, 10, 21).getTime());
+
+  const custom = getSalesPeriodRange('CUSTOM', now, '2026-11-02', '2026-11-04');
+  assert.equal(custom.fromMs, new Date(2026, 10, 2).getTime());
+  assert.equal(custom.toMs, new Date(2026, 10, 5).getTime());
 });
 
 test('PosMath.computeCartTotals reconciles wholesale savings, SC/PWD 5% discount, and cap', () => {

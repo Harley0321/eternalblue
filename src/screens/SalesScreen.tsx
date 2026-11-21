@@ -2,6 +2,13 @@ import React, { useMemo, useState } from 'react';
 import { Download, FileText } from 'lucide-react';
 import { KpiCard } from '../components/CommonGraphics';
 import { PosMath } from '../domain/posMath';
+import {
+  computeCategorySales,
+  computeHourlySales,
+  computeProductProfitRanking,
+  getSalesPeriodRange,
+  type SalesPeriod,
+} from '../domain/salesAnalytics';
 import { DeviceBridge } from '../hardware/deviceBridge';
 import { usePos } from '../state/PosContext';
 
@@ -17,26 +24,41 @@ function safeCsvCell(raw: string): string {
 
 export const SalesScreen: React.FC = () => {
   const { state, productMap, openReceipt, toast } = usePos();
-  const [periodDays, setPeriodDays] = useState<number>(7);
+  const [period, setPeriod] = useState<SalesPeriod>('LAST_7_DAYS');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [denomOpen, setDenomOpen] = useState(false);
   const [counts, setCounts] = useState<Record<number, string>>({});
 
   const startToday = PosMath.startOfDayMs();
-  const endToday = startToday + PosMath.DAY_MS;
-  const fromMs = periodDays <= 0 ? 0 : startToday - (periodDays - 1) * PosMath.DAY_MS;
+  const range = getSalesPeriodRange(period, new Date(), customFrom, customTo);
+  const { fromMs, toMs, label: periodLabel } = range;
 
   const stats = useMemo(
-    () => PosMath.computeSalesStats(state.sales, fromMs, endToday, productMap),
-    [state.sales, fromMs, endToday, productMap]
+    () => PosMath.computeSalesStats(state.sales, fromMs, toMs, productMap),
+    [state.sales, fromMs, toMs, productMap]
   );
 
   const filteredSales = useMemo(
     () =>
       state.sales.filter((s) => {
         const ms = PosMath.parseIsoMs(s.dateIso);
-        return ms >= fromMs && ms < endToday;
+        return ms >= fromMs && ms < toMs;
       }),
-    [state.sales, fromMs, endToday]
+    [state.sales, fromMs, toMs]
+  );
+
+  const hourlySales = useMemo(
+    () => computeHourlySales(state.sales, fromMs, toMs),
+    [state.sales, fromMs, toMs]
+  );
+  const categorySales = useMemo(
+    () => computeCategorySales(state.sales, fromMs, toMs, productMap),
+    [state.sales, fromMs, toMs, productMap]
+  );
+  const profitRanking = useMemo(
+    () => computeProductProfitRanking(state.sales, fromMs, toMs, productMap),
+    [state.sales, fromMs, toMs, productMap]
   );
 
   const tenderBreakdown = useMemo(() => {
@@ -97,6 +119,9 @@ export const SalesScreen: React.FC = () => {
   }, [state.sales, productMap, startToday]);
 
   const peak = Math.max(1, ...dayBuckets.map((b) => b.amount));
+  const peakHour = Math.max(1, ...hourlySales.map((bucket) => bucket.revenueCents));
+  const categoryTotalCents = categorySales.reduce((sum, item) => sum + item.revenueCents, 0);
+  const peakCategory = Math.max(1, ...categorySales.map((item) => item.revenueCents));
 
   const denomTotal = PosMath.fromCents(
     PosMath.PH_DENOMINATIONS.reduce(
@@ -125,7 +150,7 @@ export const SalesScreen: React.FC = () => {
   const handleCopyXRead = async () => {
     const lines = [
       `${state.settings.storeName} — X-READ SUMMARY`,
-      `Period: ${periodDays === 1 ? 'Today' : periodDays === 0 ? 'All Time' : `Last ${periodDays} Days`}`,
+      `Period: ${periodLabel}`,
       `Cashier: ${state.activeShift?.cashierName ?? 'Active'}`,
       `Orders: ${stats.orders} | Avg Basket: ${PosMath.formatPeso(stats.avgTicket)}`,
       `Net Revenue: ${PosMath.formatPeso(stats.revenue)}`,
@@ -143,28 +168,39 @@ export const SalesScreen: React.FC = () => {
     <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
       {/* Period Filters & Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {[
-          [1, 'Today'],
-          [7, '7 Days'],
-          [30, '30 Days'],
-          [0, 'All'],
-        ].map(([days, lbl]) => {
-          const active = periodDays === days;
-          return (
-            <button
-              key={days}
-              type="button"
-              onClick={() => setPeriodDays(Number(days))}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${
-                active
-                  ? 'bg-[#ECFDF5] border-[#059669] text-[#047857]'
-                  : 'bg-white border-[#E2E8F0] text-[#64748B]'
-              }`}
-            >
-              {lbl}
-            </button>
-          );
-        })}
+        <select
+          aria-label="Sales date range"
+          value={period}
+          onChange={(e) => setPeriod(e.target.value as SalesPeriod)}
+          className="min-h-[36px] rounded-lg border border-[#E2E8F0] bg-white px-2.5 text-xs font-bold text-[#0F172A]"
+        >
+          <option value="TODAY">Today</option>
+          <option value="YESTERDAY">Yesterday</option>
+          <option value="LAST_7_DAYS">Last 7 Days</option>
+          <option value="LAST_30_DAYS">Last 30 Days</option>
+          <option value="THIS_MONTH">This Month</option>
+          <option value="LAST_MONTH">Last Month</option>
+          <option value="ALL_TIME">All Time</option>
+          <option value="CUSTOM">Custom Range</option>
+        </select>
+        {period === 'CUSTOM' && (
+          <>
+            <input
+              type="date"
+              aria-label="Sales start date"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              className="min-h-[36px] rounded-lg border border-[#E2E8F0] bg-white px-2 text-xs"
+            />
+            <input
+              type="date"
+              aria-label="Sales end date"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              className="min-h-[36px] rounded-lg border border-[#E2E8F0] bg-white px-2 text-xs"
+            />
+          </>
+        )}
         <div className="flex-1" />
         <button
           type="button"
@@ -206,6 +242,11 @@ export const SalesScreen: React.FC = () => {
           valueClass="text-[#4F46E5]"
         />
       </div>
+      {stats.uncostedLines > 0 && (
+        <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+          Estimated profit may be overstated: {stats.uncostedLines} sold line(s) have no recorded capital cost.
+        </div>
+      )}
 
       {/* Tender Mix */}
       <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3 space-y-2">
@@ -221,6 +262,33 @@ export const SalesScreen: React.FC = () => {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3">
+        <div className="font-bold text-sm text-[#0F172A]">Sales by Hour</div>
+        {hourlySales.every((bucket) => bucket.orders === 0) ? (
+          <div className="mt-2 text-xs text-[#64748B]">No sales in this period</div>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <div className="min-w-[560px] h-28 flex items-end gap-1">
+              {hourlySales.map((bucket) => {
+                const height = Math.round((68 * bucket.revenueCents) / peakHour);
+                return (
+                  <div key={bucket.hour} className="flex-1 h-full flex flex-col items-center justify-end">
+                    <div
+                      title={`${String(bucket.hour).padStart(2, '0')}:00 · ${bucket.orders} orders · ${PosMath.formatPeso(PosMath.fromCents(bucket.revenueCents))}`}
+                      style={{ height: `${height}px` }}
+                      className={`w-full rounded-t-sm ${bucket.revenueCents > 0 ? 'bg-[#4F46E5]' : 'bg-[#E2E8F0]'}`}
+                    />
+                    <span className="mt-1 text-[9px] text-[#64748B]">
+                      {bucket.hour % 3 === 0 ? String(bucket.hour).padStart(2, '0') : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 7-Day Sales Bar Chart */}
@@ -241,6 +309,33 @@ export const SalesScreen: React.FC = () => {
             );
           })}
         </div>
+      </div>
+
+      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3 space-y-2">
+        <div className="font-bold text-sm text-[#0F172A]">Sales by Category</div>
+        {categorySales.length === 0 ? (
+          <div className="text-xs text-[#64748B]">No sales in this period</div>
+        ) : (
+          <div className="space-y-2">
+            {categorySales.slice(0, 8).map((item) => (
+              <div key={item.category} className="flex items-center gap-2 text-xs">
+                <span className="w-28 truncate font-semibold text-[#334155]">{item.category}</span>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-[#059669]"
+                    style={{ width: `${Math.max(2, (item.revenueCents / peakCategory) * 100)}%` }}
+                  />
+                </div>
+                <span className="w-20 text-right font-mono font-bold text-[#0F172A]">
+                  {PosMath.formatPeso(PosMath.fromCents(item.revenueCents))}
+                </span>
+              </div>
+            ))}
+            <div className="border-t border-[#E2E8F0] pt-1 text-right text-[10px] text-[#64748B]">
+              {PosMath.formatPeso(PosMath.fromCents(categoryTotalCents))} net category sales
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Top Selling SKUs */}
@@ -268,6 +363,52 @@ export const SalesScreen: React.FC = () => {
           </div>
         </div>
       )}
+
+      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3 space-y-2">
+        <div>
+          <div className="font-bold text-sm text-[#0F172A]">Profit Ranking (ABC)</div>
+          <p className="mt-0.5 text-[10px] text-[#64748B]">
+            A: top 70% of gross profit · B: next 20% · C: remaining or loss-making items
+          </p>
+        </div>
+        {profitRanking.uncostedLines > 0 && (
+          <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-[10px] text-amber-900">
+            {profitRanking.uncostedLines} line(s) without capital are excluded from ranking.
+          </p>
+        )}
+        {profitRanking.products.length === 0 ? (
+          <div className="text-xs text-[#64748B]">
+            No sales with capital data in this period. Add capital to products in Stock.
+          </div>
+        ) : (
+          <div className="divide-y divide-[#E2E8F0]">
+            {profitRanking.products.slice(0, 8).map((item) => (
+              <div key={item.key} className="flex items-center justify-between gap-2 py-1.5 text-xs">
+                <div className="min-w-0">
+                  <span
+                    className={`mr-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[10px] font-extrabold ${
+                      item.grade === 'A'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : item.grade === 'B'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    {item.grade}
+                  </span>
+                  <span className="font-semibold text-[#0F172A]">{item.name}</span>
+                  <span className="ml-1 text-[10px] text-[#64748B]">
+                    ({PosMath.formatQty(PosMath.fromMilli(item.qtyMilli))} sold)
+                  </span>
+                </div>
+                <span className={`shrink-0 font-mono font-bold ${item.profitCents < 0 ? 'text-rose-700' : 'text-[#047857]'}`}>
+                  {PosMath.formatPeso(PosMath.fromCents(item.profitCents))}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <h3 className="font-extrabold text-sm text-[#0F172A]">Receipts ({filteredSales.length})</h3>
 

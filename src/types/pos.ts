@@ -49,6 +49,7 @@ export type StockSort =
   | 'STOCK_ASC'
   | 'STOCK_DESC'
   | 'VELOCITY_DESC'
+  | 'MARGIN_ASC'
   | 'VALUE_DESC'
   | 'EXPIRY_ASC'
   | 'NAME_ASC';
@@ -155,6 +156,7 @@ export interface StoreSettings {
   reorderLeadDays: number;
   reorderSafetyDays: number;
   beep: boolean;
+  vibrateOnScan?: boolean;
   scDiscountCap: number;
   receiptWidth: string;
   loyaltyPesoPerPoint: number;
@@ -187,6 +189,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   reorderLeadDays: 3,
   reorderSafetyDays: 2,
   beep: true,
+  vibrateOnScan: false,
   scDiscountCap: 125,
   receiptWidth: '80mm',
   loyaltyPesoPerPoint: 50,

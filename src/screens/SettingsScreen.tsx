@@ -281,6 +281,27 @@ export const SettingsScreen: React.FC = () => {
           </button>
         </div>
 
+        {DeviceBridge.isVibrationSupported() && (
+          <div className="flex items-center justify-between py-1">
+            <span className="text-[13px] font-semibold text-[#0F172A]">Vibrate on Scan</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(state.settings.vibrateOnScan)}
+              onClick={() => updateSettings((s) => ({ ...s, vibrateOnScan: !s.vibrateOnScan }))}
+              className={`w-11 h-6 rounded-full transition-colors p-0.5 cursor-pointer ${
+                state.settings.vibrateOnScan ? 'bg-[#059669]' : 'bg-slate-300'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                  state.settings.vibrateOnScan ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() =>
