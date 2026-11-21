@@ -14,6 +14,7 @@ Offline-first Philippine Supermarket & Sari-Sari Point of Sale, Inventory, Barco
 npm install
 npm run dev      # Starts Vite dev server on http://0.0.0.0:3000
 npm run lint     # Runs TypeScript type checking (tsc --noEmit)
+npm test         # Runs POS calculations and device-isolation tests
 npm run build    # Builds production bundle into dist/
 ```
 
