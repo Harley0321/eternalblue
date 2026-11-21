@@ -10,6 +10,7 @@ coverage/
 .aistudio/
 dev-dist/
 .gradle/
+android-signing.keystore
 app/src/main/assets/web/
 r1-*.png
 r2-*.png

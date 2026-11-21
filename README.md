@@ -16,3 +16,13 @@ npm run dev      # Starts Vite dev server on http://0.0.0.0:3000
 npm run lint     # Runs TypeScript type checking (tsc --noEmit)
 npm run build    # Builds production bundle into dist/
 ```
+
+## Android APK updates
+GitHub Actions builds and publishes a signed APK when a version change reaches `main` (or when a `v*` tag is pushed). Configure these repository Actions secrets so Android can install each APK as an update to the existing app:
+
+- `ANDROID_KEYSTORE_BASE64`: Base64-encoded original signing keystore.
+- `ANDROID_KEYSTORE_PASSWORD`: Keystore password.
+- `ANDROID_KEY_ALIAS`: Signing key alias.
+- `ANDROID_KEY_PASSWORD`: Signing key password.
+
+The app checks GitHub Releases on launch and when it returns to the foreground. Android requires the user to confirm APK installation on the device; it cannot silently install updates.

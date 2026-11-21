@@ -21,11 +21,20 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        create("release") {
+            storeFile = file("${rootDir}/android-signing.keystore")
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: ""
+        }
     }
 
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("debugConfig")
+        }
+        release {
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
