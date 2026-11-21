@@ -121,6 +121,14 @@ export const DeviceBridge = {
     return /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   },
 
+  isMobileOrTablet(): boolean {
+    return (
+      DeviceBridge.isAndroidHost() ||
+      DeviceBridge.isAndroidBrowser() ||
+      DeviceBridge.isAppleMobileBrowser()
+    );
+  },
+
   getInstalledVersionInfo(): { versionName: string; versionCode: number } {
     try {
       const raw = window.AndroidPosBridge?.getInstalledVersionInfo?.();

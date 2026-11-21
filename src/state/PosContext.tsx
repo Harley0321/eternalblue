@@ -333,6 +333,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const checkForGitHubUpdates = useCallback(
     async (silent = false, repoOverride?: string) => {
+      if (DeviceBridge.isMobileOrTablet()) return;
       if (stateRef.current.updateChecking) return;
       const rawRepo = (repoOverride ?? stateRef.current.settings.githubRepo).trim() || 'Harley0321/eternalblue';
       const normalized = GitHubUpdateChecker.normalizeRepoSlug(rawRepo);
@@ -367,6 +368,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const installAppUpdate = useCallback(() => {
+    if (DeviceBridge.isMobileOrTablet()) return;
     const info = stateRef.current.updateInfo;
     if (!info) {
       void checkForGitHubUpdates(false);
@@ -401,6 +403,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [checkForGitHubUpdates, toast]);
 
   const refreshWebApp = useCallback(() => {
+    if (DeviceBridge.isMobileOrTablet()) return;
     toast('Refreshing latest web version...', 'INFO');
     void DeviceBridge.refreshWebApp();
   }, [toast]);
@@ -422,6 +425,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [toast]);
 
   useEffect(() => {
+    if (DeviceBridge.isMobileOrTablet()) return;
     lastAutoCheckAtRef.current = Date.now();
     void checkForGitHubUpdates(true);
   }, [checkForGitHubUpdates]);
@@ -451,7 +455,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         lastBackgroundedAtRef.current = 0;
         const now = Date.now();
-        if (now - lastAutoCheckAtRef.current >= 180_000) {
+        if (!DeviceBridge.isMobileOrTablet() && now - lastAutoCheckAtRef.current >= 180_000) {
           lastAutoCheckAtRef.current = now;
           void checkForGitHubUpdates(true);
         }
