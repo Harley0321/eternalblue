@@ -2,11 +2,26 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { AutoSafetyBackupRepository } from '../data/autoSafetyBackups';
 import { POS_STORAGE_WRITE_ERROR_EVENT, PosRepository } from '../data/posRepository';
 import { AssistantEngine, type AssistantLang, type ChatMessage, type StorePulse } from '../domain/assistantEngine';
+import {
+  canAutoApplyUpdateNow,
+  canRunBackgroundUpdateCheck,
+  computeIdleGraceDelayMs,
+  isElementInteractiveInput,
+  shouldAutoStartApkUpdate,
+  type AutoUpdateActivityState,
+} from '../domain/autoUpdatePolicy';
 import { analyzeBackupDeviceOrigin } from '../domain/deviceIdentity';
 import { GitHubUpdateChecker, type ReleaseInfo } from '../domain/githubUpdateChecker';
 import { OpsMath } from '../domain/opsMath';
 import { PosMath } from '../domain/posMath';
+import { mergeProductCategories, registerCustomCategory } from '../domain/productCategories';
+import {
+  reconcileCartWithProducts,
+  sanitizeBackupPayload,
+  validateCartStockForCheckout,
+} from '../domain/posValidation';
 import { DeviceBridge, type UpdateProgressEvent } from '../hardware/deviceBridge';
+import { PwaUpdateManager } from '../pwaUpdateManager';
 import { SecurityManager } from '../security/securityManager';
 import { DEFAULT_STORE_SETTINGS } from '../types/pos';
 import type {
@@ -53,6 +68,7 @@ export interface PosUiState {
   opsSubTab: OperationsSubTab;
   deviceIdentity: DeviceIdentityInfo;
   products: Product[];
+  customCategories: string[];
   sales: SaleRecord[];
   heldOrders: HeldOrder[];
   settings: StoreSettings;
@@ -67,7 +83,6 @@ export interface PosUiState {
   stockLog: StockLogEntry[];
   securityLog: SecurityLogEntry[];
   cart: CartLine[];
-  priceMode: PriceType;
   isSeniorPwd: boolean;
   seniorId: string;
   posSearch: string;
@@ -124,8 +139,11 @@ export interface CheckoutInput {
 interface PosContextValue {
   state: PosUiState;
   productMap: Map<string, Product>;
+  availableCategories: string[];
   cartTotals: CartTotals;
   pinConfigured: boolean;
+  isPosIdleForAutoUpdate: boolean;
+  getLastInteractionAtMs: () => number;
   storePulse: StorePulse;
   toast: (msg: string, type?: ToastType) => void;
   setActiveTab: (tab: TabName) => void;
@@ -135,12 +153,10 @@ interface PosContextValue {
   setStockSearch: (q: string) => void;
   setStockFilter: (f: StockFilter) => void;
   setStockSort: (s: StockSort) => void;
-  togglePriceMode: (mode: PriceType) => void;
   toggleSeniorPwd: (enabled: boolean) => void;
   setSeniorId: (id: string) => void;
   addToCart: (product: Product, qtyDelta?: number) => void;
   updateCartQty: (productId: string, nextQty: number) => void;
-  toggleLinePriceType: (productId: string) => void;
   clearCart: () => void;
   setHoldCartOpen: (open: boolean) => void;
   setHeldOrdersOpen: (open: boolean) => void;
@@ -154,6 +170,7 @@ interface PosContextValue {
   completeCheckout: (input: CheckoutInput) => void;
   openProductModal: (product?: Product | null, prefillBarcode?: string) => void;
   closeProductModal: () => void;
+  addCustomCategory: (name: string) => { ok: boolean; category: string; error?: string };
   saveProduct: (p: Product) => void;
   deleteProduct: (id: string) => void;
   openStockAdjust: (p: Product | null) => void;
@@ -165,19 +182,20 @@ interface PosContextValue {
   closeScanner: () => void;
   dismissScannedPrompt: () => void;
   handleBarcodeDetected: (rawCode: string, keepScannerOpen?: boolean) => void;
-  addSukiCustomer: (name: string, phone: string, address: string, limit: number) => void;
-  recordUtangPayment: (customerId: string, amount: number, method: string, note: string) => void;
-  addRepackRule: (name: string, masterId: string, targetId: string, yieldQty: number) => void;
-  runRepackRule: (rule: RepackRule, masterQty: number) => void;
-  recordDrawerEvent: (type: string, category: string, amount: number, note: string) => void;
+  addSukiCustomer: (name: string, phone: string, address: string, limit: number) => boolean;
+  recordUtangPayment: (customerId: string, amount: number, method: string, note: string) => boolean;
+  addRepackRule: (name: string, masterId: string, targetId: string, yieldQty: number) => boolean;
+  runRepackRule: (rule: RepackRule, masterQty: number) => boolean;
+  recordDrawerEvent: (type: string, category: string, amount: number, note: string) => boolean;
   startShift: (cashier: CashierAccount, openingFloat: number) => void;
   addCashierAccount: (name: string, role: 'owner' | 'cashier') => void;
   deleteCashierAccount: (id: string) => void;
-  recordDigitalService: (kind: string, amount: number, fee: number, phone: string, ref: string) => void;
+  recordDigitalService: (kind: string, amount: number, fee: number, phone: string, ref: string) => boolean;
   requestVoidSale: (sale: SaleRecord) => void;
   closeVoidSale: () => void;
   confirmVoidSale: (reason: string) => Promise<void>;
   updateSettings: (mutator: (prev: StoreSettings) => StoreSettings) => void;
+  applyDefaultWholesaleMinQtyToAll: (minQty: number) => void;
   openPinModal: (mode: Exclude<PinModalMode, null>) => void;
   closePinModal: () => void;
   clearPinError: () => void;
@@ -203,6 +221,7 @@ const PosContext = createContext<PosContextValue | null>(null);
 function createInitialState(): PosUiState {
   const deviceIdentity = PosRepository.loadDeviceIdentity();
   const products = PosRepository.loadProducts();
+  const customCategories = PosRepository.loadCustomCategories();
   const sales = PosRepository.loadSales();
   const heldOrders = PosRepository.loadHeldOrders();
   const settings = PosRepository.loadSettings();
@@ -226,6 +245,7 @@ function createInitialState(): PosUiState {
     opsSubTab: 'UTANG',
     deviceIdentity,
     products,
+    customCategories,
     sales,
     heldOrders,
     settings,
@@ -240,7 +260,6 @@ function createInitialState(): PosUiState {
     stockLog,
     securityLog,
     cart: cartSnap.cart,
-    priceMode: cartSnap.priceMode,
     isSeniorPwd: cartSnap.isSeniorPwd,
     seniorId: cartSnap.seniorId,
     posSearch: '',
@@ -291,12 +310,41 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const checkoutBusyRef = useRef(false);
   const lastBackgroundedAtRef = useRef(0);
   const lastAutoCheckAtRef = useRef(0);
+  const nextAllowedAutoCheckAtRef = useRef(0);
+  const lastUserInteractionAtRef = useRef(0);
   const lastSafetyBackupErrorAtRef = useRef(0);
+  const autoAttemptedTagsRef = useRef<Set<string>>(
+    (() => {
+      try {
+        const raw = sessionStorage.getItem('ebpos_auto_update_tags');
+        const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+        return Array.isArray(parsed)
+          ? new Set(parsed.filter((v): v is string => typeof v === 'string'))
+          : new Set<string>();
+      } catch {
+        return new Set<string>();
+      }
+    })()
+  );
+
+  const getLastInteractionAtMs = useCallback(() => lastUserInteractionAtRef.current, []);
+
+  useEffect(() => {
+    const markInteraction = () => {
+      lastUserInteractionAtRef.current = Date.now();
+    };
+    window.addEventListener('pointerdown', markInteraction, { passive: true });
+    window.addEventListener('keydown', markInteraction, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', markInteraction);
+      window.removeEventListener('keydown', markInteraction);
+    };
+  }, []);
 
   const persistCart = useCallback((next: PosUiState) => {
     PosRepository.saveActiveCart({
       cart: next.cart,
-      priceMode: next.priceMode,
+      priceMode: 'retail',
       isSeniorPwd: next.isSeniorPwd,
       seniorId: next.seniorId,
     });
@@ -324,6 +372,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [toast]);
 
   const productMap = useMemo(() => new Map(state.products.map((p) => [p.id, p])), [state.products]);
+  const availableCategories = useMemo(
+    () => mergeProductCategories(state.customCategories, state.products),
+    [state.customCategories, state.products]
+  );
   const cartTotals = useMemo(
     () => PosMath.computeCartTotals(state.cart, productMap, state.isSeniorPwd, state.settings),
     [state.cart, productMap, state.isSeniorPwd, state.settings]
@@ -334,9 +386,83 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [state.products, state.sales, state.heldOrders, state.settings]
   );
 
+  const buildActivitySnapshot = useCallback((st: PosUiState): AutoUpdateActivityState => {
+    const isOnline = typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+    const isTabVisible = typeof document === 'undefined' ? true : !document.hidden;
+    const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+    return {
+      autoUpdateEnabled: st.settings.autoUpdateEnabled,
+      isOnline,
+      isTabVisible,
+      activeTab: st.activeTab,
+      cartLength: st.cart.length,
+      seniorPwdActive: st.isSeniorPwd,
+      posSearchActive: st.posSearch.trim().length > 0,
+      assistantOpen: st.assistantOpen,
+      pendingRestoreOpen: Boolean(st.pendingCrossDeviceRestore),
+      checkoutOpen: st.checkoutOpen,
+      receiptOpen: Boolean(st.receiptModalSale),
+      productModalOpen: st.productModalOpen,
+      stockAdjustOpen: Boolean(st.stockAdjustProduct),
+      batchModalOpen: st.batchModalOpen,
+      stockLogModalOpen: st.stockLogModalOpen,
+      heldOrdersModalOpen: st.heldOrdersModalOpen,
+      holdCartModalOpen: st.holdCartModalOpen,
+      voidSaleOpen: Boolean(st.voidSaleTarget),
+      scannerOpen: st.scannerOpen,
+      terminalLocked: st.terminalLocked,
+      pinModalOpen: Boolean(st.pinModalMode),
+      hasFocusedInput: isElementInteractiveInput(activeEl),
+    };
+  }, []);
+
+  const autoUpdateActivity: AutoUpdateActivityState = useMemo(
+    () => buildActivitySnapshot(state),
+    [
+      buildActivitySnapshot,
+      state.activeTab,
+      state.assistantOpen,
+      state.batchModalOpen,
+      state.cart.length,
+      state.checkoutOpen,
+      state.heldOrdersModalOpen,
+      state.holdCartModalOpen,
+      state.isSeniorPwd,
+      state.pendingCrossDeviceRestore,
+      state.pinModalMode,
+      state.posSearch,
+      state.productModalOpen,
+      state.receiptModalSale,
+      state.scannerOpen,
+      state.settings.autoUpdateEnabled,
+      state.stockAdjustProduct,
+      state.stockLogModalOpen,
+      state.terminalLocked,
+      state.voidSaleTarget,
+    ]
+  );
+
+  const isPosIdleForAutoUpdate = useMemo(
+    () => canAutoApplyUpdateNow(autoUpdateActivity),
+    [autoUpdateActivity]
+  );
+
+  useEffect(() => {
+    PwaUpdateManager.setAutoCheckGuard(() => {
+      const st = stateRef.current;
+      const activity = buildActivitySnapshot(st);
+      return canRunBackgroundUpdateCheck({
+        activity,
+        checking: st.updateChecking,
+        lastCheckedAtMs: 0,
+        nowMs: Date.now(),
+        minIntervalMs: 0,
+      });
+    });
+  }, [buildActivitySnapshot]);
+
   const checkForGitHubUpdates = useCallback(
     async (silent = false, repoOverride?: string) => {
-      if (DeviceBridge.isMobileOrTablet()) return;
       if (stateRef.current.updateChecking) return;
       const rawRepo = (repoOverride ?? stateRef.current.settings.githubRepo).trim() || 'Harley0321/eternalblue';
       const normalized = GitHubUpdateChecker.normalizeRepoSlug(rawRepo);
@@ -345,13 +471,19 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         PosRepository.saveSettings(nextSettings);
         setState((prev) => ({ ...prev, settings: nextSettings }));
       }
+      if (!DeviceBridge.isAndroidHost()) {
+        void PwaUpdateManager.checkForSwUpdate(!silent);
+      }
       const installed = DeviceBridge.getInstalledVersionInfo();
+      lastAutoCheckAtRef.current = Date.now();
       setState((prev) => ({ ...prev, updateChecking: true, installedVersion: installed }));
       const result = await GitHubUpdateChecker.checkLatest(
         normalized,
         installed.versionName,
         installed.versionCode
       );
+      nextAllowedAutoCheckAtRef.current =
+        result.retryAfterMs && result.retryAfterMs > 0 ? Date.now() + result.retryAfterMs : 0;
       const checkedAt = PosMath.formatDateTime(new Date().toISOString());
       setState((prev) => ({
         ...prev,
@@ -371,7 +503,6 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const installAppUpdate = useCallback(() => {
-    if (DeviceBridge.isMobileOrTablet()) return;
     const info = stateRef.current.updateInfo;
     if (!info) {
       void checkForGitHubUpdates(false);
@@ -406,7 +537,6 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [checkForGitHubUpdates, toast]);
 
   const refreshWebApp = useCallback(() => {
-    if (DeviceBridge.isMobileOrTablet()) return;
     toast('Refreshing latest web version...', 'INFO');
     void DeviceBridge.refreshWebApp();
   }, [toast]);
@@ -427,11 +557,143 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [toast]);
 
+  // Deferred initial GitHub & SW check after launch so initial paint & POS startup have zero contention
   useEffect(() => {
-    if (DeviceBridge.isMobileOrTablet()) return;
-    lastAutoCheckAtRef.current = Date.now();
-    void checkForGitHubUpdates(true);
-  }, [checkForGitHubUpdates]);
+    const timer = window.setTimeout(() => {
+      const st = stateRef.current;
+      const activity = buildActivitySnapshot(st);
+      if (
+        canRunBackgroundUpdateCheck({
+          activity,
+          checking: st.updateChecking,
+          lastCheckedAtMs: lastAutoCheckAtRef.current,
+          nextAllowedAtMs: nextAllowedAutoCheckAtRef.current,
+          nowMs: Date.now(),
+          minIntervalMs: 0,
+        })
+      ) {
+        void checkForGitHubUpdates(true);
+      }
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [buildActivitySnapshot, checkForGitHubUpdates]);
+
+  // Periodic background check + online reconnect check only when terminal is not mid-checkout/scanning
+  useEffect(() => {
+    const runAutomaticCheck = () => {
+      const st = stateRef.current;
+      const activity = buildActivitySnapshot(st);
+      if (
+        canRunBackgroundUpdateCheck({
+          activity,
+          checking: st.updateChecking,
+          lastCheckedAtMs: lastAutoCheckAtRef.current,
+          nextAllowedAtMs: nextAllowedAutoCheckAtRef.current,
+          nowMs: Date.now(),
+          minIntervalMs: 180_000,
+        })
+      ) {
+        void checkForGitHubUpdates(true);
+      }
+    };
+    const onOnline = () => {
+      const st = stateRef.current;
+      const activity = buildActivitySnapshot(st);
+      if (!DeviceBridge.isAndroidHost()) {
+        void PwaUpdateManager.checkForSwUpdate(false);
+      }
+      if (
+        canRunBackgroundUpdateCheck({
+          activity,
+          checking: st.updateChecking,
+          lastCheckedAtMs: lastAutoCheckAtRef.current,
+          nextAllowedAtMs: nextAllowedAutoCheckAtRef.current,
+          nowMs: Date.now(),
+          minIntervalMs: 15_000,
+        })
+      ) {
+        void checkForGitHubUpdates(true);
+      }
+    };
+    window.addEventListener('online', onOnline);
+    const intervalId = window.setInterval(runAutomaticCheck, 180_000);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.clearInterval(intervalId);
+    };
+  }, [buildActivitySnapshot, checkForGitHubUpdates]);
+
+  // Auto-download & launch installer on Android APK terminals only after genuine idle quiet window on POS screen
+  useEffect(() => {
+    let cancelled = false;
+    let timerId: number | null = null;
+
+    const scheduleIfEligible = () => {
+      const st = stateRef.current;
+      const activity = buildActivitySnapshot(st);
+      const downloading =
+        st.updateProgress?.status === 'DOWNLOADING' ||
+        st.updateProgress?.status === 'VERIFYING';
+      if (
+        !shouldAutoStartApkUpdate({
+          isAndroidHost: DeviceBridge.isAndroidHost(),
+          activity,
+          updateInfo: st.updateInfo,
+          attemptedTags: autoAttemptedTagsRef.current,
+          downloading,
+        })
+      ) {
+        return;
+      }
+
+      const delayMs = computeIdleGraceDelayMs(lastUserInteractionAtRef.current, Date.now(), 4000, 500);
+      timerId = window.setTimeout(() => {
+        if (cancelled) return;
+        const freshSt = stateRef.current;
+        const freshActivity = buildActivitySnapshot(freshSt);
+        const stillDownloading =
+          freshSt.updateProgress?.status === 'DOWNLOADING' ||
+          freshSt.updateProgress?.status === 'VERIFYING';
+        if (
+          !shouldAutoStartApkUpdate({
+            isAndroidHost: DeviceBridge.isAndroidHost(),
+            activity: freshActivity,
+            updateInfo: freshSt.updateInfo,
+            attemptedTags: autoAttemptedTagsRef.current,
+            downloading: stillDownloading,
+          })
+        ) {
+          return;
+        }
+        if (
+          lastUserInteractionAtRef.current > 0 &&
+          Date.now() - lastUserInteractionAtRef.current < 3500
+        ) {
+          scheduleIfEligible();
+          return;
+        }
+        const tag = freshSt.updateInfo?.tagName.trim();
+        if (!tag) return;
+        autoAttemptedTagsRef.current.add(tag);
+        try {
+          sessionStorage.setItem(
+            'ebpos_auto_update_tags',
+            JSON.stringify(Array.from(autoAttemptedTagsRef.current))
+          );
+        } catch {
+          // ignore storage errors
+        }
+        toast(`Auto-updating to ${tag} from GitHub...`, 'INFO');
+        installAppUpdate();
+      }, delayMs);
+    };
+
+    scheduleIfEligible();
+    return () => {
+      cancelled = true;
+      if (timerId !== null) window.clearTimeout(timerId);
+    };
+  }, [autoUpdateActivity, buildActivitySnapshot, installAppUpdate, state.updateInfo, state.updateProgress?.status, toast]);
 
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -457,16 +719,24 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
         lastBackgroundedAtRef.current = 0;
-        const now = Date.now();
-        if (!DeviceBridge.isMobileOrTablet() && now - lastAutoCheckAtRef.current >= 180_000) {
-          lastAutoCheckAtRef.current = now;
+        const activity = buildActivitySnapshot(stateRef.current);
+        if (
+          canRunBackgroundUpdateCheck({
+            activity,
+            checking: stateRef.current.updateChecking,
+            lastCheckedAtMs: lastAutoCheckAtRef.current,
+            nextAllowedAtMs: nextAllowedAutoCheckAtRef.current,
+            nowMs: Date.now(),
+            minIntervalMs: 120_000,
+          })
+        ) {
           void checkForGitHubUpdates(true);
         }
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-  }, [checkForGitHubUpdates]);
+  }, [buildActivitySnapshot, checkForGitHubUpdates]);
 
   const setActiveTab = useCallback((activeTab: TabName) => setState((s) => ({ ...s, activeTab })), []);
   const setOpsSubTab = useCallback((opsSubTab: OperationsSubTab) => setState((s) => ({ ...s, opsSubTab })), []);
@@ -475,21 +745,6 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setStockSearch = useCallback((stockSearch: string) => setState((s) => ({ ...s, stockSearch })), []);
   const setStockFilter = useCallback((stockFilter: StockFilter) => setState((s) => ({ ...s, stockFilter })), []);
   const setStockSort = useCallback((stockSort: StockSort) => setState((s) => ({ ...s, stockSort })), []);
-
-  const togglePriceMode = useCallback(
-    (priceMode: PriceType) => {
-      setState((prev) => {
-        const next: PosUiState = {
-          ...prev,
-          priceMode,
-          cart: prev.cart.map((l) => ({ ...l, priceType: priceMode })),
-        };
-        persistCart(next);
-        return next;
-      });
-    },
-    [persistCart]
-  );
 
   const toggleSeniorPwd = useCallback(
     (isSeniorPwd: boolean) => {
@@ -516,32 +771,65 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addToCart = useCallback(
     (product: Product, qtyDelta = 1) => {
       if (!Number.isFinite(qtyDelta) || qtyDelta <= 0) return;
-      if (product.stock <= 0.0001) {
-        toast(`${product.name} is out of stock.`, 'WARNING');
+      const stNow = stateRef.current;
+      const live = stNow.products.find((pr) => pr.id === product.id);
+      if (!live) {
+        toast(`${product.name} is no longer in inventory.`, 'WARNING');
         return;
       }
-      if (stateRef.current.settings.beep) DeviceBridge.playBeep();
+      if (PosMath.toMilli(live.stock) <= 0) {
+        toast(`${live.name} is out of stock.`, 'WARNING');
+        return;
+      }
+      const curInCart = stNow.cart.find((c) => c.productId === live.id)?.qty ?? 0;
+      if (PosMath.toMilli(curInCart) >= PosMath.toMilli(live.stock)) {
+        toast(`Only ${PosMath.formatQty(live.stock, live.unit)} of ${live.name} in stock.`, 'WARNING');
+        return;
+      }
+      if (stNow.settings.beep) DeviceBridge.playBeep();
       setState((prev) => {
-        const existing = prev.cart.find((c) => c.productId === product.id);
+        const map = new Map(prev.products.map((pr) => [pr.id, pr]));
+        const fresh = map.get(product.id);
+        if (!fresh || PosMath.toMilli(fresh.stock) <= 0) return prev;
+        const defaultMin = prev.settings.defaultWholesaleMinQty;
+        const existing = prev.cart.find((c) => c.productId === fresh.id);
         const nextCart = existing
-          ? prev.cart.map((c) =>
-              c.productId === product.id
-                ? { ...c, qty: PosMath.round3(Math.min(product.stock, PosMath.round3(c.qty + qtyDelta))) }
-                : c
-            )
-          : [
-              ...prev.cart,
-              {
-                productId: product.id,
-                name: product.name,
-                unit: product.unit,
-                retailPrice: product.retailPrice,
-                wholesalePrice: product.wholesalePrice,
-                wholesaleMinQty: product.wholesaleMinQty,
-                priceType: prev.priceMode,
-                qty: PosMath.round3(Math.min(product.stock, qtyDelta)),
-              },
-            ];
+          ? prev.cart.map((c) => {
+              if (c.productId !== fresh.id) return c;
+              const nextQty = PosMath.round3(Math.min(fresh.stock, PosMath.round3(c.qty + qtyDelta)));
+              const draft: CartLine = {
+                ...c,
+                name: fresh.name,
+                unit: fresh.unit,
+                retailPrice: fresh.retailPrice,
+                wholesalePrice: fresh.wholesalePrice,
+                wholesaleMinQty: fresh.wholesaleMinQty,
+                qty: nextQty,
+              };
+              return {
+                ...draft,
+                priceType: (PosMath.isWholesaleLine(draft, map, defaultMin) ? 'wholesale' : 'retail') as PriceType,
+              };
+            })
+          : (() => {
+              const draft: CartLine = {
+                productId: fresh.id,
+                name: fresh.name,
+                unit: fresh.unit,
+                retailPrice: fresh.retailPrice,
+                wholesalePrice: fresh.wholesalePrice,
+                wholesaleMinQty: fresh.wholesaleMinQty,
+                priceType: 'retail',
+                qty: PosMath.round3(Math.min(fresh.stock, qtyDelta)),
+              };
+              return [
+                ...prev.cart,
+                {
+                  ...draft,
+                  priceType: (PosMath.isWholesaleLine(draft, map, defaultMin) ? 'wholesale' : 'retail') as PriceType,
+                },
+              ];
+            })();
         const next = { ...prev, cart: nextCart };
         persistCart(next);
         return next;
@@ -552,32 +840,31 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateCartQty = useCallback(
     (productId: string, nextQty: number) => {
+      if (!Number.isFinite(nextQty)) return;
       setState((prev) => {
-        const p = prev.products.find((pr) => pr.id === productId);
-        const maxStock = p?.stock ?? 99999;
+        const map = new Map(prev.products.map((pr) => [pr.id, pr]));
+        const defaultMin = prev.settings.defaultWholesaleMinQty;
+        const p = map.get(productId);
         const clean = PosMath.round3(nextQty);
         const nextCart =
-          clean <= 0
+          !p || clean <= 0 || PosMath.toMilli(p.stock) <= 0
             ? prev.cart.filter((l) => l.productId !== productId)
-            : prev.cart.map((l) =>
-                l.productId === productId ? { ...l, qty: PosMath.round3(Math.min(maxStock, clean)) } : l
-              );
-        const next = { ...prev, cart: nextCart };
-        persistCart(next);
-        return next;
-      });
-    },
-    [persistCart]
-  );
-
-  const toggleLinePriceType = useCallback(
-    (productId: string) => {
-      setState((prev) => {
-        const nextCart = prev.cart.map((l) =>
-          l.productId === productId
-            ? { ...l, priceType: (l.priceType === 'retail' ? 'wholesale' : 'retail') as PriceType }
-            : l
-        );
+            : prev.cart.map((l) => {
+                if (l.productId !== productId) return l;
+                const draft: CartLine = {
+                  ...l,
+                  name: p.name,
+                  unit: p.unit,
+                  retailPrice: p.retailPrice,
+                  wholesalePrice: p.wholesalePrice,
+                  wholesaleMinQty: p.wholesaleMinQty,
+                  qty: PosMath.round3(Math.min(p.stock, clean)),
+                };
+                return {
+                  ...draft,
+                  priceType: (PosMath.isWholesaleLine(draft, map, defaultMin) ? 'wholesale' : 'retail') as PriceType,
+                };
+              });
         const next = { ...prev, cart: nextCart };
         persistCart(next);
         return next;
@@ -610,7 +897,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         items: st.cart,
         total: totals.grandTotal,
         isSeniorPwd: st.isSeniorPwd,
-        priceMode: st.priceMode,
+        priceMode: null,
       };
       const nextHeld = [order, ...st.heldOrders];
       PosRepository.saveHeldOrders(nextHeld);
@@ -634,22 +921,55 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const recallHeldOrder = useCallback(
     (order: HeldOrder) => {
       const st = stateRef.current;
-      const nextHeld = st.heldOrders.filter((h) => h.id !== order.id);
+      const remainingHeld = st.heldOrders.filter((h) => h.id !== order.id);
+      const pMap = new Map(st.products.map((p) => [p.id, p]));
+      let nextHeld = remainingHeld;
+
+      if (st.cart.length > 0) {
+        const activeTotals = PosMath.computeCartTotals(st.cart, pMap, st.isSeniorPwd, st.settings);
+        const autoParked: HeldOrder = {
+          id: `HOLD-AUTO-${Date.now()}`,
+          label: `Auto-parked Cart #${remainingHeld.length + 1}`,
+          time: PosMath.formatDateTime(new Date().toISOString()),
+          items: st.cart,
+          total: activeTotals.grandTotal,
+          isSeniorPwd: st.isSeniorPwd,
+          priceMode: null,
+        };
+        nextHeld = [autoParked, ...remainingHeld];
+      }
+
+      const reconciled = reconcileCartWithProducts(
+        order.items,
+        st.products,
+        st.settings.defaultWholesaleMinQty
+      );
       PosRepository.saveHeldOrders(nextHeld);
       setState((prev) => {
         const next: PosUiState = {
           ...prev,
           heldOrders: nextHeld,
-          cart: order.items,
-          isSeniorPwd: order.isSeniorPwd ?? false,
-          priceMode: order.priceMode ?? 'retail',
+          cart: reconciled.nextCart,
+          isSeniorPwd: reconciled.nextCart.length > 0 ? Boolean(order.isSeniorPwd) : false,
+          seniorId: '',
           heldOrdersModalOpen: false,
           activeTab: 'POS',
         };
         persistCart(next);
         return next;
       });
-      toast(`Recalled ${order.label || order.id}`);
+      if (reconciled.removedNames.length > 0 || reconciled.adjustedNames.length > 0) {
+        toast(
+          `Recalled ${order.label || order.id} (stock synced for ${
+            reconciled.removedNames.length + reconciled.adjustedNames.length
+          } item/s)`,
+          'WARNING'
+        );
+      } else if (st.cart.length > 0) {
+        toast(`Parked active cart & recalled ${order.label || order.id}`);
+      } else {
+        toast(`Recalled ${order.label || order.id}`);
+      }
     },
     [persistCart, toast]
   );
@@ -691,6 +1011,11 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } = input;
 
         const map = new Map(st.products.map((p) => [p.id, p]));
+        const stockCheck = validateCartStockForCheckout(st.cart, map);
+        if (!stockCheck.ok) {
+          toast(stockCheck.error, 'ERROR');
+          return;
+        }
         const totals = PosMath.computeCartTotals(st.cart, map, st.isSeniorPwd, st.settings);
         const suki = customerId ? st.sukiCustomers.find((c) => c.id === customerId) : undefined;
         const pointVal = st.settings.loyaltyPointValue > 0 ? st.settings.loyaltyPointValue : 1;
@@ -738,7 +1063,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const nowIso = new Date().toISOString();
         const saleItems: SaleItem[] = st.cart.map((line) => {
           const p = map.get(line.productId);
-          const unitPrice = PosMath.getLinePrice(line, map);
+          const defaultMin = st.settings.defaultWholesaleMinQty;
+          const unitPrice = PosMath.getLinePrice(line, map, defaultMin);
           return {
             productId: line.productId,
             category: p?.category ?? null,
@@ -746,7 +1072,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             qty: PosMath.round3(line.qty),
             unit: line.unit,
             unitPrice,
-            priceType: PosMath.isWholesaleLine(line, map) ? 'wholesale' : 'retail',
+            priceType: PosMath.isWholesaleLine(line, map, defaultMin) ? 'wholesale' : 'retail',
             capital: p?.capital ?? null,
             lineTotal: PosMath.lineTotalPeso(unitPrice, line.qty),
           };
@@ -877,20 +1203,61 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setState((s) => ({ ...s, productModalOpen: false, editingProduct: null, productModalScannedBarcode: '' }));
   }, []);
 
+  const addCustomCategory = useCallback(
+    (name: string) => {
+      const st = stateRef.current;
+      const res = registerCustomCategory(name, st.customCategories, st.products);
+      if (!res.ok) {
+        return { ok: false, category: '', error: res.error };
+      }
+      if (res.added) {
+        PosRepository.saveCustomCategories(res.nextCustom);
+        setState((prev) => ({ ...prev, customCategories: res.nextCustom }));
+        toast(`Saved category: ${res.category}`);
+      } else {
+        toast(`Using existing category: ${res.category}`);
+      }
+      return { ok: true, category: res.category };
+    },
+    [toast]
+  );
+
   const saveProduct = useCallback(
     (p: Product) => {
       const st = stateRef.current;
       const now = new Date().toISOString();
-      const withTime: Product = { ...p, updatedAt: now };
+      const catCheck = registerCustomCategory(p.category, st.customCategories, st.products);
+      const canonicalCategory = catCheck.ok ? catCheck.category : p.category.trim() || 'General';
+      const nextCustom = catCheck.added ? catCheck.nextCustom : st.customCategories;
+      const withTime: Product = { ...p, category: canonicalCategory, updatedAt: now };
       const exists = st.products.some((item) => item.id === withTime.id);
       const next = exists
         ? st.products.map((item) => (item.id === withTime.id ? withTime : item))
         : [withTime, ...st.products];
+      if (catCheck.added) {
+        PosRepository.saveCustomCategories(nextCustom);
+      }
       PosRepository.saveProducts(next);
-      setState((prev) => ({ ...prev, products: next, productModalOpen: false, editingProduct: null }));
+      setState((prev) => {
+        const reconciled = reconcileCartWithProducts(
+          prev.cart,
+          next,
+          prev.settings.defaultWholesaleMinQty
+        );
+        const updatedState: PosUiState = {
+          ...prev,
+          products: next,
+          customCategories: nextCustom,
+          cart: reconciled.nextCart,
+          productModalOpen: false,
+          editingProduct: null,
+        };
+        persistCart(updatedState);
+        return updatedState;
+      });
       toast(exists ? `Updated ${p.name}` : `Added ${p.name}`);
     },
-    [toast]
+    [persistCart, toast]
   );
 
   const deleteProduct = useCallback(
@@ -904,10 +1271,25 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       const next = st.products.filter((p) => p.id !== id);
       PosRepository.saveProducts(next);
-      setState((prev) => ({ ...prev, products: next, productModalOpen: false, editingProduct: null }));
+      setState((prev) => {
+        const reconciled = reconcileCartWithProducts(
+          prev.cart,
+          next,
+          prev.settings.defaultWholesaleMinQty
+        );
+        const updatedState: PosUiState = {
+          ...prev,
+          products: next,
+          cart: reconciled.nextCart,
+          productModalOpen: false,
+          editingProduct: null,
+        };
+        persistCart(updatedState);
+        return updatedState;
+      });
       toast('Product deleted');
     },
-    [toast]
+    [persistCart, toast]
   );
 
   const openStockAdjust = useCallback((p: Product | null) => setState((s) => ({ ...s, stockAdjustProduct: p })), []);
@@ -1024,16 +1406,23 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const addSukiCustomer = useCallback(
-    (name: string, phone: string, address: string, limit: number) => {
+    (name: string, phone: string, address: string, limit: number): boolean => {
       const clean = name.trim();
-      if (!clean) return;
+      if (!clean) {
+        toast('Enter Suki customer name', 'WARNING');
+        return false;
+      }
+      if (!Number.isFinite(limit) || limit < 0) {
+        toast('Credit limit must be ₱0.00 or higher', 'WARNING');
+        return false;
+      }
       const now = new Date().toISOString();
       const c: SukiCustomer = {
         id: `suki-${Date.now()}`,
         name: clean,
         phone: phone.trim() || null,
         address: address.trim() || null,
-        creditLimit: Math.max(0, limit),
+        creditLimit: PosMath.round2(limit),
         balance: 0,
         dueDate: null,
         points: 0,
@@ -1045,15 +1434,16 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       PosRepository.saveSukiCustomers(next);
       setState((s) => ({ ...s, sukiCustomers: next }));
       toast(`Added Suki: ${clean}`);
+      return true;
     },
     [toast]
   );
 
   const recordUtangPayment = useCallback(
-    (customerId: string, amount: number, method: string, note: string) => {
+    (customerId: string, amount: number, method: string, note: string): boolean => {
       const st = stateRef.current;
       const c = st.sukiCustomers.find((sc) => sc.id === customerId);
-      if (!c) return;
+      if (!c) return false;
       const res = OpsMath.applyUtangPayment(
         c,
         amount,
@@ -1063,7 +1453,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       if (!res.ok) {
         toast(res.error, 'ERROR');
-        return;
+        return false;
       }
       const nextCust = st.sukiCustomers.map((sc) => (sc.id === c.id ? res.customer : sc));
       const nextTx = [res.tx, ...st.utangTransactions];
@@ -1071,16 +1461,17 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       PosRepository.saveUtangTx(nextTx);
       setState((s) => ({ ...s, sukiCustomers: nextCust, utangTransactions: nextTx }));
       toast(`Recorded ${PosMath.formatPeso(res.tx.amount)} payment for ${c.name}`);
+      return true;
     },
     [toast]
   );
 
   const addRepackRule = useCallback(
-    (name: string, masterId: string, targetId: string, yieldQty: number) => {
+    (name: string, masterId: string, targetId: string, yieldQty: number): boolean => {
       const cleanYield = PosMath.round3(yieldQty);
       if (masterId === targetId || cleanYield <= 0) {
         toast('Select distinct SKUs and yield > 0', 'WARNING');
-        return;
+        return false;
       }
       const rule: RepackRule = {
         id: `rpk-${Date.now()}`,
@@ -1095,12 +1486,13 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       PosRepository.saveRepackRules(next);
       setState((s) => ({ ...s, repackRules: next }));
       toast('Repack rule saved');
+      return true;
     },
     [toast]
   );
 
   const runRepackRule = useCallback(
-    (rule: RepackRule, masterQty: number) => {
+    (rule: RepackRule, masterQty: number): boolean => {
       const st = stateRef.current;
       const res = OpsMath.executeRepackConversion(
         st.products,
@@ -1110,7 +1502,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       if (!res.ok) {
         toast(res.error, 'ERROR');
-        return;
+        return false;
       }
       const nextLogs = [...res.stockLogs, ...st.stockLog].slice(0, 300);
       const nextRepackLogs = [res.repackLog, ...st.repackLog].slice(0, 150);
@@ -1124,13 +1516,17 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         repackLog: nextRepackLogs,
       }));
       toast(`Unpacked ${PosMath.formatQty(masterQty)} → +${PosMath.formatQty(res.repackLog.targetQtyAdded)}`);
+      return true;
     },
     [toast]
   );
 
   const recordDrawerEvent = useCallback(
-    (type: string, category: string, amount: number, note: string) => {
-      if (amount <= 0) return;
+    (type: string, category: string, amount: number, note: string): boolean => {
+      if (!Number.isFinite(amount) || amount <= 0) {
+        toast('Drawer entry amount must be > ₱0.00', 'WARNING');
+        return false;
+      }
       const st = stateRef.current;
       const ev: CashDrawerEvent = {
         id: `DRW-${Date.now()}`,
@@ -1146,6 +1542,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       PosRepository.saveDrawerEvents(next);
       setState((s) => ({ ...s, drawerEvents: next }));
       toast(`Recorded ${PosMath.formatPeso(ev.amount)} (${type})`);
+      return true;
     },
     [toast]
   );
@@ -1237,10 +1634,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const recordDigitalService = useCallback(
-    (kind: string, amount: number, fee: number, phone: string, ref: string) => {
-      if (amount <= 0) {
+    (kind: string, amount: number, fee: number, phone: string, ref: string): boolean => {
+      if (!Number.isFinite(amount) || amount <= 0) {
         toast('Amount must be > ₱0.00', 'WARNING');
-        return;
+        return false;
+      }
+      if (!Number.isFinite(fee) || fee < 0) {
+        toast('Service fee cannot be negative', 'WARNING');
+        return false;
       }
       const entry: DigitalServiceEntry = {
         id: `DIG-${Date.now()}`,
@@ -1256,6 +1657,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       PosRepository.saveDigitalServices(next);
       setState((s) => ({ ...s, digitalServices: next }));
       toast(`Logged ${kind} ${PosMath.formatPeso(entry.amount)} (+${PosMath.formatPeso(entry.fee)} fee)`);
+      return true;
     },
     [toast]
   );
@@ -1409,6 +1811,48 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       toast('Settings saved');
     },
     [toast]
+  );
+
+  const applyDefaultWholesaleMinQtyToAll = useCallback(
+    (minQty: number) => {
+      const st = stateRef.current;
+      const hasPin = Boolean(st.settings.adminPinHash && st.settings.adminPinHash.trim());
+      if (hasPin && !st.settingsUnlocked) {
+        setState((s) => ({ ...s, pinModalMode: 'unlockSettings', pinError: null }));
+        toast('Unlock Settings with Manager PIN to update wholesale thresholds', 'WARNING');
+        return;
+      }
+      const cleanMin = PosMath.round3(Math.max(1, Number.isFinite(minQty) ? minQty : 10));
+      const now = new Date().toISOString();
+      const nextSettings: StoreSettings = { ...st.settings, defaultWholesaleMinQty: cleanMin };
+      const nextProducts = st.products.map((p) => ({
+        ...p,
+        wholesaleMinQty: cleanMin,
+        updatedAt: now,
+      }));
+      const map = new Map(nextProducts.map((p) => [p.id, p]));
+      const nextCart = st.cart.map((line) => {
+        const draft: CartLine = { ...line, wholesaleMinQty: cleanMin };
+        return {
+          ...draft,
+          priceType: (PosMath.isWholesaleLine(draft, map, cleanMin) ? 'wholesale' : 'retail') as PriceType,
+        };
+      });
+      PosRepository.saveSettings(nextSettings);
+      PosRepository.saveProducts(nextProducts);
+      setState((prev) => {
+        const next: PosUiState = {
+          ...prev,
+          settings: nextSettings,
+          products: nextProducts,
+          cart: nextCart,
+        };
+        persistCart(next);
+        return next;
+      });
+      toast(`Applied wholesale min qty (${PosMath.formatQty(cleanMin)}) to all ${nextProducts.length} products`);
+    },
+    [persistCart, toast]
   );
 
   const openPinModal = useCallback(
@@ -1589,6 +2033,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       stockLog: st.stockLog,
       cashiers: st.cashiers,
       activeShift: st.activeShift,
+      customCategories: st.customCategories,
     };
     return JSON.stringify(payload, null, 2);
   }, []);
@@ -1596,6 +2041,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     const hasBusinessData = [
       state.products,
+      state.customCategories,
       state.sales,
       state.heldOrders,
       state.sukiCustomers,
@@ -1629,6 +2075,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     exportBackupJson,
     state.activeShift,
     state.cashiers,
+    state.customCategories,
     state.digitalServices,
     state.drawerEvents,
     state.heldOrders,
@@ -1652,19 +2099,12 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toast('Unlock Settings with Manager PIN to restore backup', 'WARNING');
         return;
       }
-      let parsed: PosBackupPayload | null = null;
-      try {
-        const candidate = JSON.parse(rawJson) as Partial<PosBackupPayload>;
-        if (candidate && Array.isArray(candidate.products) && Array.isArray(candidate.sales) && candidate.settings) {
-          parsed = candidate as PosBackupPayload;
-        }
-      } catch {
-        parsed = null;
-      }
-      if (!parsed) {
-        toast('Invalid or unreadable backup JSON file', 'ERROR');
+      const sanitized = sanitizeBackupPayload(rawJson);
+      if (!sanitized.ok) {
+        toast(sanitized.error, 'ERROR');
         return;
       }
+      const parsed = sanitized.payload;
 
       const origin = analyzeBackupDeviceOrigin(parsed, st.deviceIdentity.deviceId);
       if (origin.isCrossDevice && !forceCrossDeviceConfirm) {
@@ -1673,9 +2113,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           pendingCrossDeviceRestore: {
             rawJson,
             sourceLabel: origin.sourceDeviceLabel ?? 'Another Device',
-            exportedAt: parsed!.exportedAt || '',
-            productCount: parsed!.products.length,
-            saleCount: parsed!.sales.length,
+            exportedAt: parsed.exportedAt || '',
+            productCount: parsed.products.length,
+            saleCount: parsed.sales.length,
           },
         }));
         return;
@@ -1696,9 +2136,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
       const nextCashiers = parsed.cashiers?.length ? parsed.cashiers : st.cashiers;
       const nextShift = parsed.activeShift ?? st.activeShift;
-      const sourceNote = origin.isCrossDevice && origin.sourceDeviceLabel
-        ? ` (from ${origin.sourceDeviceLabel})`
-        : '';
+      const nextRepackLog = parsed.repackLog ?? [];
+      const sourceNote =
+        origin.isCrossDevice && origin.sourceDeviceLabel ? ` (from ${origin.sourceDeviceLabel})` : '';
       const secLog = await SecurityManager.appendSecurityEvent(
         st.securityLog,
         'BACKUP_RESTORED',
@@ -1706,14 +2146,16 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         `Restored ${parsed.products.length} SKUs & ${parsed.sales.length} sales${sourceNote}`
       );
 
+      const nextCustomCategories = Array.isArray(parsed.customCategories) ? parsed.customCategories : [];
       PosRepository.saveSettings(mergedSettings);
       PosRepository.saveProducts(parsed.products);
+      PosRepository.saveCustomCategories(nextCustomCategories);
       PosRepository.saveSales(parsed.sales);
       PosRepository.saveHeldOrders(parsed.heldOrders ?? []);
       PosRepository.saveSukiCustomers(parsed.sukiCustomers ?? []);
       PosRepository.saveUtangTx(parsed.utangTransactions ?? []);
       PosRepository.saveRepackRules(parsed.repackRules ?? []);
-      if (parsed.repackLog?.length) PosRepository.saveRepackLog(parsed.repackLog);
+      PosRepository.saveRepackLog(nextRepackLog);
       PosRepository.saveDrawerEvents(parsed.drawerEvents ?? []);
       PosRepository.saveDigitalServices(parsed.digitalServices ?? []);
       PosRepository.saveStockLog(parsed.stockLog ?? []);
@@ -1721,27 +2163,42 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       PosRepository.saveActiveShift(nextShift ?? null);
       PosRepository.saveSecurityLog(secLog);
 
-      setState((s) => ({
-        ...s,
-        pendingCrossDeviceRestore: null,
-        settings: mergedSettings,
-        products: parsed!.products,
-        sales: parsed!.sales,
-        heldOrders: parsed!.heldOrders ?? [],
-        sukiCustomers: parsed!.sukiCustomers ?? [],
-        utangTransactions: parsed!.utangTransactions ?? [],
-        repackRules: parsed!.repackRules ?? [],
-        repackLog: parsed!.repackLog?.length ? parsed!.repackLog : s.repackLog,
-        drawerEvents: parsed!.drawerEvents ?? [],
-        digitalServices: parsed!.digitalServices ?? [],
-        stockLog: parsed!.stockLog ?? [],
-        cashiers: nextCashiers,
-        activeShift: nextShift ?? null,
-        securityLog: secLog,
-      }));
+      setState((s) => {
+        const nextState: PosUiState = {
+          ...s,
+          pendingCrossDeviceRestore: null,
+          settings: mergedSettings,
+          products: parsed.products,
+          customCategories: nextCustomCategories,
+          sales: parsed.sales,
+          heldOrders: parsed.heldOrders ?? [],
+          sukiCustomers: parsed.sukiCustomers ?? [],
+          utangTransactions: parsed.utangTransactions ?? [],
+          repackRules: parsed.repackRules ?? [],
+          repackLog: nextRepackLog,
+          drawerEvents: parsed.drawerEvents ?? [],
+          digitalServices: parsed.digitalServices ?? [],
+          stockLog: parsed.stockLog ?? [],
+          cashiers: nextCashiers,
+          activeShift: nextShift ?? null,
+          securityLog: secLog,
+          cart: [],
+          isSeniorPwd: false,
+          seniorId: '',
+          checkoutOpen: false,
+          receiptModalSale: null,
+          voidSaleTarget: null,
+          pendingVoidSale: null,
+          stockAdjustProduct: null,
+          editingProduct: null,
+          productModalOpen: false,
+        };
+        persistCart(nextState);
+        return nextState;
+      });
       toast(`Restored ${parsed.products.length} SKUs & ${parsed.sales.length} sales`);
     },
-    [toast]
+    [persistCart, toast]
   );
 
   const confirmCrossDeviceRestore = useCallback(async () => {
@@ -1756,6 +2213,13 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [toast]);
 
   const factoryResetAll = useCallback(async () => {
+    const st = stateRef.current;
+    const hasPin = Boolean(st.settings.adminPinHash && st.settings.adminPinHash.trim());
+    if (hasPin && !st.settingsUnlocked) {
+      setState((s) => ({ ...s, pinModalMode: 'unlockSettings', pinError: null }));
+      toast('Unlock Settings with Manager PIN to reset store data', 'WARNING');
+      return;
+    }
     try {
       await AutoSafetyBackupRepository.clear();
     } catch {
@@ -1763,8 +2227,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
     const preservedStoreName =
-      stateRef.current.settings.storeName.trim() || PosRepository.loadPinnedStoreName() || 'EternalBlue Mart';
+      st.settings.storeName.trim() || PosRepository.loadPinnedStoreName() || 'EternalBlue Mart';
     PosRepository.resetAll();
+    PosRepository.saveProducts([]);
+    PosRepository.saveCustomCategories([]);
     PosRepository.savePinLockState(0, 0);
     const settings = { ...PosRepository.loadSettings(), storeName: preservedStoreName };
     PosRepository.saveSettings(settings);
@@ -1823,8 +2289,11 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const value: PosContextValue = {
     state,
     productMap,
+    availableCategories,
     cartTotals,
     pinConfigured,
+    isPosIdleForAutoUpdate,
+    getLastInteractionAtMs,
     storePulse,
     toast,
     setActiveTab,
@@ -1834,12 +2303,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStockSearch,
     setStockFilter,
     setStockSort,
-    togglePriceMode,
     toggleSeniorPwd,
     setSeniorId,
     addToCart,
     updateCartQty,
-    toggleLinePriceType,
     clearCart,
     setHoldCartOpen,
     setHeldOrdersOpen,
@@ -1853,6 +2320,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     completeCheckout,
     openProductModal,
     closeProductModal,
+    addCustomCategory,
     saveProduct,
     deleteProduct,
     openStockAdjust,
@@ -1877,6 +2345,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     closeVoidSale,
     confirmVoidSale,
     updateSettings,
+    applyDefaultWholesaleMinQtyToAll,
     openPinModal,
     closePinModal,
     clearPinError,

@@ -1,6 +1,18 @@
 import type { SecurityLogEntry } from '../types/pos';
 
-const WEAK_PINS = new Set(['0000', '1111', '1234', '4321', '123456', '000000', '111111']);
+const WEAK_PINS = new Set([
+  '0000',
+  '1111',
+  '1234',
+  '4321',
+  '0123',
+  '9876',
+  '12345',
+  '123456',
+  '654321',
+  '000000',
+  '111111',
+]);
 
 function toBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -44,6 +56,7 @@ async function pbkdf2(pin: string, salt: Uint8Array, iterations: number): Promis
   return new Uint8Array(derived);
 }
 
+const MIN_PBKDF2_ITER = 100_000;
 const DEFAULT_PBKDF2_ITER = 600_000;
 const MAX_PBKDF2_ITER = 1_000_000;
 
@@ -57,10 +70,14 @@ async function sha256Hex(input: string): Promise<string> {
 }
 
 export const SecurityManager = {
+  MIN_PBKDF2_ITER,
   DEFAULT_PBKDF2_ITER,
 
   isPinWeak(pin: string): boolean {
-    return WEAK_PINS.has(pin.trim());
+    const clean = pin.trim();
+    if (WEAK_PINS.has(clean)) return true;
+    if (/^(\d)\1+$/.test(clean)) return true;
+    return false;
   },
 
   async hashPin(pin: string): Promise<[string, string]> {
@@ -80,8 +97,8 @@ export const SecurityManager = {
     try {
       const salt = fromBase64(storedSalt);
       const expected = fromBase64(storedHash);
-      const iter = iterations > 0 ? iterations : DEFAULT_PBKDF2_ITER;
-      if (!Number.isSafeInteger(iter) || iter > MAX_PBKDF2_ITER) return false;
+      const iter = iterations === undefined || iterations === null ? DEFAULT_PBKDF2_ITER : iterations;
+      if (!Number.isSafeInteger(iter) || iter < MIN_PBKDF2_ITER || iter > MAX_PBKDF2_ITER) return false;
       const actual = await pbkdf2(pin, salt, iter);
       return constantTimeEqual(expected, actual);
     } catch {

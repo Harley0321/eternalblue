@@ -68,7 +68,7 @@ const PosShell: React.FC = () => {
       <BatchStockModal />
       <StockLogModal />
       <SmallModalsHost />
-      {!DeviceBridge.isMobileOrTablet() && <PwaUpdatePrompt />}
+      {!DeviceBridge.isAndroidHost() && <PwaUpdatePrompt />}
       <ToastHostOverlay toasts={state.toasts} />
     </div>
   );

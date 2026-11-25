@@ -129,13 +129,26 @@ export const PosMath = {
     return unit.trim().length > 0 ? `${txt} ${unit}` : txt;
   },
 
-  wholesaleBlock(item: CartLine, productMap: Map<string, Product>): WholesaleBlockReason | null {
+  effectiveWholesaleMinQty(
+    product?: Pick<Product, 'wholesaleMinQty'> | null,
+    item?: Pick<CartLine, 'wholesaleMinQty'> | null,
+    defaultMinQty = 10
+  ): number {
+    const rawMin = product?.wholesaleMinQty ?? item?.wholesaleMinQty ?? 0;
+    if (rawMin > 0) return PosMath.round3(rawMin);
+    return defaultMinQty > 0 ? PosMath.round3(defaultMinQty) : 10;
+  },
+
+  wholesaleBlock(
+    item: CartLine,
+    productMap: Map<string, Product>,
+    defaultMinQty = 10
+  ): WholesaleBlockReason | null {
     const p = productMap.get(item.productId);
     const retail = p?.retailPrice ?? item.retailPrice;
     const wholesale = p?.wholesalePrice ?? item.wholesalePrice;
     const capital = p?.capital ?? 0;
-    const rawMin = p?.wholesaleMinQty ?? item.wholesaleMinQty;
-    const minQty = rawMin > 0 ? rawMin : 10;
+    const minQty = PosMath.effectiveWholesaleMinQty(p, item, defaultMinQty);
     if (PosMath.toCents(wholesale) <= 0 || PosMath.toCents(wholesale) >= PosMath.toCents(retail)) {
       return 'NONE';
     }
@@ -146,15 +159,15 @@ export const PosMath = {
     return null;
   },
 
-  isWholesaleLine(item: CartLine, productMap: Map<string, Product>): boolean {
-    return item.priceType === 'wholesale' && PosMath.wholesaleBlock(item, productMap) === null;
+  isWholesaleLine(item: CartLine, productMap: Map<string, Product>, defaultMinQty = 10): boolean {
+    return PosMath.wholesaleBlock(item, productMap, defaultMinQty) === null;
   },
 
-  getLinePrice(item: CartLine, productMap: Map<string, Product>): number {
+  getLinePrice(item: CartLine, productMap: Map<string, Product>, defaultMinQty = 10): number {
     const p = productMap.get(item.productId);
     const retail = p?.retailPrice ?? item.retailPrice;
     const wholesale = p?.wholesalePrice ?? item.wholesalePrice;
-    return PosMath.round2(PosMath.isWholesaleLine(item, productMap) ? wholesale : retail);
+    return PosMath.round2(PosMath.isWholesaleLine(item, productMap, defaultMinQty) ? wholesale : retail);
   },
 
   scSuggest(name?: string | null, category?: string | null): boolean {
@@ -181,11 +194,16 @@ export const PosMath = {
     let eligKinds = 0;
     let otherLines = 0;
 
+    const defaultMinQty = settings.defaultWholesaleMinQty > 0 ? settings.defaultWholesaleMinQty : 10;
+
     for (const item of cart) {
       const p = productMap.get(item.productId);
       const retail = p?.retailPrice ?? item.retailPrice;
       const lineRetailC = PosMath.lineCents(retail, item.qty);
-      const lineEffC = PosMath.lineCents(PosMath.getLinePrice(item, productMap), item.qty);
+      const lineEffC = PosMath.lineCents(
+        PosMath.getLinePrice(item, productMap, defaultMinQty),
+        item.qty
+      );
       const lineSavingC = Math.max(0, lineRetailC - lineEffC);
       retailC += lineRetailC;
       savingsC += lineSavingC;
@@ -347,12 +365,19 @@ export const PosMath = {
 
   nextReceiptNo(sales: SaleRecord[]): string {
     let maxNum = 0;
+    const used = new Set<string>();
     for (const s of sales) {
-      const digits = s.receiptNo.replace(/[^0-9]/g, '');
+      used.add(s.receiptNo);
+      const match = /(\d+)$/.exec(s.receiptNo.trim());
+      const digits = match ? match[1] : s.receiptNo.replace(/[^0-9]/g, '');
       const num = parseInt(digits, 10);
-      if (Number.isFinite(num) && num > maxNum) maxNum = num;
+      if (Number.isSafeInteger(num) && num > maxNum && num < 999_999_999) maxNum = num;
     }
-    return `OR-${String(maxNum + 1).padStart(6, '0')}`;
+    let next = maxNum + 1;
+    while (used.has(`OR-${String(next).padStart(6, '0')}`)) {
+      next += 1;
+    }
+    return `OR-${String(next).padStart(6, '0')}`;
   },
 
   generateEan13(): string {
@@ -490,7 +515,11 @@ export const PosMath = {
     };
   },
 
-  isWholeSaleNearThreshold(item: CartLine, productMap: Map<string, Product>): number | null {
+  isWholeSaleNearThreshold(
+    item: CartLine,
+    productMap: Map<string, Product>,
+    defaultMinQty = 10
+  ): number | null {
     const p = productMap.get(item.productId);
     if (!p) return null;
     if (PosMath.toCents(p.wholesalePrice) <= 0 || PosMath.toCents(p.wholesalePrice) >= PosMath.toCents(p.retailPrice)) {
@@ -499,7 +528,8 @@ export const PosMath = {
     if (p.capital != null && PosMath.toCents(p.capital) > 0 && PosMath.toCents(p.wholesalePrice) < PosMath.toCents(p.capital)) {
       return null;
     }
-    const diff = PosMath.round3(p.wholesaleMinQty - item.qty);
-    return diff > 0 && diff <= Math.max(2, Math.abs(p.wholesaleMinQty) * 0.4) ? diff : null;
+    const minQty = PosMath.effectiveWholesaleMinQty(p, item, defaultMinQty);
+    const diff = PosMath.round3(minQty - item.qty);
+    return diff > 0 && diff <= Math.max(2, Math.abs(minQty) * 0.4) ? diff : null;
   },
 };

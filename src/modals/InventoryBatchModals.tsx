@@ -17,13 +17,24 @@ export const BatchStockModal: React.FC = () => {
 
   if (!state.batchModalOpen) return null;
 
-  const handleApply = () => {
-    const map: Record<string, number> = {};
-    for (const [k, v] of Object.entries(entries)) {
-      const parsed = parseFloat(v);
-      if (Number.isFinite(parsed)) map[k] = parsed;
+  const validMap: Record<string, number> = {};
+  let hasInvalid = false;
+  for (const [k, v] of Object.entries(entries)) {
+    const trimmed = v.trim();
+    if (!trimmed) continue;
+    const parsed = parseFloat(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0 || (!isCycleCount && parsed <= 0)) {
+      hasInvalid = true;
+      break;
     }
-    applyBatchStock(map, isCycleCount, note);
+    validMap[k] = PosMath.round3(parsed);
+  }
+  const hasAnyValid = Object.keys(validMap).length > 0;
+  const canApply = !hasInvalid && hasAnyValid;
+
+  const handleApply = () => {
+    if (!canApply) return;
+    applyBatchStock(validMap, isCycleCount, note);
   };
 
   return (
@@ -67,6 +78,14 @@ export const BatchStockModal: React.FC = () => {
             className="w-full px-3 py-2 text-xs rounded-xl border border-[#E2E8F0]"
           />
 
+          {hasInvalid && (
+            <p className="text-[11px] font-semibold text-[#E11D48]">
+              {isCycleCount
+                ? 'Cycle Audit counts cannot be negative.'
+                : 'Receive quantities must be greater than 0.'}
+            </p>
+          )}
+
           <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
             {state.products.map((p) => (
               <div key={p.id} className="flex items-center gap-2">
@@ -78,6 +97,8 @@ export const BatchStockModal: React.FC = () => {
                 </div>
                 <input
                   type="number"
+                  min={isCycleCount ? '0' : '0.001'}
+                  step="any"
                   value={entries[p.id] ?? ''}
                   onChange={(e) => setEntries((prev) => ({ ...prev, [p.id]: e.target.value }))}
                   placeholder="0"
@@ -98,8 +119,9 @@ export const BatchStockModal: React.FC = () => {
           </button>
           <button
             type="button"
+            disabled={!canApply}
             onClick={handleApply}
-            className="px-5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
+            className="px-5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:bg-slate-300 text-white text-xs font-bold cursor-pointer disabled:cursor-not-allowed"
           >
             Apply Batch
           </button>

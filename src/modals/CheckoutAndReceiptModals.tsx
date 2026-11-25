@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { QrBitmapCard } from '../components/CommonGraphics';
 import { OpsMath } from '../domain/opsMath';
 import { PaymentQr } from '../domain/paymentQr';
@@ -18,6 +18,7 @@ export const CheckoutModal: React.FC = () => {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [redeemPointsStr, setRedeemPointsStr] = useState('0');
   const [dueDate, setDueDate] = useState(() => PosMath.addDaysYmd(7));
+  const wasOpenRef = useRef(false);
 
   const selectedSuki = useMemo(() => {
     if (selectedCustomerId) {
@@ -53,10 +54,19 @@ export const CheckoutModal: React.FC = () => {
       : 0;
 
   useEffect(() => {
-    if (state.checkoutOpen) {
-      const initC = PosMath.toCents(cartTotals.grandTotal);
-      setTenderedStr(String(PosMath.fromCents(initC)));
-      setSplitCashStr(String(PosMath.fromCents(Math.round(initC / 2))));
+    if (!state.checkoutOpen) {
+      wasOpenRef.current = false;
+      return;
+    }
+    const justOpened = !wasOpenRef.current;
+    wasOpenRef.current = true;
+    const initC = PosMath.toCents(cartTotals.grandTotal);
+    setTenderedStr(String(PosMath.fromCents(initC)));
+    setSplitCashStr(String(PosMath.fromCents(Math.round(initC / 2))));
+    if (justOpened) {
+      setMethod('Cash');
+      setSelectedCustomerId('');
+      setDueDate(PosMath.addDaysYmd(7));
       setRefNo('');
       setRedeemPointsStr('0');
     }
@@ -88,13 +98,16 @@ export const CheckoutModal: React.FC = () => {
     Math.max(0, payableC - (splitCashC >= 0 ? Math.min(payableC, splitCashC) : 0))
   );
 
+  const todayYmd = PosMath.todayYmd();
+  const dueDateInvalid = method === 'Utang' && (!dueDate || dueDate < todayYmd);
+
   const canConfirm =
     method === 'Cash'
       ? cashValid
       : method === 'Split'
       ? splitValid
       : method === 'Utang'
-      ? selectedSuki !== null
+      ? selectedSuki !== null && !dueDateInvalid
       : true;
 
   const handleConfirm = () => {
@@ -115,19 +128,23 @@ export const CheckoutModal: React.FC = () => {
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden shadow-xl">
-        <div className="px-5 pt-5 pb-3 border-b border-[#E2E8F0]">
-          <h3 className="font-extrabold text-lg text-[#0F172A] font-mono">
-            Checkout · {PosMath.formatPeso(payable)}
-          </h3>
-          {pointsDiscount > 0 && (
-            <div className="text-[11px] font-bold text-[#047857] mt-0.5">
-              Gross {PosMath.formatPeso(cartTotals.grandTotal)} − {PosMath.formatPeso(pointsDiscount)} ({appliedPoints} pts)
-            </div>
-          )}
+        <div className="px-5 pt-5 pb-3.5 border-b border-[#E2E8F0] flex items-baseline justify-between gap-2">
+          <div>
+            <div className="text-[11px] font-semibold text-[#64748B]">Amount Due</div>
+            <h3 className="font-extrabold text-2xl text-[#0F172A] font-mono tabular-nums">
+              {PosMath.formatPeso(payable)}
+            </h3>
+            {pointsDiscount > 0 && (
+              <div className="text-[11px] font-semibold text-[#047857] mt-0.5 tabular-nums">
+                Gross {PosMath.formatPeso(cartTotals.grandTotal)} − {PosMath.formatPeso(pointsDiscount)} ({appliedPoints} pts)
+              </div>
+            )}
+          </div>
+          <span className="text-xs font-semibold text-[#64748B]">Checkout</span>
         </div>
 
-        <div className="p-5 overflow-y-auto space-y-3">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+        <div className="p-5 overflow-y-auto space-y-3.5">
+          <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-slate-100">
             {(['Cash', 'GCash', 'Card', 'Split', 'Utang'] as const).map((m) => (
               <button
                 key={m}
@@ -136,10 +153,10 @@ export const CheckoutModal: React.FC = () => {
                   setMethod(m);
                   if (m === 'Utang') setRedeemPointsStr('0');
                 }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold border whitespace-nowrap cursor-pointer ${
+                className={`min-h-[38px] px-2 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all duration-150 cursor-pointer ${
                   method === m
-                    ? 'bg-[#ECFDF5] border-[#059669] text-[#047857]'
-                    : 'bg-white border-[#E2E8F0] text-[#64748B]'
+                    ? 'bg-white text-[#047857] shadow-sm'
+                    : 'text-[#475569] hover:text-[#0F172A]'
                 }`}
               >
                 {m}
@@ -149,13 +166,13 @@ export const CheckoutModal: React.FC = () => {
 
           {/* Suki Loyalty CRM Attach */}
           {state.sukiCustomers.length > 0 && (
-            <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-2.5 space-y-2">
+            <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] font-bold text-[#0F172A]">
                   Suki Loyalty Member {method === 'Utang' ? '(Required)' : '(Optional)'}
                 </span>
                 {selectedSuki && pointsToEarn > 0 && (
-                  <span className="text-[10px] font-extrabold text-[#4F46E5] bg-[#EEF2FF] px-1.5 py-0.5 rounded">
+                  <span className="text-[11px] font-bold text-[#4F46E5] tabular-nums">
                     +{pointsToEarn} pts
                   </span>
                 )}
@@ -168,9 +185,9 @@ export const CheckoutModal: React.FC = () => {
                       setSelectedCustomerId('');
                       setRedeemPointsStr('0');
                     }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap cursor-pointer ${
+                    className={`min-h-[34px] px-3 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap cursor-pointer ${
                       !selectedSuki
-                        ? 'bg-[#ECFDF5] border-[#059669] text-[#047857]'
+                        ? 'bg-[#0F172A] border-[#0F172A] text-white'
                         : 'bg-white border-[#E2E8F0] text-[#64748B]'
                     }`}
                   >
@@ -187,9 +204,9 @@ export const CheckoutModal: React.FC = () => {
                         setSelectedCustomerId(c.id);
                         setRedeemPointsStr('0');
                       }}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap cursor-pointer ${
+                      className={`min-h-[34px] px-3 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap cursor-pointer ${
                         active
-                          ? 'bg-[#ECFDF5] border-[#059669] text-[#047857]'
+                          ? 'bg-[#059669] border-[#059669] text-white'
                           : 'bg-white border-[#E2E8F0] text-[#64748B]'
                       }`}
                     >
@@ -200,7 +217,7 @@ export const CheckoutModal: React.FC = () => {
               </div>
 
               {selectedSuki && method !== 'Utang' && maxRedeemablePoints > 0 && (
-                <div className="flex items-center gap-2 pt-1 border-t border-[#E2E8F0]">
+                <div className="flex items-center gap-2 pt-1.5 border-t border-[#E2E8F0]">
                   <span className="text-[11px] font-semibold text-[#64748B] whitespace-nowrap">
                     Redeem pts (max {maxRedeemablePoints}):
                   </span>
@@ -210,12 +227,12 @@ export const CheckoutModal: React.FC = () => {
                     max={maxRedeemablePoints}
                     value={redeemPointsStr}
                     onChange={(e) => setRedeemPointsStr(e.target.value.replace(/\D/g, ''))}
-                    className="w-20 px-2 py-1 text-xs font-mono rounded-lg border border-[#E2E8F0] bg-white"
+                    className="w-20 px-2.5 py-1.5 text-xs font-mono rounded-lg border border-[#E2E8F0] bg-white"
                   />
                   <button
                     type="button"
                     onClick={() => setRedeemPointsStr(String(maxRedeemablePoints))}
-                    className="px-2 py-1 rounded-lg bg-[#EEF2FF] text-[#4F46E5] text-[10px] font-bold cursor-pointer"
+                    className="px-2.5 py-1.5 rounded-lg bg-[#EEF2FF] text-[#4F46E5] text-[11px] font-bold cursor-pointer"
                   >
                     Use Max
                   </button>
@@ -225,20 +242,24 @@ export const CheckoutModal: React.FC = () => {
           )}
 
           {method === 'Cash' && (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <div>
                 <label className="text-[11px] font-bold text-[#64748B]">Cash Tendered (₱)</label>
                 <input
                   type="number"
+                  min="0"
+                  step="0.01"
                   value={tenderedStr}
                   onChange={(e) => setTenderedStr(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 text-sm font-mono rounded-xl border border-[#E2E8F0] focus:outline-none focus:border-[#059669]"
+                  className="w-full mt-1 px-3.5 py-2.5 text-lg font-extrabold font-mono tabular-nums rounded-xl border border-[#E2E8F0] focus:outline-none focus:border-[#059669]"
                 />
               </div>
-              <div className="flex items-center gap-1.5 overflow-x-auto">
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
                 {[
                   [payable, 'Exact'],
+                  [50, '₱50'],
                   [100, '₱100'],
+                  [200, '₱200'],
                   [500, '₱500'],
                   [1000, '₱1,000'],
                 ].map(([amt, lbl]) => (
@@ -246,23 +267,28 @@ export const CheckoutModal: React.FC = () => {
                     key={String(lbl)}
                     type="button"
                     onClick={() => setTenderedStr(String(amt))}
-                    className="px-3 py-1.5 rounded-lg border border-[#E2E8F0] text-[11px] font-bold text-[#0F172A] hover:bg-slate-50 whitespace-nowrap cursor-pointer"
+                    className="min-h-[40px] px-2 py-1.5 rounded-xl border border-[#E2E8F0] bg-white hover:bg-slate-50 active:scale-[0.97] text-xs font-bold font-mono tabular-nums text-[#0F172A] whitespace-nowrap cursor-pointer transition-all"
                   >
                     {lbl}
                   </button>
                 ))}
               </div>
-              <div className="bg-[#ECFDF5] rounded-[10px] p-3 flex items-center justify-between">
-                <span className="font-bold text-sm text-[#047857]">Change</span>
-                <span className="font-extrabold font-mono text-base text-[#047857]">
-                  {PosMath.formatPeso(change)}
+              <div
+                className={`rounded-xl p-3.5 flex items-center justify-between border ${
+                  cashValid
+                    ? 'bg-[#ECFDF5] border-[#059669]/25'
+                    : 'bg-[#FFF1F2] border-[#E11D48]/25'
+                }`}
+              >
+                <span className={`font-bold text-sm ${cashValid ? 'text-[#047857]' : 'text-[#E11D48]'}`}>
+                  {cashValid ? 'Change Due' : 'Shortfall'}
+                </span>
+                <span className={`font-extrabold font-mono tabular-nums text-lg ${cashValid ? 'text-[#047857]' : 'text-[#E11D48]'}`}>
+                  {cashValid
+                    ? PosMath.formatPeso(change)
+                    : `-${PosMath.formatPeso(PosMath.fromCents(Math.max(0, payableC - Math.max(0, tenderedC))))}`}
                 </span>
               </div>
-              {!cashValid && (
-                <p className="text-[11px] font-semibold text-[#E11D48]">
-                  Cash tendered must be at least {PosMath.formatPeso(payable)}
-                </p>
-              )}
             </div>
           )}
 
@@ -295,6 +321,8 @@ export const CheckoutModal: React.FC = () => {
                 <label className="text-[11px] font-bold text-[#64748B]">Cash Portion (₱)</label>
                 <input
                   type="number"
+                  min="0"
+                  step="0.01"
                   value={splitCashStr}
                   onChange={(e) => setSplitCashStr(e.target.value)}
                   className={`w-full mt-1 px-3 py-2 text-sm font-mono rounded-xl border ${
@@ -331,10 +359,16 @@ export const CheckoutModal: React.FC = () => {
                   <label className="text-[11px] font-bold text-[#64748B]">Due Date (YYYY-MM-DD)</label>
                   <input
                     type="date"
+                    min={todayYmd}
                     value={dueDate}
                     onChange={(e) => setDueDate(e.target.value)}
                     className="w-full mt-1 px-3 py-2 text-xs rounded-xl border border-[#E2E8F0]"
                   />
+                  {dueDateInvalid && (
+                    <p className="mt-1 text-[11px] font-semibold text-[#E11D48]">
+                      Select today or a future due date.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

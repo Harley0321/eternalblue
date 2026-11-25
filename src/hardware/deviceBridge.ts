@@ -1,4 +1,5 @@
 import { PosMath } from '../domain/posMath';
+import { isSafeHttpUrl } from '../domain/posValidation';
 
 export interface NativeUpdateManifest {
   versionCode?: number;
@@ -198,6 +199,7 @@ export const DeviceBridge = {
   },
 
   openExternalUrl(url: string): void {
+    if (!isSafeHttpUrl(url)) return;
     if (window.AndroidPosBridge?.openExternal) {
       window.AndroidPosBridge.openExternal(url);
       return;
@@ -212,6 +214,7 @@ export const DeviceBridge = {
   },
 
   triggerRemoteDownload(url: string, fileName?: string): void {
+    if (!isSafeHttpUrl(url)) return;
     const a = document.createElement('a');
     a.href = url;
     a.target = '_blank';

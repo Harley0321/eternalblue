@@ -18,6 +18,24 @@ export interface ReleaseInfo {
   latestCommitMessage?: string | null;
   message: string;
   isNewer: boolean;
+  retryAfterMs?: number;
+}
+
+const REQUEST_TIMEOUT_MS = 8_000;
+const RATE_LIMIT_BACKOFF_MS = 15 * 60_000;
+const TRANSIENT_ERROR_BACKOFF_MS = 5 * 60_000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller?.signal,
+    });
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
 }
 
 function parseVersionParts(raw: string): number[] {
@@ -81,12 +99,14 @@ export const GitHubUpdateChecker = {
       if (nativeManifest && (nativeManifest.tagName || nativeManifest.versionName)) {
         const tag = String(nativeManifest.tagName || `v${nativeManifest.versionName ?? currentVersion}`);
         const remoteCode = Number(nativeManifest.versionCode) || 0;
+        const versionDowngraded =
+          remoteCode > 0 && currentVersionCode > 0 && remoteCode < currentVersionCode;
         const newerByName = GitHubUpdateChecker.isVersionNewer(
           nativeManifest.versionName || tag,
           currentVersion
         );
         const newerByCode = remoteCode > 0 && remoteCode > currentVersionCode;
-        const newer = newerByName || newerByCode;
+        const newer = !versionDowngraded && (newerByName || newerByCode);
         const apkUrl = nativeManifest.apkUrl?.trim() || null;
         const apkName = apkUrl ? apkUrl.split('/').pop() || `EternalBlue-POS-${tag}.apk` : null;
         return {
@@ -108,7 +128,7 @@ export const GitHubUpdateChecker = {
     }
 
     try {
-      const latestResp = await fetch(`https://api.github.com/repos/${clean}/releases/latest`, {
+      const latestResp = await fetchWithTimeout(`https://api.github.com/repos/${clean}/releases/latest`, {
         cache: 'no-store',
         headers: {
           Accept: 'application/vnd.github+json',
@@ -119,13 +139,13 @@ export const GitHubUpdateChecker = {
       if (latestResp.status === 200) {
         releaseObj = (await latestResp.json()) as Record<string, unknown>;
       } else if (latestResp.status === 404) {
-        const listResp = await fetch(`https://api.github.com/repos/${clean}/releases?per_page=5`, {
+        const listResp = await fetchWithTimeout(`https://api.github.com/repos/${clean}/releases?per_page=5`, {
           cache: 'no-store',
           headers: { Accept: 'application/vnd.github+json' },
         });
         if (listResp.status === 200) {
           const arr = (await listResp.json()) as Array<Record<string, unknown>>;
-          releaseObj = arr.find((r) => r.draft !== true) ?? null;
+          releaseObj = arr.find((r) => r.draft !== true && r.prerelease !== true) ?? null;
         } else if (listResp.status === 404) {
           return {
             repoSlug: clean,
@@ -135,17 +155,30 @@ export const GitHubUpdateChecker = {
             htmlUrl: `https://github.com/${clean}`,
             message: `Repository "${clean}" not found or is private (GitHub HTTP 404).`,
             isNewer: false,
+            retryAfterMs: TRANSIENT_ERROR_BACKOFF_MS,
+          };
+        } else if (listResp.status === 403 || listResp.status === 429) {
+          return {
+            repoSlug: clean,
+            status: 'ERROR',
+            tagName: '',
+            versionCode: 0,
+            htmlUrl: releasesPageUrl,
+            message: `GitHub API rate limit reached (HTTP ${listResp.status}). Try again later.`,
+            isNewer: false,
+            retryAfterMs: RATE_LIMIT_BACKOFF_MS,
           };
         }
-      } else if (latestResp.status === 403) {
+      } else if (latestResp.status === 403 || latestResp.status === 429) {
         return {
           repoSlug: clean,
           status: 'ERROR',
           tagName: '',
           versionCode: 0,
           htmlUrl: releasesPageUrl,
-          message: 'GitHub API rate limit reached (HTTP 403). Try again in a few minutes.',
+          message: `GitHub API rate limit reached (HTTP ${latestResp.status}). Try again in a few minutes.`,
           isNewer: false,
+          retryAfterMs: RATE_LIMIT_BACKOFF_MS,
         };
       } else if (!latestResp.ok) {
         return {
@@ -156,10 +189,11 @@ export const GitHubUpdateChecker = {
           htmlUrl: releasesPageUrl,
           message: `GitHub returned HTTP ${latestResp.status}.`,
           isNewer: false,
+          retryAfterMs: TRANSIENT_ERROR_BACKOFF_MS,
         };
       }
 
-      if (releaseObj) {
+      if (releaseObj && releaseObj.draft !== true && releaseObj.prerelease !== true) {
         const tag = String(releaseObj.tag_name ?? `v${currentVersion}`);
         const htmlUrl = String(releaseObj.html_url ?? releasesPageUrl);
         const notes = typeof releaseObj.body === 'string' && releaseObj.body.trim() ? releaseObj.body : null;
@@ -182,7 +216,9 @@ export const GitHubUpdateChecker = {
           apkDownloadUrl: apkAsset ? String(apkAsset.browser_download_url ?? '') : null,
           apkFileName: apkAsset ? String(apkAsset.name ?? '') : null,
           apkSizeBytes: apkAsset && typeof apkAsset.size === 'number' ? apkAsset.size : null,
-          manifestUrl: manifestAsset ? String(manifestAsset.browser_download_url ?? '') : null,
+          manifestUrl: manifestAsset
+            ? `https://github.com/${clean}/releases/latest/download/update-manifest.json`
+            : null,
           message: newer
             ? `Update ${tag} is available.`
             : `App is up to date (installed v${currentVersion}, latest ${tag}).`,
@@ -191,7 +227,9 @@ export const GitHubUpdateChecker = {
       }
 
       let latestTag: string | null = null;
-      const tagsResp = await fetch(`https://api.github.com/repos/${clean}/tags?per_page=1`, { cache: 'no-store' });
+      const tagsResp = await fetchWithTimeout(`https://api.github.com/repos/${clean}/tags?per_page=1`, {
+        cache: 'no-store',
+      });
       if (tagsResp.ok) {
         const tags = (await tagsResp.json()) as Array<{ name?: string }>;
         latestTag = tags[0]?.name ?? null;
@@ -199,7 +237,9 @@ export const GitHubUpdateChecker = {
 
       let commitSha: string | null = null;
       let commitMsg: string | null = null;
-      const commitsResp = await fetch(`https://api.github.com/repos/${clean}/commits?per_page=1`, { cache: 'no-store' });
+      const commitsResp = await fetchWithTimeout(`https://api.github.com/repos/${clean}/commits?per_page=1`, {
+        cache: 'no-store',
+      });
       if (commitsResp.ok) {
         const commits = (await commitsResp.json()) as Array<{ sha?: string; commit?: { message?: string } }>;
         const first = commits[0];
@@ -220,14 +260,18 @@ export const GitHubUpdateChecker = {
         isNewer: false,
       };
     } catch (e) {
+      const timedOut = e instanceof Error && e.name === 'AbortError';
       return {
         repoSlug: clean,
         status: 'ERROR',
         tagName: '',
         versionCode: 0,
         htmlUrl: releasesPageUrl,
-        message: `Cannot reach GitHub (${e instanceof Error ? e.message : 'offline'}).`,
+        message: timedOut
+          ? 'GitHub update check timed out on slow network.'
+          : `Cannot reach GitHub (${e instanceof Error ? e.message : 'offline'}).`,
         isNewer: false,
+        retryAfterMs: TRANSIENT_ERROR_BACKOFF_MS,
       };
     }
   },

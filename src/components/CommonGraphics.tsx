@@ -60,13 +60,13 @@ export const GlowingEmeraldDateTime: React.FC<{ className?: string }> = ({ class
     <div
       aria-label={`${timeWithSecs}, ${dateFull}`}
       title={`${timeWithSecs} · ${dateFull}`}
-      className={`text-right leading-none select-none shrink-0 ${className}`}
+      className={`text-right leading-tight select-none shrink-0 ${className}`}
     >
-      <div className="emerald-store-glow font-mono font-extrabold tracking-tight text-[11px] sm:text-[13px] md:text-[14px] whitespace-nowrap">
+      <div className="font-mono tabular-nums font-bold tracking-tight text-[#E2E8F0] text-[11px] sm:text-xs whitespace-nowrap">
         <span className="hidden sm:inline">{timeWithSecs}</span>
         <span className="sm:hidden">{timeShort}</span>
       </div>
-      <div className="emerald-store-glow font-semibold tracking-tight text-[9px] sm:text-[10px] md:text-[11px] mt-0.5 whitespace-nowrap opacity-90">
+      <div className="font-medium text-[#94A3B8] text-[10px] whitespace-nowrap">
         <span className="hidden sm:inline">{dateFull}</span>
         <span className="sm:hidden">{dateShort}</span>
       </div>
@@ -81,7 +81,7 @@ export const StoreEmblem: React.FC<{ iconKey?: string | null; size?: number }> =
         src="/eternalblue_pos_icon.jpg"
         alt="Store emblem"
         style={{ width: size, height: size }}
-        className="rounded-[10px] object-cover border border-[#059669]/50 shrink-0"
+        className="rounded-xl object-cover border border-white/15 shrink-0"
       />
     );
   }
@@ -96,9 +96,9 @@ export const StoreEmblem: React.FC<{ iconKey?: string | null; size?: number }> =
   return (
     <div
       style={{ width: size, height: size }}
-      className="rounded-[10px] bg-[#059669]/20 border border-[#059669]/40 flex items-center justify-center shrink-0"
+      className="rounded-xl bg-[#059669]/20 border border-[#34D399]/30 flex items-center justify-center shrink-0"
     >
-      <Icon size={Math.round(size * 0.55)} className="text-[#34D399]" />
+      <Icon size={Math.round(size * 0.54)} className="text-[#34D399]" />
     </div>
   );
 };
@@ -106,43 +106,43 @@ export const StoreEmblem: React.FC<{ iconKey?: string | null; size?: number }> =
 export const ProductCategoryBadge: React.FC<{ category: string; size?: number }> = ({ category, size = 36 }) => {
   const c = category.toLowerCase();
   let Icon = Package;
-  let bg = 'bg-slate-100 border-slate-300/50';
-  let fg = 'text-[#64748B]';
+  let bg = 'bg-slate-100/90 border-slate-200';
+  let fg = 'text-[#475569]';
 
   if (c.includes('meat') || c.includes('frozen')) {
     Icon = Snowflake;
-    bg = 'bg-rose-50 border-rose-500/20';
+    bg = 'bg-rose-50 border-rose-200/80';
     fg = 'text-[#E11D48]';
   } else if (c.includes('rice') || c.includes('staple')) {
     Icon = Leaf;
-    bg = 'bg-amber-50 border-amber-500/20';
+    bg = 'bg-amber-50 border-amber-200/80';
     fg = 'text-[#D97706]';
   } else if (c.includes('canned') || c.includes('noodle')) {
     Icon = Utensils;
-    bg = 'bg-indigo-50 border-indigo-500/20';
+    bg = 'bg-indigo-50 border-indigo-200/80';
     fg = 'text-[#4F46E5]';
   } else if (c.includes('beverage') || c.includes('drink')) {
     Icon = Wine;
-    bg = 'bg-sky-50 border-sky-500/20';
-    fg = 'text-sky-600';
+    bg = 'bg-sky-50 border-sky-200/80';
+    fg = 'text-sky-700';
   } else if (c.includes('condiment')) {
     Icon = Droplets;
-    bg = 'bg-amber-50 border-amber-500/20';
+    bg = 'bg-amber-50 border-amber-200/80';
     fg = 'text-[#D97706]';
   } else if (c.includes('snack')) {
     Icon = Cookie;
-    bg = 'bg-rose-50 border-rose-500/20';
+    bg = 'bg-rose-50 border-rose-200/80';
     fg = 'text-[#E11D48]';
   } else if (c.includes('dairy')) {
     Icon = ShoppingCart;
-    bg = 'bg-[#ECFDF5] border-[#047857]/20';
+    bg = 'bg-[#ECFDF5] border-[#059669]/25';
     fg = 'text-[#047857]';
   }
 
   return (
     <div
       style={{ width: size, height: size }}
-      className={`${size <= 24 ? 'rounded-md' : 'rounded-[10px]'} border flex items-center justify-center shrink-0 ${bg}`}
+      className={`${size <= 24 ? 'rounded-md' : 'rounded-xl'} border flex items-center justify-center shrink-0 ${bg}`}
     >
       <Icon size={Math.round(size * 0.54)} className={fg} />
     </div>
@@ -164,15 +164,17 @@ export const KpiCard: React.FC<{
     <Tag
       type={interactive ? 'button' : undefined}
       onClick={onClick}
-      className={`text-left rounded-[14px] px-3 py-2.5 transition-colors ${
+      className={`text-left rounded-xl px-3.5 py-2.5 transition-all duration-150 ${
         active
-          ? 'bg-[#ECFDF5] border-[1.5px] border-[#059669]'
+          ? 'bg-[#ECFDF5]/70 border border-[#059669] ring-1 ring-[#059669]/25'
           : 'bg-white border border-[#E2E8F0]'
-      } ${interactive ? 'cursor-pointer hover:border-[#059669]/60' : ''} ${className}`}
+      } ${interactive ? 'cursor-pointer hover:border-[#059669]/50 active:scale-[0.98]' : ''} ${className}`}
     >
-      <div className="text-[10px] font-bold uppercase tracking-wide text-[#64748B] truncate">{title}</div>
-      <div className={`mt-0.5 text-[17px] font-extrabold font-mono truncate ${valueClass}`}>{value}</div>
-      {sub && <div className="text-[11px] text-[#64748B] truncate">{sub}</div>}
+      <div className="text-[11px] font-semibold text-[#64748B] truncate">{title}</div>
+      <div className={`mt-0.5 text-[18px] font-extrabold font-mono tabular-nums truncate ${valueClass}`}>
+        {value}
+      </div>
+      {sub && <div className="mt-0.5 text-[11px] text-[#64748B] truncate">{sub}</div>}
     </Tag>
   );
 };
@@ -195,31 +197,30 @@ export const QrBitmapCard: React.FC<{ qr: ResolvedQr; qrSize?: number }> = ({ qr
   }, [qr.qrPayload]);
 
   return (
-    <div className="w-full rounded-2xl bg-[#EEF2FF] border border-[#C7D2FE] p-3.5 flex flex-col items-center text-center">
-      <div className="flex items-center gap-1.5">
-        <span className="bg-[#4F46E5] text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
-          {qr.channelLabel}
-        </span>
+    <div className="w-full rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-4 flex flex-col items-center text-center">
+      <div className="flex items-center gap-2 text-xs font-bold">
+        <span className="text-[#4F46E5]">{qr.channelLabel}</span>
         {qr.isDynamicAmount && (
-          <span className="bg-[#ECFDF5] text-[#047857] text-[10px] font-bold px-2 py-0.5 rounded-md">
-            Exact Amount
-          </span>
+          <>
+            <span className="text-slate-300" aria-hidden="true">·</span>
+            <span className="text-[#047857]">Exact Amount</span>
+          </>
         )}
       </div>
-      <div className="mt-1.5 text-sm font-bold text-[#0F172A]">{qr.merchantName}</div>
+      <div className="mt-1 text-sm font-bold text-[#0F172A]">{qr.merchantName}</div>
       {qr.accountNumber && (
         <div className="text-xs font-mono text-[#64748B]">{qr.accountNumber}</div>
       )}
-      <div className="mt-2.5">
+      <div className="mt-3">
         {dataUrl ? (
           <img
             src={dataUrl}
             alt="Payment QR"
             style={{ width: qrSize, height: qrSize }}
-            className="rounded-xl bg-white p-1.5 mx-auto"
+            className="rounded-xl bg-white p-2 border border-[#E2E8F0] mx-auto"
           />
         ) : qr.mode === 'MANUAL' ? (
-          <div className="bg-white rounded-xl border border-[#C7D2FE] px-4 py-2.5">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] px-4 py-2.5">
             <div className="text-[11px] text-[#64748B]">Send via {qr.channelLabel}</div>
             <div className="font-mono font-extrabold text-base text-[#4F46E5]">{qr.accountNumber}</div>
           </div>
@@ -230,7 +231,7 @@ export const QrBitmapCard: React.FC<{ qr: ResolvedQr; qrSize?: number }> = ({ qr
         )}
       </div>
       {qr.amount > 0 && (
-        <div className="mt-2 text-lg font-extrabold font-mono text-[#047857]">
+        <div className="mt-2.5 text-lg font-extrabold font-mono text-[#047857]">
           {PosMath.formatPeso(qr.amount)}
         </div>
       )}
@@ -252,7 +253,7 @@ export const ToastHostOverlay: React.FC<{ toasts: ToastItem[] }> = ({ toasts }) 
         return (
           <div
             key={t.id}
-            className={`${bg} text-white text-xs font-semibold px-3.5 py-2.5 rounded-xl shadow-lg pointer-events-auto`}
+            className={`${bg} text-white text-xs font-semibold px-3.5 py-2.5 rounded-xl shadow-lg pointer-events-auto border border-white/10`}
           >
             {t.message}
           </div>

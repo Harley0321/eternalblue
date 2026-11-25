@@ -212,6 +212,93 @@ test('PosMath.computeCartTotals reconciles wholesale savings, SC/PWD 5% discount
   );
 });
 
+test('automatic wholesale applies by quantity without manual toggles and respects owner minimum quantities', () => {
+  const rice = makeProduct({
+    id: 'p-rice-auto',
+    capital: 45,
+    retailPrice: 60,
+    wholesalePrice: 54,
+    wholesaleMinQty: 5,
+  });
+  const sugar = makeProduct({
+    id: 'p-sugar-default',
+    capital: 50,
+    retailPrice: 70,
+    wholesalePrice: 62,
+    wholesaleMinQty: 0, // uses owner's StoreSettings.defaultWholesaleMinQty
+  });
+  const lossLeader = makeProduct({
+    id: 'p-loss-ws',
+    capital: 58,
+    retailPrice: 65,
+    wholesalePrice: 55, // below capital 58 -> blocked
+    wholesaleMinQty: 2,
+  });
+  const map = new Map([
+    [rice.id, rice],
+    [sugar.id, sugar],
+    [lossLeader.id, lossLeader],
+  ]);
+
+  const ownerSettings = { ...DEFAULT_STORE_SETTINGS, defaultWholesaleMinQty: 4 };
+
+  // Below threshold (qty 4 < 5): stays retail even if priceType says 'retail'
+  const lineBelow: CartLine = {
+    productId: rice.id,
+    name: rice.name,
+    unit: rice.unit,
+    retailPrice: rice.retailPrice,
+    wholesalePrice: rice.wholesalePrice,
+    wholesaleMinQty: rice.wholesaleMinQty,
+    priceType: 'retail',
+    qty: 4,
+  };
+  assert.equal(PosMath.isWholesaleLine(lineBelow, map, ownerSettings.defaultWholesaleMinQty), false);
+  assert.equal(PosMath.getLinePrice(lineBelow, map, ownerSettings.defaultWholesaleMinQty), 60);
+
+  // At threshold (qty 5 >= 5): automatically becomes wholesale even when priceType is 'retail'
+  const lineAt: CartLine = { ...lineBelow, qty: 5 };
+  assert.equal(PosMath.isWholesaleLine(lineAt, map, ownerSettings.defaultWholesaleMinQty), true);
+  assert.equal(PosMath.getLinePrice(lineAt, map, ownerSettings.defaultWholesaleMinQty), 54);
+
+  // Uses owner's defaultWholesaleMinQty (4) when product wholesaleMinQty is 0
+  const sugarBelow: CartLine = {
+    productId: sugar.id,
+    name: sugar.name,
+    unit: sugar.unit,
+    retailPrice: sugar.retailPrice,
+    wholesalePrice: sugar.wholesalePrice,
+    wholesaleMinQty: sugar.wholesaleMinQty,
+    priceType: 'retail',
+    qty: 3,
+  };
+  assert.equal(PosMath.isWholesaleLine(sugarBelow, map, ownerSettings.defaultWholesaleMinQty), false);
+  const sugarAt: CartLine = { ...sugarBelow, qty: 4 };
+  assert.equal(PosMath.isWholesaleLine(sugarAt, map, ownerSettings.defaultWholesaleMinQty), true);
+  assert.equal(PosMath.getLinePrice(sugarAt, map, ownerSettings.defaultWholesaleMinQty), 62);
+
+  // Below-capital wholesale price stays protected at retail
+  const lossLine: CartLine = {
+    productId: lossLeader.id,
+    name: lossLeader.name,
+    unit: lossLeader.unit,
+    retailPrice: lossLeader.retailPrice,
+    wholesalePrice: lossLeader.wholesalePrice,
+    wholesaleMinQty: lossLeader.wholesaleMinQty,
+    priceType: 'retail',
+    qty: 10,
+  };
+  assert.equal(PosMath.wholesaleBlock(lossLine, map, ownerSettings.defaultWholesaleMinQty), 'COST');
+  assert.equal(PosMath.getLinePrice(lossLine, map, ownerSettings.defaultWholesaleMinQty), 65);
+
+  const totals = PosMath.computeCartTotals([lineAt, sugarAt, lossLine], map, false, ownerSettings);
+  // Retail: 5*60 + 4*70 + 10*65 = 300 + 280 + 650 = 1230
+  // Savings: 5*(60-54) + 4*(70-62) + 0 = 30 + 32 = 62
+  assert.equal(totals.retailSubtotal, 1230);
+  assert.equal(totals.wholesaleSavings, 62);
+  assert.equal(totals.grandTotal, 1168);
+});
+
 test('PosMath.allocateSaleLineNetCents reconciles discounted receipts down to the exact centavo', () => {
   const rice = makeProduct({ id: 'p-1', name: 'Rice', scEligible: true });
   const chips = makeProduct({ id: 'p-2', name: 'Chips', category: 'Snacks & Biscuits', scEligible: false });

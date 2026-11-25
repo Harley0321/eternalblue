@@ -13,6 +13,18 @@ if (typeof window !== 'undefined' && !DeviceBridge.isAndroidHost() && 'serviceWo
     onNeedRefresh() {
       PwaUpdateManager.notifyAvailable(() => updateSW(true));
     },
+    onRegisteredSW(_swUrl, registration) {
+      PwaUpdateManager.setRegistration(registration);
+      if (!registration) return;
+      const tryUpdate = () => {
+        void PwaUpdateManager.checkForSwUpdate(false);
+      };
+      window.addEventListener('online', tryUpdate);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) tryUpdate();
+      });
+      window.setInterval(tryUpdate, 180_000);
+    },
     onOfflineReady() {
       // App shell cached locally on this device
     },

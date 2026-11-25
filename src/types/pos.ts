@@ -158,6 +158,7 @@ export interface StoreSettings {
   beep: boolean;
   vibrateOnScan?: boolean;
   scDiscountCap: number;
+  defaultWholesaleMinQty: number;
   receiptWidth: string;
   loyaltyPesoPerPoint: number;
   loyaltyPointValue: number;
@@ -191,6 +192,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   beep: true,
   vibrateOnScan: false,
   scDiscountCap: 125,
+  defaultWholesaleMinQty: 10,
   receiptWidth: '80mm',
   loyaltyPesoPerPoint: 50,
   loyaltyPointValue: 1,
@@ -376,4 +378,5 @@ export interface PosBackupPayload {
   stockLog: StockLogEntry[];
   cashiers: CashierAccount[];
   activeShift?: ActiveShiftState | null;
+  customCategories?: string[];
 }

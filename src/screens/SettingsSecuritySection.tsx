@@ -86,15 +86,15 @@ export const SettingsSecuritySection: React.FC = () => {
 
   return (
     <>
-      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-3.5 space-y-2.5">
+      <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-4 space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="font-extrabold text-[15px] text-[#0F172A]">Security Vault & Backups</h3>
-          <span className="px-2 py-0.5 rounded-md bg-[#ECFDF5] text-[#047857] text-[10px] font-extrabold font-mono">
+          <h3 className="font-extrabold text-[15px] text-[#0F172A]">Security Vault &amp; Backups</h3>
+          <span className="text-xs font-extrabold font-mono tabular-nums text-[#047857]">
             {state.deviceIdentity.shortCode}
           </span>
         </div>
 
-        <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-2.5 space-y-1">
+        <div className="rounded-xl bg-slate-50 p-3 space-y-1">
           <div className="flex items-center justify-between text-[11px] font-bold text-[#0F172A]">
             <span>Per-Device Data Isolation Active</span>
             <span className="text-[#059669]">No Cloud Sync</span>
@@ -114,7 +114,7 @@ export const SettingsSecuritySection: React.FC = () => {
           <button
             type="button"
             onClick={() => openPinModal('setPin')}
-            className="py-2 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-xs font-bold cursor-pointer"
+            className="min-h-[42px] py-2 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-xs font-bold cursor-pointer transition-colors"
           >
             {pinConfigured ? 'Change PIN' : 'Set Manager PIN'}
           </button>
@@ -122,7 +122,7 @@ export const SettingsSecuritySection: React.FC = () => {
             <button
               type="button"
               onClick={lockSettingsNow}
-              className="py-2 rounded-xl border border-[#E2E8F0] text-xs font-semibold text-[#0F172A] hover:bg-slate-50 cursor-pointer"
+              className="min-h-[42px] py-2 rounded-xl border border-[#E2E8F0] text-xs font-semibold text-[#0F172A] hover:bg-slate-50 cursor-pointer transition-colors"
             >
               Lock Settings
             </button>
@@ -138,14 +138,14 @@ export const SettingsSecuritySection: React.FC = () => {
               DeviceBridge.downloadTextFile(`eternalblue_backup_${safeTag}.json`, json, 'application/json');
               toast('Backup JSON downloaded');
             }}
-            className="py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
+            className="min-h-[42px] py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer transition-colors"
           >
             Export Backup
           </button>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="py-2 rounded-xl border border-[#E2E8F0] text-xs font-semibold text-[#0F172A] hover:bg-slate-50 cursor-pointer"
+            className="min-h-[42px] py-2 rounded-xl border border-[#E2E8F0] text-xs font-semibold text-[#0F172A] hover:bg-slate-50 cursor-pointer transition-colors"
           >
             Restore Backup
           </button>
@@ -158,7 +158,7 @@ export const SettingsSecuritySection: React.FC = () => {
           />
         </div>
 
-        <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-2.5 space-y-2">
+        <div className="rounded-xl bg-slate-50 p-3 space-y-2">
           <div className="font-bold text-[11px] text-[#0F172A]">Automatic Safety Copies</div>
           <p className="text-[10px] leading-relaxed text-[#64748B]">
             Kept in this browser separately from the POS database: latest copy plus up to three daily restore points. This does not protect against losing or clearing the device.
@@ -177,13 +177,13 @@ export const SettingsSecuritySection: React.FC = () => {
           {autoBackups.map((backup) => (
             <div
               key={backup.id}
-              className="flex items-center justify-between gap-2 border-t border-[#E2E8F0] pt-1.5"
+              className="flex items-center justify-between gap-2 border-t border-[#E2E8F0] pt-2"
             >
               <div className="min-w-0">
                 <div className="text-[10px] font-bold text-[#0F172A]">
                   {backup.kind === 'latest' ? 'Latest copy' : backup.dayKey}
                 </div>
-                <div className="text-[10px] text-[#64748B]">
+                <div className="text-[10px] text-[#64748B] tabular-nums">
                   {backup.productCount} SKUs · {backup.saleCount} sales · {new Date(backup.createdAt).toLocaleString()}
                 </div>
               </div>
@@ -191,7 +191,7 @@ export const SettingsSecuritySection: React.FC = () => {
                 type="button"
                 aria-label={`Restore ${backup.kind === 'latest' ? 'latest' : backup.dayKey} automatic copy`}
                 onClick={() => setRestoreBackup(backup)}
-                className="shrink-0 rounded-lg border border-[#E2E8F0] bg-white px-2 py-1 text-[10px] font-bold text-[#334155] hover:bg-slate-50 cursor-pointer"
+                className="shrink-0 min-h-[32px] rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1 text-[10px] font-bold text-[#334155] hover:bg-slate-100 cursor-pointer"
               >
                 Restore
               </button>
@@ -202,12 +202,12 @@ export const SettingsSecuritySection: React.FC = () => {
         <button
           type="button"
           onClick={() => setConfirmReset(true)}
-          className="w-full py-2 rounded-xl border border-[#E2E8F0] text-[#E11D48] text-xs font-semibold hover:bg-rose-50 cursor-pointer"
+          className="w-full min-h-[42px] py-2 rounded-xl border border-[#E2E8F0] text-[#E11D48] text-xs font-semibold hover:bg-rose-50 cursor-pointer transition-colors"
         >
           Factory Reset
         </button>
 
-        <div className="text-[11px] text-[#64748B]">
+        <div className="text-[11px] text-[#64748B] tabular-nums">
           Security Audit Entries: {state.securityLog.length} · Terminal ID: {state.deviceIdentity.shortCode}
         </div>
       </div>

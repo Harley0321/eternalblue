@@ -247,6 +247,7 @@ export const BarcodeScannerModal: React.FC = () => {
   useEffect(() => {
     if (!state.scannerOpen) {
       stopStream();
+      setManualCode('');
       setCameraError(null);
       setContinuousScan(false);
       setBatchScanCount(0);
@@ -516,10 +517,19 @@ export const BarcodeScannerModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3 shadow-xl">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="font-extrabold text-lg text-[#0F172A]">Barcode Scanner</h3>
+          <div>
+            <h3 className="font-extrabold text-lg text-[#0F172A]">
+              {state.scannerTarget === 'productForm' ? 'Scan Product Barcode' : 'Barcode Scanner'}
+            </h3>
+            {state.scannerTarget === 'productForm' && (
+              <p className="text-[11px] text-[#64748B]">
+                Scan or enter the barcode to fill the product form
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-1.5">
             {torchSupported && cameraActive && (
               <button
@@ -651,7 +661,7 @@ export const BarcodeScannerModal: React.FC = () => {
               onClick={submitManual}
               className="py-2 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:bg-slate-300 text-white text-xs font-bold cursor-pointer disabled:cursor-not-allowed"
             >
-              Lookup Barcode
+              {state.scannerTarget === 'productForm' ? 'Use Barcode' : 'Lookup Barcode'}
             </button>
           </div>
         </div>

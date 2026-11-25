@@ -15,25 +15,27 @@ export const OperationsScreen: React.FC = () => {
   const { state, setOpsSubTab } = usePos();
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="bg-white px-3 py-2 flex items-center gap-2 overflow-x-auto border-b border-[#E2E8F0] shrink-0">
-        {SUBTABS.map((tab) => {
-          const active = state.opsSubTab === tab;
-          return (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setOpsSubTab(tab)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold border whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
-                active
-                  ? 'bg-[#ECFDF5] border-[#059669] text-[#047857]'
-                  : 'bg-white border-[#E2E8F0] text-[#64748B] hover:bg-slate-50'
-              }`}
-            >
-              {OPS_SUBTAB_LABELS[tab]}
-            </button>
-          );
-        })}
+    <div className="flex flex-col h-full overflow-hidden bg-[#F8FAFC]">
+      <div className="bg-white border-b border-[#E2E8F0] shrink-0">
+        <div className="max-w-5xl mx-auto px-3 sm:px-5 py-2 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          {SUBTABS.map((tab) => {
+            const active = state.opsSubTab === tab;
+            return (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setOpsSubTab(tab)}
+                className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+                  active
+                    ? 'bg-[#0F172A] text-white shadow-xs'
+                    : 'bg-slate-100/80 text-[#64748B] hover:bg-slate-200/70 hover:text-[#0F172A]'
+                }`}
+              >
+                {OPS_SUBTAB_LABELS[tab]}
+              </button>
+            );
+          })}
+        </div>
       </div>
       <div className="flex-1 min-h-0">
         {state.opsSubTab === 'UTANG' && <UtangSubTab />}

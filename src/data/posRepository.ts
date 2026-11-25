@@ -1,4 +1,5 @@
 import { loadOrCreateDeviceIdentity } from '../domain/deviceIdentity';
+import { createPangasinanSeedProducts } from './pangasinanSeedProducts';
 import {
   DEFAULT_STORE_SETTINGS,
   type ActiveCartSnapshot,
@@ -96,8 +97,11 @@ function loadListResilient<T>(key: string, seedProvider?: () => T[]): T[] {
 export const PosRepository = {
   loadDeviceIdentity: (): DeviceIdentityInfo => loadOrCreateDeviceIdentity(),
 
-  loadProducts: (): Product[] => loadListResilient('products'),
+  loadProducts: (): Product[] => loadListResilient('products', createPangasinanSeedProducts),
   saveProducts: (list: Product[]) => dbPutString('products', JSON.stringify(list)),
+
+  loadCustomCategories: (): string[] => loadListResilient('categories'),
+  saveCustomCategories: (list: string[]) => dbPutString('categories', JSON.stringify(list)),
 
   loadSales: (): SaleRecord[] => loadListResilient('sales'),
   saveSales: (list: SaleRecord[]) => dbPutString('sales', JSON.stringify(list)),
@@ -148,9 +152,17 @@ export const PosRepository = {
       try {
         const decoded = JSON.parse(raw) as Partial<StoreSettings>;
         const merged = { ...DEFAULT_STORE_SETTINGS, ...decoded };
+        const safeMinWs =
+          merged.defaultWholesaleMinQty > 0
+            ? merged.defaultWholesaleMinQty
+            : DEFAULT_STORE_SETTINGS.defaultWholesaleMinQty;
         const safeName = merged.storeName.trim() || pinned || 'EternalBlue Mart';
         if (!pinned && safeName !== 'EternalBlue Mart') PosRepository.savePinnedStoreName(safeName);
-        return safeName !== merged.storeName ? { ...merged, storeName: safeName } : merged;
+        return {
+          ...merged,
+          storeName: safeName,
+          defaultWholesaleMinQty: safeMinWs,
+        };
       } catch {
         // fallback
       }

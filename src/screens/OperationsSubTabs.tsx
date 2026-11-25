@@ -25,8 +25,9 @@ export const UtangSubTab: React.FC = () => {
   );
 
   return (
-    <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
-      <div className="grid grid-cols-2 gap-2">
+    <div className="p-3 sm:p-5 overflow-y-auto h-full bg-[#F8FAFC]">
+      <div className="max-w-5xl mx-auto space-y-3">
+      <div className="grid grid-cols-2 gap-2.5">
         <KpiCard
           title="Total Utang"
           value={PosMath.formatPeso(totalReceivable)}
@@ -60,6 +61,8 @@ export const UtangSubTab: React.FC = () => {
           />
           <input
             type="number"
+            min="0"
+            step="0.01"
             value={limit}
             onChange={(e) => setLimit(e.target.value)}
             placeholder="Credit Limit (₱)"
@@ -70,15 +73,18 @@ export const UtangSubTab: React.FC = () => {
           type="button"
           disabled={!name.trim()}
           onClick={() => {
-            const parsedLimit = parseFloat(limit);
-            addSukiCustomer(
-              name,
-              phone,
-              '',
-              Number.isFinite(parsedLimit) && parsedLimit >= 0 ? PosMath.round2(parsedLimit) : 2000
-            );
-            setName('');
-            setPhone('');
+            const trimmedLimit = limit.trim();
+            const parsedLimit = trimmedLimit === '' ? 2000 : parseFloat(trimmedLimit);
+            if (!Number.isFinite(parsedLimit) || parsedLimit < 0) {
+              toast('Credit limit must be ₱0.00 or higher', 'WARNING');
+              return;
+            }
+            const ok = addSukiCustomer(name, phone, '', PosMath.round2(parsedLimit));
+            if (ok) {
+              setName('');
+              setPhone('');
+              setLimit('2000');
+            }
           }}
           className="w-full py-2.5 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:bg-slate-300 text-white text-xs font-bold cursor-pointer disabled:cursor-not-allowed"
         >
@@ -133,6 +139,8 @@ export const UtangSubTab: React.FC = () => {
             <div className="flex items-center gap-2 pt-1">
               <input
                 type="number"
+                min="0.01"
+                step="0.01"
                 value={payAmount}
                 onChange={(e) => setPayAmount(e.target.value)}
                 placeholder="Bayad Amount (₱)"
@@ -141,8 +149,11 @@ export const UtangSubTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  recordUtangPayment(c.id, parseFloat(payAmount) || 0, 'Cash', 'Bayad Utang');
-                  setPayingCustomer(null);
+                  const ok = recordUtangPayment(c.id, parseFloat(payAmount) || 0, 'Cash', 'Bayad Utang');
+                  if (ok) {
+                    setPayingCustomer(null);
+                    setPayAmount('');
+                  }
                 }}
                 className="px-4 py-2 rounded-xl bg-[#059669] text-white text-xs font-bold cursor-pointer"
               >
@@ -152,6 +163,7 @@ export const UtangSubTab: React.FC = () => {
           )}
         </div>
       ))}
+      </div>
     </div>
   );
 };
@@ -168,7 +180,8 @@ export const RepackSubTab: React.FC = () => {
   const safeTargetIdx = state.products.length > 0 ? targetIdx % state.products.length : 0;
 
   return (
-    <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
+    <div className="p-3 sm:p-5 overflow-y-auto h-full bg-[#F8FAFC]">
+      <div className="max-w-5xl mx-auto space-y-3">
       <h3 className="font-extrabold text-sm text-[#0F172A]">Active Bulk → Tingi Repack Rules</h3>
 
       {state.repackRules.map((r) => {
@@ -187,6 +200,8 @@ export const RepackSubTab: React.FC = () => {
             <div className="flex items-center gap-2 pt-1">
               <input
                 type="number"
+                min="0.001"
+                step="any"
                 value={unpackQty}
                 onChange={(e) => setUnpackQty(e.target.value)}
                 placeholder="Qty to Unpack"
@@ -196,7 +211,8 @@ export const RepackSubTab: React.FC = () => {
                 type="button"
                 onClick={() => {
                   const parsed = parseFloat(unpackQty);
-                  runRepackRule(r, Number.isFinite(parsed) ? parsed : 0);
+                  const ok = runRepackRule(r, Number.isFinite(parsed) ? parsed : 0);
+                  if (ok) setUnpackQty('1');
                 }}
                 className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
               >
@@ -233,9 +249,16 @@ export const RepackSubTab: React.FC = () => {
               Tingi: {state.products[safeTargetIdx].name}
             </button>
           </div>
+          {state.products[safeMasterIdx].id === state.products[safeTargetIdx].id && (
+            <p className="text-[11px] font-semibold text-[#D97706]">
+              Bulk and Tingi must be different products.
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <input
               type="number"
+              min="0.001"
+              step="any"
               value={yieldStr}
               onChange={(e) => setYieldStr(e.target.value)}
               placeholder="Yield Qty per Bulk"
@@ -245,13 +268,15 @@ export const RepackSubTab: React.FC = () => {
               type="button"
               onClick={() => {
                 const parsedYield = parseFloat(yieldStr);
-                addRepackRule(
+                const ok = addRepackRule(
                   ruleName,
                   state.products[safeMasterIdx].id,
                   state.products[safeTargetIdx].id,
                   Number.isFinite(parsedYield) ? parsedYield : 0
                 );
-                setRuleName('');
+                if (ok) {
+                  setRuleName('');
+                }
               }}
               className="px-4 py-2 rounded-xl bg-[#4F46E5] text-white text-xs font-bold cursor-pointer"
             >
@@ -260,6 +285,7 @@ export const RepackSubTab: React.FC = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };
@@ -310,11 +336,16 @@ export const ShiftSubTab: React.FC = () => {
     [denomCounts]
   );
 
+  const countedCashRaw = parseFloat(countedCashInput);
+  const hasCountedInput = countedCashInput.trim() !== '';
+  const isCountedCashValid = hasCountedInput
+    ? Number.isFinite(countedCashRaw) && countedCashRaw >= 0
+    : showDenoms;
+
   const countedCash = useMemo(() => {
-    const parsed = parseFloat(countedCashInput);
-    if (Number.isFinite(parsed) && parsed >= 0) return PosMath.round2(parsed);
+    if (Number.isFinite(countedCashRaw) && countedCashRaw >= 0) return PosMath.round2(countedCashRaw);
     return showDenoms ? denomTotal : 0;
-  }, [countedCashInput, denomTotal, showDenoms]);
+  }, [countedCashRaw, denomTotal, showDenoms]);
 
   const varianceCents = useMemo(
     () => PosMath.toCents(countedCash) - PosMath.toCents(ledger.expectedDrawerCash),
@@ -382,8 +413,9 @@ export const ShiftSubTab: React.FC = () => {
   const isBlindMasked = blindOpen && !blindSubmitted;
 
   return (
-    <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
-      <div className="grid grid-cols-2 gap-2">
+    <div className="p-3 sm:p-5 overflow-y-auto h-full bg-[#F8FAFC]">
+      <div className="max-w-5xl mx-auto space-y-3">
+      <div className="grid grid-cols-2 gap-2.5">
         <KpiCard
           title={isBlindMasked ? 'Expected Drawer (Blind)' : 'Expected Drawer'}
           value={isBlindMasked ? '₱ ••••••' : PosMath.formatPeso(ledger.expectedDrawerCash)}
@@ -458,6 +490,11 @@ export const ShiftSubTab: React.FC = () => {
                     placeholder="Enter actual counted drawer cash (₱)"
                     className="w-full px-3 py-2 text-sm font-mono font-bold rounded-xl border border-[#E2E8F0] focus:outline-none focus:border-[#4F46E5]"
                   />
+                  {hasCountedInput && !isCountedCashValid && (
+                    <p className="text-[11px] font-semibold text-[#E11D48]">
+                      Counted cash cannot be negative.
+                    </p>
+                  )}
                 </div>
 
                 {showDenoms && (
@@ -517,7 +554,7 @@ export const ShiftSubTab: React.FC = () => {
 
                 <button
                   type="button"
-                  disabled={!countedCashInput.trim() && !showDenoms}
+                  disabled={!isCountedCashValid}
                   onClick={() => {
                     setBlindSubmitted(true);
                     setBlindFinalized(false);
@@ -859,6 +896,8 @@ export const ShiftSubTab: React.FC = () => {
         <div className="grid grid-cols-2 gap-2">
           <input
             type="number"
+            min="0.01"
+            step="0.01"
             value={evAmt}
             onChange={(e) => setEvAmt(e.target.value)}
             placeholder="Amount (₱)"
@@ -875,9 +914,11 @@ export const ShiftSubTab: React.FC = () => {
         <button
           type="button"
           onClick={() => {
-            recordDrawerEvent(evType, evType.toUpperCase(), parseFloat(evAmt) || 0, evNote);
-            setEvAmt('');
-            setEvNote('');
+            const ok = recordDrawerEvent(evType, evType.toUpperCase(), parseFloat(evAmt) || 0, evNote);
+            if (ok) {
+              setEvAmt('');
+              setEvNote('');
+            }
           }}
           className="w-full py-2.5 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
         >
@@ -900,6 +941,7 @@ export const ShiftSubTab: React.FC = () => {
           <div className="font-mono font-extrabold text-sm">{PosMath.formatPeso(ev.amount)}</div>
         </div>
       ))}
+      </div>
     </div>
   );
 };
@@ -918,7 +960,8 @@ export const ServicesSubTab: React.FC = () => {
   );
 
   return (
-    <div className="p-3 space-y-2.5 overflow-y-auto h-full bg-[#F4F6F8]">
+    <div className="p-3 sm:p-5 overflow-y-auto h-full bg-[#F8FAFC]">
+      <div className="max-w-5xl mx-auto space-y-3">
       <KpiCard
         title="E-Load & Cash-In/Out Fee Income"
         value={PosMath.formatPeso(totalFees)}
@@ -953,6 +996,8 @@ export const ServicesSubTab: React.FC = () => {
         <div className="grid grid-cols-2 gap-2">
           <input
             type="number"
+            min="0.01"
+            step="0.01"
             value={amount}
             onChange={(e) => {
               const v = e.target.value;
@@ -965,6 +1010,8 @@ export const ServicesSubTab: React.FC = () => {
           />
           <input
             type="number"
+            min="0"
+            step="0.01"
             value={fee}
             onChange={(e) => setFee(e.target.value)}
             placeholder="Tubó / Fee (₱)"
@@ -990,11 +1037,20 @@ export const ServicesSubTab: React.FC = () => {
         <button
           type="button"
           onClick={() => {
-            recordDigitalService(kind, parseFloat(amount) || 0, parseFloat(fee) || 0, phone, ref);
-            setAmount('');
-            setFee('');
-            setPhone('');
-            setRef('');
+            const parsedFee = fee.trim() === '' ? 0 : parseFloat(fee);
+            const ok = recordDigitalService(
+              kind,
+              parseFloat(amount) || 0,
+              Number.isFinite(parsedFee) ? parsedFee : -1,
+              phone,
+              ref
+            );
+            if (ok) {
+              setAmount('');
+              setFee('');
+              setPhone('');
+              setRef('');
+            }
           }}
           className="w-full py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-xs font-bold cursor-pointer"
         >
@@ -1019,6 +1075,7 @@ export const ServicesSubTab: React.FC = () => {
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 };
@@ -1048,7 +1105,8 @@ export const PrintingSubTab: React.FC = () => {
   };
 
   return (
-    <div className="p-3 bg-[#F4F6F8] h-full">
+    <div className="p-3 sm:p-5 overflow-y-auto h-full bg-[#F8FAFC]">
+      <div className="max-w-5xl mx-auto">
       <div className="bg-white rounded-[14px] border border-[#E2E8F0] p-4 space-y-3">
         <h3 className="font-extrabold text-[15px] text-[#0F172A]">Receipt & Barcode Label Utilities</h3>
         <p className="text-xs text-[#64748B]">
@@ -1077,6 +1135,7 @@ export const PrintingSubTab: React.FC = () => {
         >
           Export Shelf Price Labels CSV
         </button>
+      </div>
       </div>
     </div>
   );

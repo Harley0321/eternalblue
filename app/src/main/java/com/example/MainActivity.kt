@@ -145,17 +145,16 @@ class MainActivity : ComponentActivity() {
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             useWideViewPort = true
             loadWithOverviewMode = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                safeBrowsingEnabled = true
+            }
         }
 
         view.addJavascriptInterface(AndroidPosBridge(), "AndroidPosBridge")
 
         view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             if (url.startsWith("https://") || url.startsWith("http://")) {
-                if (url.lowercase().contains(".apk")) {
-                    enqueueSystemDownload(url, userAgent, contentDisposition, mimeType)
-                } else {
-                    enqueueSystemDownload(url, userAgent, contentDisposition, mimeType)
-                }
+                enqueueSystemDownload(url, userAgent, contentDisposition, mimeType)
             } else {
                 openExternalUrl(url)
             }
@@ -595,6 +594,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun isTrustedUpdateHost(host: String?): Boolean {
+        if (host.isNullOrBlank()) return false
+        return host.equals("github.com", ignoreCase = true) ||
+            host.equals("release-assets.githubusercontent.com", ignoreCase = true) ||
+            host.equals("objects.githubusercontent.com", ignoreCase = true)
+    }
+
     private fun openFollowingRedirects(startUrl: String): HttpURLConnection {
         var current = startUrl
         for (hop in 0 until 6) {
@@ -602,8 +608,7 @@ class MainActivity : ComponentActivity() {
             if (!url.protocol.equals("https", ignoreCase = true) ||
                 (url.port != -1 && url.port != 443) ||
                 url.userInfo != null ||
-                !(url.host.equals("github.com", ignoreCase = true) ||
-                    url.host.equals("release-assets.githubusercontent.com", ignoreCase = true))
+                !isTrustedUpdateHost(url.host)
             ) {
                 throw IOException("Blocked untrusted update redirect.")
             }
@@ -620,8 +625,9 @@ class MainActivity : ComponentActivity() {
                 if (loc.isNullOrBlank()) throw IOException("Redirect without Location header.")
                 val redirect = URL(url, loc)
                 if (!redirect.protocol.equals("https", ignoreCase = true) ||
-                    !(redirect.host.equals("github.com", ignoreCase = true) ||
-                        redirect.host.equals("release-assets.githubusercontent.com", ignoreCase = true))
+                    (redirect.port != -1 && redirect.port != 443) ||
+                    redirect.userInfo != null ||
+                    !isTrustedUpdateHost(redirect.host)
                 ) {
                     throw IOException("Blocked untrusted update redirect.")
                 }
