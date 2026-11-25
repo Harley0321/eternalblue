@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Download, ExternalLink, Lock, RefreshCw, ShieldCheck } from 'lucide-react';
 import { GlowingEmeraldStoreName, StoreEmblem } from '../components/CommonGraphics';
 import { PWAInstallButton } from '../components/PWAInstallButton';
+import { isIncompatibleApkError } from '../domain/autoUpdatePolicy';
 import { PosMath } from '../domain/posMath';
 import { isSafeHttpUrl } from '../domain/posValidation';
 import { DeviceBridge } from '../hardware/deviceBridge';
@@ -459,6 +460,9 @@ export const SettingsScreen: React.FC = () => {
 
                 <div className="text-xs font-mono tabular-nums text-[#64748B]">
                   Installed: v{state.installedVersion.versionName} (Build {state.installedVersion.versionCode})
+                  {state.installedVersion.certFingerprint
+                    ? ` · Key ${state.installedVersion.certFingerprint}`
+                    : ''}
                 </div>
 
                 <div className="rounded-xl bg-slate-50 p-3 flex items-center justify-between gap-3">
@@ -533,6 +537,18 @@ export const SettingsScreen: React.FC = () => {
                         style={{ width: `${Math.max(4, Math.min(100, state.updateProgress.progress))}%` }}
                       />
                     </div>
+                    {DeviceBridge.isAndroidHost() &&
+                      state.updateProgress.status === 'ERROR' &&
+                      isIncompatibleApkError(state.updateProgress.message) && (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-900 space-y-1">
+                          <div className="font-bold">How to switch to the GitHub Release build:</div>
+                          <ol className="list-decimal list-inside space-y-0.5 leading-relaxed">
+                            <li>Export a JSON backup in Backup &amp; Restore so no store data is lost.</li>
+                            <li>Download the APK below, uninstall this app, then install the downloaded APK.</li>
+                            <li>Restore your JSON backup after opening the newly installed release.</li>
+                          </ol>
+                        </div>
+                      )}
                     {DeviceBridge.isAndroidHost() &&
                       state.updateProgress.status === 'ERROR' &&
                       safeApkUrl && (

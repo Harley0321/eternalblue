@@ -134,14 +134,26 @@ export const DeviceBridge = {
     return DeviceBridge.isMobileOrTablet() && typeof navigator.vibrate === 'function';
   },
 
-  getInstalledVersionInfo(): { versionName: string; versionCode: number } {
+  getInstalledVersionInfo(): {
+    versionName: string;
+    versionCode: number;
+    certFingerprint?: string;
+    packageId?: string;
+  } {
     try {
       const raw = window.AndroidPosBridge?.getInstalledVersionInfo?.();
       if (raw) {
-        const parsed = JSON.parse(raw) as { versionName?: string; versionCode?: number };
+        const parsed = JSON.parse(raw) as {
+          versionName?: string;
+          versionCode?: number;
+          certFingerprint?: string;
+          packageId?: string;
+        };
         return {
           versionName: parsed.versionName || PosMath.APP_VERSION,
           versionCode: Number(parsed.versionCode) || PosMath.BUILD_CODE,
+          certFingerprint: parsed.certFingerprint,
+          packageId: parsed.packageId,
         };
       }
     } catch {

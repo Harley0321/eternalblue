@@ -121,7 +121,12 @@ export interface PosUiState {
   updateInfo: ReleaseInfo | null;
   updateCheckedAt: string | null;
   updateProgress: UpdateProgressEvent | null;
-  installedVersion: { versionName: string; versionCode: number };
+  installedVersion: {
+    versionName: string;
+    versionCode: number;
+    certFingerprint?: string;
+    packageId?: string;
+  };
   toasts: ToastItem[];
 }
 

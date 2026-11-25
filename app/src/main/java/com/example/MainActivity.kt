@@ -740,27 +740,26 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        @Suppress("DEPRECATION")
         @JavascriptInterface
         fun getInstalledVersionInfo(): String {
             return try {
-                val pInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+                val sigFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
                 } else {
-                    @Suppress("DEPRECATION")
-                    packageManager.getPackageInfo(packageName, 0)
+                    PackageManager.GET_SIGNATURES
                 }
-                val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    pInfo.longVersionCode
-                } else {
-                    @Suppress("DEPRECATION")
-                    pInfo.versionCode.toLong()
-                }
+                val pInfo = getInstalledPackageInfo(sigFlags)
+                val vCode = packageVersionCode(pInfo)
+                val certFp = shortSignerFingerprint(packageSignerSet(pInfo))
                 JSONObject().apply {
                     put("versionName", pInfo.versionName ?: "2.3.18")
                     put("versionCode", vCode)
+                    put("certFingerprint", certFp)
+                    put("packageId", packageName)
                 }.toString()
             } catch (_: Exception) {
-                """{"versionName":"2.3.18","versionCode":3}"""
+                """{"versionName":"2.3.18","versionCode":18}"""
             }
         }
 

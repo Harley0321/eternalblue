@@ -10,7 +10,7 @@ android {
         applicationId = "com.aistudio.eternalbluepos.kxmpzq"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
+        versionCode = 18
         versionName = "2.3.18"
     }
 
