@@ -454,15 +454,16 @@ class MainActivity : ComponentActivity() {
                     tempFile.delete()
                     throw IOException("Checksum mismatch. File may be corrupted.")
                 }
-                if (!isTrustedUpdateApk(tempFile)) {
-                    tempFile.delete()
-                    throw IOException("The APK package or signing certificate does not match this app.")
-                }
-
                 if (targetFile.exists()) targetFile.delete()
                 if (!tempFile.renameTo(targetFile)) {
                     tempFile.copyTo(targetFile, overwrite = true)
                     tempFile.delete()
+                }
+
+                val verifyError = verifyUpdateApk(targetFile)
+                if (verifyError != null) {
+                    targetFile.delete()
+                    throw IOException(verifyError)
                 }
 
                 runOnUiThread {
@@ -540,21 +541,42 @@ class MainActivity : ComponentActivity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun isTrustedUpdateApk(apkFile: File): Boolean {
+    private fun verifyUpdateApk(apkFile: File): String? {
         val signatureFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            PackageManager.GET_SIGNING_CERTIFICATES
+            PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
         } else {
             PackageManager.GET_SIGNATURES
         }
         val archiveInfo = getPackageInfoForArchive(apkFile.absolutePath, signatureFlag)
-            ?: return false
-        if (archiveInfo.packageName != packageName) return false
+            ?: return "Downloaded APK file could not be read by Android PackageManager."
+
+        if (archiveInfo.packageName != packageName) {
+            return "Package ID mismatch: downloaded '${archiveInfo.packageName}' does not match installed '$packageName'. Export a JSON backup in Settings, uninstall this app, and install the release APK from GitHub."
+        }
 
         val installedInfo = getInstalledPackageInfo(signatureFlag)
-        if (packageVersionCode(archiveInfo) < packageVersionCode(installedInfo)) return false
+        val archiveCode = packageVersionCode(archiveInfo)
+        val installedCode = packageVersionCode(installedInfo)
+        if (archiveCode < installedCode) {
+            return "Downloaded APK build ($archiveCode) is older than installed build ($installedCode)."
+        }
 
         val archiveSigners = packageSignerSet(archiveInfo)
-        return archiveSigners.isNotEmpty() && archiveSigners == packageSignerSet(installedInfo)
+        if (archiveSigners.isEmpty()) {
+            return "Downloaded APK has no readable signing certificate."
+        }
+
+        val installedSigners = packageSignerSet(installedInfo)
+        val archiveHistory = packageSignerHistorySet(archiveInfo)
+        val signersMatch = archiveSigners == installedSigners ||
+            (installedSigners.isNotEmpty() && archiveHistory.containsAll(installedSigners))
+
+        if (!signersMatch) {
+            val installedFp = shortSignerFingerprint(installedSigners)
+            val archiveFp = shortSignerFingerprint(archiveSigners)
+            return "Signing certificate mismatch (installed $installedFp vs APK $archiveFp). Android cannot update across different signing keys (e.g. debug vs release). Export a JSON backup in Settings, uninstall this build, then install the APK from GitHub Releases."
+        }
+        return null
     }
 
     @Suppress("DEPRECATION")
@@ -578,11 +600,33 @@ class MainActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     private fun packageSignerSet(info: PackageInfo): Set<String> {
         val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            info.signingInfo?.apkContentsSigners
+            val signingInfo = info.signingInfo
+            val modern = signingInfo?.apkContentsSigners?.takeIf { it.isNotEmpty() }
+                ?: signingInfo?.signingCertificateHistory?.takeIf { it.isNotEmpty() }
+            modern ?: info.signatures
         } else {
             info.signatures
         } ?: return emptySet()
         return signatures.map { Base64.encodeToString(it.toByteArray(), Base64.NO_WRAP) }.toSet()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun packageSignerHistorySet(info: PackageInfo): Set<String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return packageSignerSet(info)
+        val history = info.signingInfo?.signingCertificateHistory
+            ?: return packageSignerSet(info)
+        return history.map { Base64.encodeToString(it.toByteArray(), Base64.NO_WRAP) }.toSet()
+    }
+
+    private fun shortSignerFingerprint(signers: Set<String>): String {
+        val first = signers.firstOrNull() ?: return "none"
+        return try {
+            val raw = Base64.decode(first, Base64.NO_WRAP)
+            val hash = MessageDigest.getInstance("SHA-256").digest(raw)
+            hash.take(4).joinToString("") { "%02X".format(it) }
+        } catch (_: Exception) {
+            "unknown"
+        }
     }
 
     @Suppress("DEPRECATION")

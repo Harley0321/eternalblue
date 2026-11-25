@@ -520,10 +520,10 @@ export const SettingsScreen: React.FC = () => {
                 )}
 
                 {state.updateProgress && (
-                  <div className="rounded-xl bg-slate-50 p-3 space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-[#0F172A]">
-                      <span>{state.updateProgress.message}</span>
-                      <span className="font-mono tabular-nums">{state.updateProgress.progress}%</span>
+                  <div className="rounded-xl bg-slate-50 p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2 text-[11px] font-semibold text-[#0F172A]">
+                      <span className="leading-relaxed break-words">{state.updateProgress.message}</span>
+                      <span className="font-mono tabular-nums shrink-0">{state.updateProgress.progress}%</span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
                       <div
@@ -533,6 +533,18 @@ export const SettingsScreen: React.FC = () => {
                         style={{ width: `${Math.max(4, Math.min(100, state.updateProgress.progress))}%` }}
                       />
                     </div>
+                    {DeviceBridge.isAndroidHost() &&
+                      state.updateProgress.status === 'ERROR' &&
+                      safeApkUrl && (
+                        <button
+                          type="button"
+                          onClick={() => DeviceBridge.openExternalUrl(safeApkUrl)}
+                          className="w-full min-h-[38px] px-3 py-2 rounded-lg border border-[#E2E8F0] bg-white hover:bg-slate-100 text-[#0F172A] text-[11px] font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <ExternalLink size={13} />
+                          <span>Download APK in Browser (Manual Reinstall)</span>
+                        </button>
+                      )}
                   </div>
                 )}
 

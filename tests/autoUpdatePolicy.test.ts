@@ -7,6 +7,7 @@ import {
   computeIdleGraceDelayMs,
   evaluatePwaAutoApply,
   isElementInteractiveInput,
+  isIncompatibleApkError,
   shouldAutoStartApkUpdate,
   shouldCheckUpdatesOnEvent,
 } from '../src/domain/autoUpdatePolicy.ts';
@@ -286,3 +287,25 @@ test('GitHubUpdateChecker compares semantic versions and normalizes repo slugs',
   assert.equal(GitHubUpdateChecker.isVersionNewer('v2.3.17', '2.3.17'), false);
   assert.equal(GitHubUpdateChecker.isVersionNewer('v2.3.16', '2.3.17'), false);
 });
+
+test('isIncompatibleApkError detects certificate, package ID, and downgrade errors', () => {
+  assert.equal(
+    isIncompatibleApkError('Signing certificate mismatch (installed A1B2C3D4 vs APK E5F60708).'),
+    true
+  );
+  assert.equal(
+    isIncompatibleApkError("Package ID mismatch: downloaded 'com.other' does not match installed 'com.aistudio'."),
+    true
+  );
+  assert.equal(
+    isIncompatibleApkError('The APK package or signing certificate does not match this app.'),
+    true
+  );
+  assert.equal(
+    isIncompatibleApkError('Downloaded APK build (1) is older than installed build (2).'),
+    true
+  );
+  assert.equal(isIncompatibleApkError('GitHub download returned HTTP 502.'), false);
+  assert.equal(isIncompatibleApkError(null), false);
+});
+

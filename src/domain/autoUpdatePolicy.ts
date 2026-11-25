@@ -166,3 +166,11 @@ export function isElementInteractiveInput(el: { tagName?: string; isContentEdita
   const tag = el.tagName?.toUpperCase();
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 }
+
+export function isIncompatibleApkError(message?: string | null): boolean {
+  if (!message) return false;
+  return /signing certificate|package id mismatch|does not match this app|older than installed build/i.test(
+    message
+  );
+}
+

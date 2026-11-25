@@ -7,6 +7,7 @@ import {
   canRunBackgroundUpdateCheck,
   computeIdleGraceDelayMs,
   isElementInteractiveInput,
+  isIncompatibleApkError,
   shouldAutoStartApkUpdate,
   type AutoUpdateActivityState,
 } from '../domain/autoUpdatePolicy';
@@ -315,15 +316,34 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const lastSafetyBackupErrorAtRef = useRef(0);
   const autoAttemptedTagsRef = useRef<Set<string>>(
     (() => {
+      const tags = new Set<string>();
       try {
         const raw = sessionStorage.getItem('ebpos_auto_update_tags');
         const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-        return Array.isArray(parsed)
-          ? new Set(parsed.filter((v): v is string => typeof v === 'string'))
-          : new Set<string>();
+        if (Array.isArray(parsed)) {
+          for (const v of parsed) {
+            if (typeof v === 'string') tags.add(v);
+          }
+        }
       } catch {
-        return new Set<string>();
+        // ignore storage errors
       }
+      try {
+        const installedCode = DeviceBridge.getInstalledVersionInfo().versionCode;
+        const prefix = `${installedCode}:`;
+        const blockedRaw = localStorage.getItem('ebpos_blocked_update_tags');
+        const blockedParsed = blockedRaw ? (JSON.parse(blockedRaw) as unknown) : [];
+        if (Array.isArray(blockedParsed)) {
+          for (const entry of blockedParsed) {
+            if (typeof entry === 'string' && entry.startsWith(prefix)) {
+              tags.add(entry.slice(prefix.length));
+            }
+          }
+        }
+      } catch {
+        // ignore storage errors
+      }
+      return tags;
     })()
   );
 
@@ -545,6 +565,27 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     window.__onAndroidUpdateProgress = (ev: UpdateProgressEvent) => {
       setState((prev) => ({ ...prev, updateProgress: ev }));
       if (ev.status === 'ERROR') {
+        if (isIncompatibleApkError(ev.message)) {
+          const st = stateRef.current;
+          const tag = st.updateInfo?.tagName?.trim();
+          if (tag) {
+            autoAttemptedTagsRef.current.add(tag);
+            try {
+              const key = `${st.installedVersion.versionCode}:${tag}`;
+              const raw = localStorage.getItem('ebpos_blocked_update_tags');
+              const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+              const next = Array.isArray(parsed)
+                ? parsed.filter((v): v is string => typeof v === 'string')
+                : [];
+              if (!next.includes(key)) {
+                next.push(key);
+                localStorage.setItem('ebpos_blocked_update_tags', JSON.stringify(next.slice(-10)));
+              }
+            } catch {
+              // ignore storage errors
+            }
+          }
+        }
         toast(ev.message, 'ERROR');
       } else if (ev.status === 'PERMISSION_NEEDED') {
         toast(ev.message, 'WARNING');
