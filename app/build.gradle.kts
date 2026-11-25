@@ -10,8 +10,8 @@ android {
         applicationId = "com.aistudio.eternalbluepos.kxmpzq"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.3.17"
+        versionCode = 3
+        versionName = "2.3.18"
     }
 
     signingConfigs {

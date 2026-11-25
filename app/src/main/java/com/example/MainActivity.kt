@@ -756,11 +756,11 @@ class MainActivity : ComponentActivity() {
                     pInfo.versionCode.toLong()
                 }
                 JSONObject().apply {
-                    put("versionName", pInfo.versionName ?: "2.3.17")
+                    put("versionName", pInfo.versionName ?: "2.3.18")
                     put("versionCode", vCode)
                 }.toString()
             } catch (_: Exception) {
-                """{"versionName":"2.3.17","versionCode":2}"""
+                """{"versionName":"2.3.18","versionCode":3}"""
             }
         }
 
